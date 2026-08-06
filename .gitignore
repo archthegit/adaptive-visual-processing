@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+outputs/*
+!outputs/.gitkeep
+!outputs/pilot_manifest.jsonl
+!outputs/pilot_summary.json
