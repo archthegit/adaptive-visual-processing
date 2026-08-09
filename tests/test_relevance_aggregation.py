@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.experiment1.relevance import compute_layerwise_relevance, normalize_distribution
+from src.experiment1.relevance import _attention_array, compute_layerwise_relevance, normalize_distribution
 from src.experiment1.token_layout import TokenLayout, VisualTokenCell
 
 
@@ -25,6 +25,29 @@ def test_normalize_distribution_handles_zero_rows():
     arr = normalize_distribution(np.array([[0.0, 0.0], [1.0, 3.0]]), axis=1)
     np.testing.assert_allclose(arr[0], [0.0, 0.0])
     np.testing.assert_allclose(arr[1], [0.25, 0.75])
+
+
+def test_attention_array_casts_tensor_like_bfloat_before_numpy():
+    class FakeBFloatTensor:
+        def __init__(self, cast_to_float=False):
+            self.cast_to_float = cast_to_float
+
+        def detach(self):
+            return self
+
+        def float(self):
+            return FakeBFloatTensor(cast_to_float=True)
+
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            if not self.cast_to_float:
+                raise TypeError("Got unsupported ScalarType BFloat16")
+            return np.zeros((1, 2, 3, 3), dtype=np.float32)
+
+    arr = _attention_array(FakeBFloatTensor())
+    assert arr.shape == (2, 3, 3)
 
 
 def test_compute_layerwise_relevance_preserves_layer_dimension():

@@ -51,7 +51,10 @@ def normalize_distribution(values: np.ndarray, axis: int = -1, eps: float = 1e-1
 
 def _attention_array(attention: Any) -> np.ndarray:
     if hasattr(attention, "detach"):
-        attention = attention.detach().cpu().numpy()
+        attention = attention.detach()
+        if hasattr(attention, "float"):
+            attention = attention.float()
+        attention = attention.cpu().numpy()
     arr = np.asarray(attention, dtype=np.float64)
     if arr.ndim == 4:
         arr = arr[0]
