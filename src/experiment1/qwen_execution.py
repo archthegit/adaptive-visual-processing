@@ -24,7 +24,7 @@ def normalize_video_kwargs(video_kwargs: dict[str, Any]) -> dict[str, Any]:
     """Keep qwen-vl-utils kwargs compatible with strict processor validators."""
     normalized = dict(video_kwargs)
     fps = normalized.get("fps")
-    if isinstance(fps, list) and len(fps) == 1:
+    if isinstance(fps, list) and len(fps) >= 1 and all(item == fps[0] for item in fps):
         normalized["fps"] = fps[0]
     return normalized
 
