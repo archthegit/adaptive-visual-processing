@@ -54,6 +54,28 @@ def find_subsequence(sequence: Sequence[int], subsequence: Sequence[int]) -> tup
     return tuple()
 
 
+def map_unexpanded_to_expanded_indices(
+    unexpanded_ids: Sequence[int],
+    expanded_ids: Sequence[int],
+    visual_token_ids: set[int],
+) -> dict[int, int]:
+    mapping: dict[int, int] = {}
+    expanded_pos = 0
+    expanded = list(expanded_ids)
+    for unexpanded_pos, token_id in enumerate(unexpanded_ids):
+        if token_id in visual_token_ids:
+            while expanded_pos < len(expanded) and expanded[expanded_pos] in visual_token_ids:
+                expanded_pos += 1
+            continue
+        while expanded_pos < len(expanded) and expanded[expanded_pos] != token_id:
+            expanded_pos += 1
+        if expanded_pos >= len(expanded):
+            continue
+        mapping[unexpanded_pos] = expanded_pos
+        expanded_pos += 1
+    return mapping
+
+
 def derive_question_token_indices(
     tokenizer: Any,
     rendered_prompt: str | None,
@@ -61,6 +83,7 @@ def derive_question_token_indices(
     query_scope: str = "question",
     user_prompt_text: str | None = None,
     input_ids: Sequence[int] | None = None,
+    visual_token_ids: set[int] | None = None,
 ) -> tuple[int, ...]:
     all_ids = _to_list(input_ids) if input_ids is not None else _to_list(tokenizer(rendered_prompt, add_special_tokens=False)["input_ids"])
     if query_scope == "full_user_prompt":
@@ -70,7 +93,19 @@ def derive_question_token_indices(
     else:
         raise ValueError("query_scope must be 'question' or 'full_user_prompt'.")
     scoped_ids = _to_list(tokenizer(scoped, add_special_tokens=False)["input_ids"])
-    return find_subsequence(all_ids, scoped_ids)
+    direct = find_subsequence(all_ids, scoped_ids)
+    if direct:
+        return direct
+
+    if input_ids is None or rendered_prompt is None:
+        return tuple()
+    unexpanded_ids = _to_list(tokenizer(rendered_prompt, add_special_tokens=False)["input_ids"])
+    unexpanded_span = find_subsequence(unexpanded_ids, scoped_ids)
+    if not unexpanded_span:
+        return tuple()
+    index_map = map_unexpanded_to_expanded_indices(unexpanded_ids, all_ids, visual_token_ids or set())
+    mapped = [index_map[idx] for idx in unexpanded_span if idx in index_map]
+    return tuple(mapped) if len(mapped) == len(unexpanded_span) else tuple()
 
 
 def visual_indices_from_ids(
@@ -159,6 +194,7 @@ def build_token_layout(
         query_scope=query_scope,
         user_prompt_text=user_prompt_text,
         input_ids=ids,
+        visual_token_ids={token_id for token_id in (video_token_id, image_token_id) if token_id is not None},
     )
     if not question_indices:
         raise ValueError("Could not derive question token indices from tokenizer/prompt.")

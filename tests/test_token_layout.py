@@ -3,6 +3,7 @@ from src.experiment1.token_layout import (
     cells_from_video_grid,
     derive_question_token_indices,
     visual_indices_from_ids,
+    map_unexpanded_to_expanded_indices,
 )
 
 
@@ -21,6 +22,15 @@ def test_question_indices_are_derived_from_tokenized_prompt_not_hardcoded():
 def test_visual_indices_can_use_mm_token_types_or_special_ids():
     assert visual_indices_from_ids([1, 99, 99, 2], video_token_id=99) == (1, 2)
     assert visual_indices_from_ids([1, 5, 6, 7], mm_token_type_ids=[0, 2, 2, 0]) == (1, 2)
+
+
+def test_unexpanded_to_expanded_mapping_skips_repeated_visual_tokens():
+    mapping = map_unexpanded_to_expanded_indices(
+        [ord("A"), 500, ord("Q"), ord("?")],
+        [ord("A"), 500, 500, 500, ord("Q"), ord("?")],
+        {500},
+    )
+    assert mapping == {0: 0, 2: 4, 3: 5}
 
 
 def test_video_grid_maps_visual_tokens_to_temporal_spatial_cells():
@@ -47,3 +57,35 @@ def test_build_token_layout_combines_question_visual_and_grid_metadata():
     assert layout.question_token_indices == (4, 5, 6, 7, 8)
     assert layout.visual_token_indices == (1, 2)
     assert layout.num_visual_tokens == 2
+
+
+def test_build_token_layout_falls_back_from_unexpanded_prompt_to_expanded_input_ids():
+    prompt = "User: V What? Answer:"
+    layout = build_token_layout(
+        input_ids=[
+            ord("U"),
+            ord("s"),
+            ord("e"),
+            ord("r"),
+            ord(":"),
+            ord(" "),
+            500,
+            500,
+            500,
+            ord(" "),
+            ord("W"),
+            ord("h"),
+            ord("a"),
+            ord("t"),
+            ord("?"),
+        ],
+        tokenizer=FakeTokenizer(),
+        rendered_prompt=prompt,
+        question_text="What?",
+        video_grid_thw=[(1, 2, 6)],
+        spatial_merge_size=2,
+        video_token_id=500,
+        second_per_grid_ts=[1.0],
+    )
+    assert layout.question_token_indices == (10, 11, 12, 13, 14)
+    assert layout.visual_token_indices == (6, 7, 8)
