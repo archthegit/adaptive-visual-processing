@@ -37,23 +37,55 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 - Preserved visual-token layout metadata with explicit `video_input_index`, `temporal_bin`, `spatial_row`, `spatial_col`, and represented sampled frame indices/timestamps.
 - Added spatial heatmap overlay plotting for Experiment 1 artifacts.
 - Updated architecture notes with the exact memory blocker for scalable attention extraction.
+- Ran the first post-fix visual-access cutoff mini-pilot on Colab A100:
+  - `none`, `early`, `middle`, and `late`
+  - low resolution
+  - 4 sampled frames
+  - 12 single-real-video examples
+  - `reduced_sdpa` attention extraction
 
 ### Experiments / Results
 
-- Video-aware mini pilot:
+- Current post-fix single-real-video mini pilot:
   - size: 12 examples
   - categories: `fine_grained` 3, `gaze` 3, `ingredient` 3, `object_motion` 3
+  - real video inputs per example: 1
   - videos required: 3 MP4s, all already present
-- Low resolution, 4 sampled frames:
+  - visual tokens: 512 and 768 depending on whether the example includes an image/reference input
+  - stored summary: `outputs/experiment1_colab_low_f4_cutoff_summary.json`
+- Full-vs-reduced post-fix validation:
+  - `fine_grained_action_localization_1309`: max normalized-frame-score diff 0.0236, aggregate-frame diff 0.0057, absolute-visual-mass diff 0.0207
+  - `ingredient_ingredient_retrieval_42`: max normalized-frame-score diff 0.0400, aggregate-frame diff 0.0015, absolute-visual-mass diff 0.0283
+  - top-k logits are not identical, so `reduced_sdpa` is acceptable for exploratory relevance sweeps but not yet final-grade accuracy claims
+- Low resolution, 4 sampled frames, post-fix visual-access cutoff sweep:
+  - no cutoff: 1/12 accuracy
+  - early cutoff: 0/12 accuracy
+  - middle cutoff: 1/12 accuracy
+  - late cutoff: 1/12 accuracy
+  - category accuracy for no/middle/late: `fine_grained` 0/3, `gaze` 0/3, `ingredient` 1/3, `object_motion` 0/3
+  - category accuracy for early: all categories 0/3
+- No-cutoff layer-fusion summary:
+  - layer 0 mean top-1 frame mass 0.547, entropy 0.972, absolute visual mass 0.108
+  - layer 18 mean top-1 frame mass 0.598, entropy 0.917, absolute visual mass 0.131
+  - layer 27 mean top-1 frame mass 0.627, entropy 0.919, absolute visual mass 0.155
+  - peak top-1 frame mass layer: 27
+  - lowest entropy layer: 18
+- Cutoff masking sanity:
+  - early cutoff zeros visual relevance after layer 6
+  - middle cutoff zeros visual relevance after layer 13
+  - late cutoff zeros visual relevance after layer 20
+  - these zeros are imposed by the intervention and should not be interpreted as natural model behavior
+- Superseded pre-fix / exploratory runs:
+  - Low resolution, 4 sampled frames before causal-mask and mixed-input fixes:
   - completed: 12/12
   - accuracy: 2/12
   - visual tokens: 512 for single-input examples, 1024 for two-input examples
-- Low resolution, 8 sampled frames:
+  - Low resolution, 8 sampled frames before causal-mask and mixed-input fixes:
   - completed: 12/12
   - accuracy: 3/12
   - category accuracy: `fine_grained` 0/3, `gaze` 1/3, `ingredient` 1/3, `object_motion` 1/3
   - visual tokens: 1024 for single-input examples, 2048 for two-input examples
-- Medium resolution, 8 sampled frames:
+  - Medium resolution, 8 sampled frames before scalable attention validation:
   - completed: 9/12
   - accuracy on completed examples: 1/9
   - single-input visual tokens: 2704
@@ -67,35 +99,35 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 ### Initial Insights
 
 - Query-to-visual relevance in Qwen2.5-VL is not uniform across decoder depth.
-- In the low-resolution 8-frame mini pilot, temporal concentration is diffuse in the earliest layers, peaks around layer 7, drops in the middle-late layers, and rises again near the final decoder layer.
-- Mean top-1 temporal-bin mass changed from 0.585 at 4 sampled frames to 0.341 at 8 sampled frames, indicating that relevance spreads across more Qwen temporal bins when more frames are available.
-- The layer x temporal-bin heatmap shows a strong average bias toward the earliest Qwen temporal bin; this could reflect dataset evidence location, model positional bias, or mini-pilot selection bias.
-- Fine-grained localization stayed at 0/3 across low 4-frame, low 8-frame, and medium 8-frame settings, so this tiny pilot does not support the idea that global frame count or medium global resolution alone solves fine-grained failures.
+- In the post-fix no-cutoff low-resolution 4-frame mini pilot, query-to-visual relevance becomes more temporally concentrated through decoder depth: mean top-1 frame mass rises from 0.547 at layer 0 to 0.627 at layer 27.
+- The lowest no-cutoff entropy occurs around layer 18, suggesting the strongest temporal concentration appears in later middle/late decoder layers on this tiny pilot.
+- The first visual-access cutoff result suggests direct visual-token access remains useful beyond early decoder layers: early cutoff drops accuracy from 1/12 to 0/12, while middle and late cutoffs recover the no-cutoff 1/12.
+- The current pilot does not support a precise cutoff-depth or category-specific claim because baseline accuracy is too low and there are only three examples per category.
+- Fine-grained and gaze remain 0/3 at low resolution and 4 frames; this supports increasing visual evidence/resolution before drawing task-level conclusions.
 - Absolute visual-attention mass is now logged because within-visual normalization alone cannot answer whether the model's total reliance on visual tokens decreases by layer.
-- Earlier reduced/cutoff findings should not be used as scientific evidence until rerun after the causal-mask registration fix.
+- Earlier reduced/cutoff findings before causal-mask registration should not be used as scientific evidence.
 
 ### Code / Infrastructure
 
 - Current full-attention debug extractor remains the correctness baseline for small runs.
 - New `--attention-extraction reduced_sdpa` mode avoids returning/storing full attention tensors and captures reduced question-to-visual relevance per layer while preserving causal masks via registered mask functions.
 - New visual-access cutoff path masks text/query attention to visual-token keys after `none/early/middle/late` or an explicit layer index. Local tests prove attention outputs change after the cutoff and remain unchanged before the cutoff.
-- The reduced extractor has local synthetic correctness tests, including a causal-mask test, but still needs Colab validation against `full` on one 4-8 frame HD-EPIC example before it is used as the main medium/high-resolution path.
+- The reduced extractor has local synthetic correctness tests, including a causal-mask test, and Colab full-vs-reduced validation on two HD-EPIC examples. It still needs broader validation before final accuracy claims.
 - Mixed image/video inputs are represented in token layout with original input indices, separate image/video grids, and per-input relevance fields.
 
 ### Blockers / Dependencies
 
 - Full balanced 48-example pilot currently requires 72 unique MP4s, about 70.1 GiB, which is too slow for tight Colab iteration.
-- Medium/high resolution and multi-input examples require validated memory-efficient attention extraction before scaling.
-- Faithful layer-wise visual-access intervention is implemented at the Qwen attention-interface level, but requires real-Qwen revalidation after the causal-mask fix. Hidden-state zeroing remains intentionally avoided.
+- Medium/high resolution and multi-real-video examples require validated memory-efficient attention extraction before scaling.
+- Faithful layer-wise visual-access intervention is implemented at the Qwen attention-interface level and has post-fix real-Qwen Colab validation for `none/early/middle/late` on the 12-example mini pilot. Hidden-state zeroing remains intentionally avoided.
 - Vision-encoder and merger tracing is not implemented yet; Experiment 1 relevance still begins at decoder self-attention over inserted visual-token positions.
 
 ### Next Steps
 
-- Validate the new summarizer on Colab outputs.
-- Validate `reduced_sdpa` against the existing full-attention extractor on 4-8 frame examples.
-- Validate the layer-wise visual-access intervention on real Qwen by showing logits or predictions differ from the no-intervention run.
-- Re-run the video-aware mini pilot with `--attention-extraction reduced_sdpa`, then retry medium-resolution two-input examples.
-- Run the low/medium resolution x `none/early/middle/late` visual-access sweep on the completed mini-pilot examples.
+- Produce a compact table of per-question predictions for `none/early/middle/late` to identify which examples change under cutoff.
+- Run the same single-real-video mini pilot at 8 frames or medium resolution to test whether the very low baseline accuracy is caused by insufficient visual evidence.
+- Validate `reduced_sdpa` against full attention on a few more examples if final accuracy claims will use reduced extraction.
+- Add or export plots for the final post-fix `none/early/middle/late` layer-depth result.
 - Expand from the mini pilot to a larger video-aware subset before attempting the full balanced pilot.
 
 ## Week of 2026-08-03

@@ -10,3 +10,4 @@ outputs/*
 !outputs/pilot_summary.json
 !outputs/experiment1_manifest.jsonl
 !outputs/experiment1_summary.json
+!outputs/experiment1_colab_low_f4_cutoff_summary.json

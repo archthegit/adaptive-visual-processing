@@ -1,0 +1,128 @@
+{
+  "source": "manual summary from Colab outputs",
+  "date": "2026-08-09",
+  "manifest": "outputs/experiment1_video_aware_manifest_single_video.jsonl",
+  "model": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "attention_extraction": "reduced_sdpa",
+  "resolution_config": "low",
+  "num_frames": 4,
+  "frame_budget_mode": "total",
+  "query_scope": "question",
+  "max_new_tokens": 16,
+  "examples": {
+    "total": 12,
+    "completed": 12,
+    "failed": 0,
+    "by_category": {
+      "fine_grained": 3,
+      "gaze": 3,
+      "ingredient": 3,
+      "object_motion": 3
+    },
+    "by_num_video_inputs": {
+      "1": 12
+    },
+    "unique_videos": [
+      "P01-20240203-130505",
+      "P01-20240203-135502",
+      "P01-20240203-184214"
+    ],
+    "visual_token_counts": [
+      512,
+      768
+    ]
+  },
+  "full_vs_reduced_validation": [
+    {
+      "question_id": "fine_grained_action_localization_1309",
+      "max_normalized_frame_diff": 0.023552508556313745,
+      "max_aggregate_frame_diff": 0.005714337896311927,
+      "max_absolute_visual_mass_diff": 0.020736689378509254,
+      "topk_token_ids_match": false,
+      "max_abs_logit_diff_matching_positions": 0.625
+    },
+    {
+      "question_id": "ingredient_ingredient_retrieval_42",
+      "max_normalized_frame_diff": 0.039965503548848536,
+      "max_aggregate_frame_diff": 0.0015036338942899796,
+      "max_absolute_visual_mass_diff": 0.028335728832587392,
+      "topk_token_ids_match": false,
+      "max_abs_logit_diff_matching_positions": 1.0
+    }
+  ],
+  "cutoff_accuracy": {
+    "none": {
+      "correct": 1,
+      "total": 12,
+      "accuracy": 0.08333333333333333,
+      "by_category": {
+        "fine_grained": "0/3",
+        "gaze": "0/3",
+        "ingredient": "1/3",
+        "object_motion": "0/3"
+      }
+    },
+    "early": {
+      "correct": 0,
+      "total": 12,
+      "accuracy": 0.0,
+      "by_category": {
+        "fine_grained": "0/3",
+        "gaze": "0/3",
+        "ingredient": "0/3",
+        "object_motion": "0/3"
+      }
+    },
+    "middle": {
+      "correct": 1,
+      "total": 12,
+      "accuracy": 0.08333333333333333,
+      "by_category": {
+        "fine_grained": "0/3",
+        "gaze": "0/3",
+        "ingredient": "1/3",
+        "object_motion": "0/3"
+      }
+    },
+    "late": {
+      "correct": 1,
+      "total": 12,
+      "accuracy": 0.08333333333333333,
+      "by_category": {
+        "fine_grained": "0/3",
+        "gaze": "0/3",
+        "ingredient": "1/3",
+        "object_motion": "0/3"
+      }
+    }
+  },
+  "no_cutoff_layer_fusion": {
+    "layer0_mean_top1_frame_mass": 0.5470673580398806,
+    "layer0_mean_normalized_entropy": 0.9718965388559084,
+    "layer0_mean_absolute_visual_mass": 0.10757739094738857,
+    "layer18_mean_top1_frame_mass": 0.5981514916060496,
+    "layer18_mean_normalized_entropy": 0.9166014347294451,
+    "layer18_mean_absolute_visual_mass": 0.13060236394225436,
+    "layer27_mean_top1_frame_mass": 0.6271465303522504,
+    "layer27_mean_normalized_entropy": 0.9190353138838222,
+    "layer27_mean_absolute_visual_mass": 0.15475677512037342,
+    "peak_top1_layer": 27,
+    "lowest_entropy_layer": 18
+  },
+  "cutoff_masking_sanity": {
+    "early": "visual relevance is zero after layer 6 because the intervention masks text/query to visual attention after the early cutoff",
+    "middle": "visual relevance is zero after layer 13 because the intervention masks text/query to visual attention after the middle cutoff",
+    "late": "visual relevance is zero after layer 20 because the intervention masks text/query to visual attention after the late cutoff"
+  },
+  "interpretation": [
+    "The first real mini-pilot suggests direct visual-token access remains useful beyond early decoder layers.",
+    "Allowing access through middle or late layers recovers the no-cutoff accuracy on this tiny low-resolution pilot.",
+    "No precise category-specific conclusion is supported yet because accuracy is very low and the sample has only three examples per category."
+  ],
+  "limitations": [
+    "This is a 12-example low-resolution, 4-frame pilot, not a final HD-EPIC result.",
+    "Reduced attention is close to full attention for relevance summaries but is not bit-identical in top-k logits.",
+    "Vision encoder and visual merger internals are not traced yet.",
+    "128-frame runs remain blocked until the reduced attention path is validated for memory at scale."
+  ]
+}
