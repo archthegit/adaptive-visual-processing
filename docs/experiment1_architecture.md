@@ -90,6 +90,42 @@ attentions[layer][head, query_position, key_position]
   -> keep layer dimension
 ```
 
+As of 2026-08-09, two extraction modes are available:
+
+```text
+full
+  Uses output_attentions=True.
+  This is the correctness/debug baseline.
+  It still materializes full [heads, seq, seq] tensors.
+
+reduced_sdpa
+  Registers a custom Transformers attention implementation.
+  Normal attention output is computed with torch scaled_dot_product_attention.
+  Separately computes only question-token rows over all keys, selects visual
+  columns, averages batch/heads/question tokens immediately, and stores one
+  reduced vector per decoder layer.
+```
+
+The reduced implementation follows this path:
+
+```text
+Qwen2_5_VLAttention.forward
+  -> q_proj/k_proj/v_proj
+  -> qwen_relevance_reduced_sdpa_forward
+  -> scaled_dot_product_attention for normal attn_output
+  -> exact softmax over all keys for question-token rows only
+  -> select visual-token columns
+  -> immediately aggregate batch, heads, and question tokens
+  -> return normal attn_output and no full attn_weights
+```
+
+This should lower peak attention memory relative to `full` because full
+attention weights are no longer returned or stored. It still computes exact
+question-row probabilities over all keys, so it is not a windowed or sampled
+approximation. Before using it for medium/high resolution or long-frame runs,
+validate it against `full` on a 4-8 frame example and compare per-layer token or
+frame scores within numerical tolerance.
+
 ## Vision-Access Intervention Blocker
 
 The desired intervention is layer-specific masking:

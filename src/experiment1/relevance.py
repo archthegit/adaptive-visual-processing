@@ -63,6 +63,30 @@ def _attention_array(attention: Any) -> np.ndarray:
     return arr
 
 
+def _aggregate_single_attention(
+    attention: Any,
+    question_token_indices: Sequence[int],
+    visual_token_indices: Sequence[int],
+) -> np.ndarray:
+    if hasattr(attention, "detach"):
+        tensor = attention.detach()
+        if len(tensor.shape) == 4:
+            tensor = tensor[0]
+        if len(tensor.shape) != 3:
+            raise ValueError(
+                "Expected attention shape [heads, query, key] or "
+                f"[batch, heads, query, key], got {tuple(tensor.shape)}."
+            )
+        qv = tensor[:, list(question_token_indices), :][:, :, list(visual_token_indices)]
+        if hasattr(qv, "float"):
+            qv = qv.float()
+        return qv.mean(dim=(0, 1)).cpu().numpy().astype(np.float64)
+
+    arr = _attention_array(attention)
+    qv = arr[:, list(question_token_indices), :][:, :, list(visual_token_indices)]
+    return np.asarray(qv.mean(axis=(0, 1)), dtype=np.float64)
+
+
 def aggregate_question_to_visual_attention(
     attentions: Sequence[Any],
     question_token_indices: Sequence[int],
@@ -74,9 +98,7 @@ def aggregate_question_to_visual_attention(
         raise ValueError("visual_token_indices is empty.")
     per_layer = []
     for attention in attentions:
-        arr = _attention_array(attention)
-        qv = arr[:, list(question_token_indices), :][:, :, list(visual_token_indices)]
-        per_layer.append(qv.mean(axis=(0, 1)))
+        per_layer.append(_aggregate_single_attention(attention, question_token_indices, visual_token_indices))
     return np.stack(per_layer, axis=0)
 
 
@@ -121,10 +143,12 @@ def concentration_stats(frame_scores: np.ndarray) -> ConcentrationStats:
     )
 
 
-def compute_layerwise_relevance(attentions: Sequence[Any], layout: TokenLayout) -> LayerwiseRelevance:
-    raw_token = aggregate_question_to_visual_attention(
-        attentions, layout.question_token_indices, layout.visual_token_indices
-    )
+def build_layerwise_relevance_from_token_scores(
+    token_scores: np.ndarray,
+    layout: TokenLayout,
+    extraction_method: str,
+) -> LayerwiseRelevance:
+    raw_token = np.asarray(token_scores, dtype=np.float64)
     norm_token = normalize_distribution(raw_token, axis=1)
     raw_frame = token_scores_to_frame_scores(raw_token, layout)
     norm_frame = normalize_distribution(raw_frame, axis=1)
@@ -147,5 +171,13 @@ def compute_layerwise_relevance(attentions: Sequence[Any], layout: TokenLayout) 
             "num_visual_tokens": int(raw_token.shape[1]),
             "num_question_tokens": len(layout.question_token_indices),
             "query_scope": layout.query_scope,
+            "extraction_method": extraction_method,
         },
     )
+
+
+def compute_layerwise_relevance(attentions: Sequence[Any], layout: TokenLayout) -> LayerwiseRelevance:
+    raw_token = aggregate_question_to_visual_attention(
+        attentions, layout.question_token_indices, layout.visual_token_indices
+    )
+    return build_layerwise_relevance_from_token_scores(raw_token, layout, "returned_full_attention_reduced_after_forward")

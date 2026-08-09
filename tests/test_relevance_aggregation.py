@@ -1,6 +1,11 @@
 import numpy as np
 
-from src.experiment1.relevance import _attention_array, compute_layerwise_relevance, normalize_distribution
+from src.experiment1.relevance import (
+    _attention_array,
+    build_layerwise_relevance_from_token_scores,
+    compute_layerwise_relevance,
+    normalize_distribution,
+)
 from src.experiment1.token_layout import TokenLayout, VisualTokenCell
 
 
@@ -61,3 +66,12 @@ def test_compute_layerwise_relevance_preserves_layer_dimension():
     np.testing.assert_allclose(relevance.raw_frame_scores[0], [2.0, 4.0])
     np.testing.assert_allclose(relevance.normalized_frame_scores[1], [0.0, 1.0])
     assert len(relevance.concentration_by_layer) == 2
+    assert relevance.metadata["extraction_method"] == "returned_full_attention_reduced_after_forward"
+
+
+def test_build_layerwise_relevance_from_reduced_token_scores():
+    token_scores = np.array([[1.0, 1.0, 2.0, 2.0], [0.0, 0.0, 4.0, 4.0]])
+    relevance = build_layerwise_relevance_from_token_scores(token_scores, _layout(), "unit_test_reduced_scores")
+    assert relevance.raw_token_scores.shape == (2, 4)
+    np.testing.assert_allclose(relevance.raw_frame_scores[0], [2.0, 4.0])
+    assert relevance.metadata["extraction_method"] == "unit_test_reduced_scores"

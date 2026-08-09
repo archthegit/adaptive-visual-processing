@@ -323,6 +323,67 @@ python scripts/run_experiment1.py \
   --allow-7b-inference
 ```
 
+For larger visual-token counts, use the reduced attention extractor after
+validating it against `full` on a small example:
+
+```bash
+python scripts/run_experiment1.py \
+  --questions-dir /content/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir data/hd_epic_mp4 \
+  --manifest outputs/experiment1_video_aware_manifest.jsonl \
+  --question-id fine_grained_action_localization_1309 \
+  --num-frames 4 \
+  --resolution-config low \
+  --vision-access-through-layer none \
+  --query-scope question \
+  --attention-extraction full \
+  --max-new-tokens 16 \
+  --output-dir outputs/experiment1_validate_full \
+  --allow-7b-inference
+
+python scripts/run_experiment1.py \
+  --questions-dir /content/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir data/hd_epic_mp4 \
+  --manifest outputs/experiment1_video_aware_manifest.jsonl \
+  --question-id fine_grained_action_localization_1309 \
+  --num-frames 4 \
+  --resolution-config low \
+  --vision-access-through-layer none \
+  --query-scope question \
+  --attention-extraction reduced_sdpa \
+  --max-new-tokens 16 \
+  --output-dir outputs/experiment1_validate_reduced \
+  --allow-7b-inference
+
+python scripts/compare_relevance_artifacts.py \
+  --left-dir outputs/experiment1_validate_full \
+  --right-dir outputs/experiment1_validate_reduced
+```
+
+Then use the reduced extractor for larger runs:
+
+```bash
+python scripts/run_experiment1.py \
+  --questions-dir /content/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir data/hd_epic_mp4 \
+  --manifest outputs/experiment1_video_aware_manifest.jsonl \
+  --num-frames 8 \
+  --resolution-config medium \
+  --vision-access-through-layer none \
+  --query-scope question \
+  --attention-extraction reduced_sdpa \
+  --max-new-tokens 16 \
+  --output-dir outputs/experiment1_qwen_video_aware_medium_f8_reduced \
+  --allow-7b-inference
+```
+
+Summarize accuracy and layer-wise query/vision fusion from an output directory:
+
+```bash
+python scripts/summarize_experiment1_outputs.py \
+  --output-dir outputs/experiment1_qwen_video_aware_low_f4
+```
+
 ## Download Manifest Videos
 
 HD-EPIC MP4s are not stored in the annotation repository. To fetch only the videos referenced by a manifest:

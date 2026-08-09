@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution-config", default="low", choices=["low", "medium", "high"])
     parser.add_argument("--vision-access-through-layer", default="none")
     parser.add_argument("--query-scope", default="question", choices=["question", "full_user_prompt"])
+    parser.add_argument("--attention-extraction", default="full", choices=["full", "reduced_sdpa"])
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--question-id", action="append", default=None, help="Run only this question id. Can be repeated.")
@@ -111,6 +112,7 @@ def main() -> None:
                     "resolution": resolution.to_metadata(),
                     "vision_access_through_layer": args.vision_access_through_layer,
                     "query_scope": args.query_scope,
+                    "attention_extraction": args.attention_extraction,
                 },
             )
             continue
@@ -126,6 +128,7 @@ def main() -> None:
                 frame_batches,
                 resolution,
                 query_scope=args.query_scope,
+                attention_extraction=args.attention_extraction,
             )
             artifact["category"] = record["category"]
             artifact["vision_access_through_layer"] = args.vision_access_through_layer
@@ -166,6 +169,7 @@ def main() -> None:
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,
             "query_scope": args.query_scope,
+            "attention_extraction": args.attention_extraction,
             "max_new_tokens": args.max_new_tokens,
             "dry_run": args.dry_run,
             "allow_7b_inference": args.allow_7b_inference,
