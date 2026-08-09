@@ -31,6 +31,8 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 - Connected `--vision-access-through-layer` to Qwen decoder attention during both prefill and generation using an additive text-to-visual key mask after the cutoff layer.
 - Fixed the critical causal-mask registration bug for custom Qwen attention backends. Before this fix, `reduced_sdpa` and cutoff runs could attend to future prompt tokens during prefill and are invalid.
 - Changed Experiment 1 frame budgeting so `--num-frames` is a total budget split across visual inputs by default, preventing two-video object-motion questions from receiving double the frames/tokens. Legacy per-input behavior remains available via `--frame-budget-mode per-input`.
+- Fixed mixed HD-EPIC inputs: `time` inputs are now sampled once and sent to Qwen as images, while interval inputs are sent as videos and consume the video-frame budget.
+- Updated Experiment 1 summaries and artifact comparison to use per-input frame relevance and compare compact prefill top-k logits.
 - Added absolute visual-attention mass by decoder layer, in addition to visual-token-normalized relevance.
 - Preserved visual-token layout metadata with explicit `video_input_index`, `temporal_bin`, `spatial_row`, `spatial_col`, and represented sampled frame indices/timestamps.
 - Added spatial heatmap overlay plotting for Experiment 1 artifacts.
@@ -78,12 +80,14 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 - New `--attention-extraction reduced_sdpa` mode avoids returning/storing full attention tensors and captures reduced question-to-visual relevance per layer while preserving causal masks via registered mask functions.
 - New visual-access cutoff path masks text/query attention to visual-token keys after `none/early/middle/late` or an explicit layer index. Local tests prove attention outputs change after the cutoff and remain unchanged before the cutoff.
 - The reduced extractor has local synthetic correctness tests, including a causal-mask test, but still needs Colab validation against `full` on one 4-8 frame HD-EPIC example before it is used as the main medium/high-resolution path.
+- Mixed image/video inputs are represented in token layout with original input indices, separate image/video grids, and per-input relevance fields.
 
 ### Blockers / Dependencies
 
 - Full balanced 48-example pilot currently requires 72 unique MP4s, about 70.1 GiB, which is too slow for tight Colab iteration.
 - Medium/high resolution and multi-input examples require validated memory-efficient attention extraction before scaling.
 - Faithful layer-wise visual-access intervention is implemented at the Qwen attention-interface level, but requires real-Qwen revalidation after the causal-mask fix. Hidden-state zeroing remains intentionally avoided.
+- Vision-encoder and merger tracing is not implemented yet; Experiment 1 relevance still begins at decoder self-attention over inserted visual-token positions.
 
 ### Next Steps
 

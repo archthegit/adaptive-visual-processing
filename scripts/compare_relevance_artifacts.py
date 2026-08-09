@@ -61,6 +61,25 @@ def max_abs_diff(left: Any, right: Any) -> float:
     return float(np.max(np.abs(left_arr - right_arr))) if left_arr.size else 0.0
 
 
+def compare_topk_logits(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    left_topk = left.get("metadata", {}).get("prefill_next_token_topk", [])
+    right_topk = right.get("metadata", {}).get("prefill_next_token_topk", [])
+    left_ids = [item.get("token_id") for item in left_topk]
+    right_ids = [item.get("token_id") for item in right_topk]
+    paired = list(zip(left_topk, right_topk))
+    logit_diffs = [
+        abs(float(left_item.get("logit", 0.0)) - float(right_item.get("logit", 0.0)))
+        for left_item, right_item in paired
+        if left_item.get("token_id") == right_item.get("token_id")
+    ]
+    return {
+        "left_token_ids": left_ids,
+        "right_token_ids": right_ids,
+        "token_ids_match": left_ids == right_ids,
+        "max_abs_logit_diff_matching_positions": max(logit_diffs, default=None),
+    }
+
+
 def compare_dirs(left_dir: Path, right_dir: Path) -> dict[str, Any]:
     left_records = load_records(left_dir)
     right_records = load_records(right_dir)
@@ -82,6 +101,7 @@ def compare_dirs(left_dir: Path, right_dir: Path) -> dict[str, Any]:
                 "right_extraction": right["metadata"].get("attention_extraction", "unknown"),
                 "max_abs_diff_by_field": field_diffs,
                 "max_abs_diff": max(field_diffs.values()),
+                "prefill_next_token_topk": compare_topk_logits(left, right),
             }
         )
     return {

@@ -161,23 +161,25 @@ def visual_indices_from_ids(
     return tuple(idx for idx, token_id in enumerate(ids) if token_id in visual_ids)
 
 
-def cells_from_video_grid(
+def cells_from_grid_specs(
     visual_token_indices: Sequence[int],
-    video_grid_thw: Iterable[Sequence[int]],
+    grid_specs: Iterable[dict[str, Any]],
     spatial_merge_size: int,
-    second_per_grid_ts: Sequence[float] | None = None,
 ) -> tuple[VisualTokenCell, ...]:
     cells: list[VisualTokenCell] = []
     cursor = 0
-    seconds = list(second_per_grid_ts or [])
-    for input_index, grid in enumerate(video_grid_thw):
+    for spec in grid_specs:
+        input_index = int(spec["input_index"])
+        modality = str(spec["modality"])
+        grid = spec["grid"]
         t, h, w = [int(x) for x in grid]
         if h % spatial_merge_size != 0 or w % spatial_merge_size != 0:
             raise ValueError(f"Grid {(t, h, w)} is not divisible by spatial_merge_size={spatial_merge_size}.")
         grid_h = h // spatial_merge_size
         grid_w = w // spatial_merge_size
         expected = t * grid_h * grid_w
-        interval = float(seconds[input_index]) if input_index < len(seconds) else None
+        interval = spec.get("seconds_per_grid")
+        interval = float(interval) if interval is not None else None
         for temporal_index in range(t):
             for spatial_y in range(grid_h):
                 for spatial_x in range(grid_w):
@@ -188,7 +190,7 @@ def cells_from_video_grid(
                         VisualTokenCell(
                             token_index=int(visual_token_indices[cursor]),
                             visual_index=cursor,
-                            modality="video",
+                            modality=modality,
                             input_index=input_index,
                             temporal_index=temporal_index,
                             spatial_y=spatial_y,
@@ -210,6 +212,69 @@ def cells_from_video_grid(
     return tuple(cells)
 
 
+def cells_from_video_grid(
+    visual_token_indices: Sequence[int],
+    video_grid_thw: Iterable[Sequence[int]],
+    spatial_merge_size: int,
+    second_per_grid_ts: Sequence[float] | None = None,
+) -> tuple[VisualTokenCell, ...]:
+    seconds = list(second_per_grid_ts or [])
+    specs = [
+        {
+            "input_index": input_index,
+            "modality": "video",
+            "grid": grid,
+            "seconds_per_grid": seconds[input_index] if input_index < len(seconds) else None,
+        }
+        for input_index, grid in enumerate(video_grid_thw)
+    ]
+    return cells_from_grid_specs(visual_token_indices, specs, spatial_merge_size)
+
+
+def grid_specs_for_visual_inputs(
+    visual_input_modalities: Sequence[str],
+    video_grid_thw: Iterable[Sequence[int]],
+    image_grid_thw: Iterable[Sequence[int]] | None = None,
+    second_per_grid_ts: Sequence[float] | None = None,
+) -> list[dict[str, Any]]:
+    video_grids = list(video_grid_thw)
+    image_grids = list(image_grid_thw or [])
+    seconds = list(second_per_grid_ts or [])
+    video_cursor = 0
+    image_cursor = 0
+    specs: list[dict[str, Any]] = []
+    for input_index, modality in enumerate(visual_input_modalities):
+        if modality == "video":
+            if video_cursor >= len(video_grids):
+                raise ValueError("visual_input_modalities requested more video grids than Qwen returned.")
+            specs.append(
+                {
+                    "input_index": input_index,
+                    "modality": "video",
+                    "grid": video_grids[video_cursor],
+                    "seconds_per_grid": seconds[video_cursor] if video_cursor < len(seconds) else None,
+                }
+            )
+            video_cursor += 1
+        elif modality == "image":
+            if image_cursor >= len(image_grids):
+                raise ValueError("visual_input_modalities requested more image grids than Qwen returned.")
+            specs.append(
+                {
+                    "input_index": input_index,
+                    "modality": "image",
+                    "grid": image_grids[image_cursor],
+                    "seconds_per_grid": None,
+                }
+            )
+            image_cursor += 1
+        else:
+            raise ValueError(f"Unsupported visual modality {modality!r}.")
+    if video_cursor != len(video_grids) or image_cursor != len(image_grids):
+        raise ValueError("Qwen returned visual grids that were not matched to visual_input_modalities.")
+    return specs
+
+
 def build_token_layout(
     input_ids: Sequence[int],
     tokenizer: Any,
@@ -217,6 +282,8 @@ def build_token_layout(
     question_text: str,
     video_grid_thw: Iterable[Sequence[int]],
     spatial_merge_size: int,
+    image_grid_thw: Iterable[Sequence[int]] | None = None,
+    visual_input_modalities: Sequence[str] | None = None,
     video_token_id: int | None = None,
     image_token_id: int | None = None,
     mm_token_type_ids: Sequence[int] | None = None,
@@ -241,14 +308,20 @@ def build_token_layout(
             f"query_scope={query_scope!r}, question_text={question_text!r}, "
             f"input_tokens={len(ids)}, visual_tokens={len(visual_indices)}."
         )
-    cells = cells_from_video_grid(visual_indices, video_grid_thw, spatial_merge_size, second_per_grid_ts)
+    video_grids = list(video_grid_thw)
+    image_grids = list(image_grid_thw or [])
+    modalities = tuple(visual_input_modalities or ["video"] * len(video_grids))
+    grid_specs = grid_specs_for_visual_inputs(modalities, video_grids, image_grids, second_per_grid_ts)
+    cells = cells_from_grid_specs(visual_indices, grid_specs, spatial_merge_size)
     return TokenLayout(
         question_token_indices=question_indices,
         prompt_token_indices=tuple(range(len(ids))),
         visual_token_indices=visual_indices,
         visual_cells=cells,
         visual_grid_metadata={
-            "video_grid_thw": [list(map(int, grid)) for grid in video_grid_thw],
+            "video_grid_thw": [list(map(int, grid)) for grid in video_grids],
+            "image_grid_thw": [list(map(int, grid)) for grid in image_grids],
+            "visual_input_modalities": list(modalities),
             "spatial_merge_size": spatial_merge_size,
             "second_per_grid_ts": list(second_per_grid_ts or []),
         },

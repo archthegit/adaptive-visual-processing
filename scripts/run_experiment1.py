@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -78,35 +79,53 @@ def load_examples_by_id(questions_dir: str | None, records: list[dict[str, Any]]
     return examples
 
 
-def frames_per_input(num_frames: int, num_inputs: int, mode: str = "total") -> list[int]:
+def frames_per_video_input(num_frames: int, num_video_inputs: int, mode: str = "total") -> list[int]:
     if num_frames <= 0:
         raise ValueError("--num-frames must be positive.")
-    if num_inputs <= 0:
-        raise ValueError("Example has no visual inputs.")
+    if num_video_inputs <= 0:
+        return []
     if mode == "per-input":
-        return [num_frames for _ in range(num_inputs)]
+        return [num_frames for _ in range(num_video_inputs)]
     if mode != "total":
         raise ValueError("frame budget mode must be 'total' or 'per-input'.")
-    if num_frames < num_inputs:
+    if num_frames < num_video_inputs:
         raise ValueError(
-            f"--num-frames={num_frames} is smaller than the {num_inputs} visual inputs. "
+            f"--num-frames={num_frames} is smaller than the {num_video_inputs} video inputs. "
             "Increase --num-frames or use --frame-budget-mode per-input."
         )
-    base = num_frames // num_inputs
-    remainder = num_frames % num_inputs
-    return [base + (1 if input_idx < remainder else 0) for input_idx in range(num_inputs)]
+    base = num_frames // num_video_inputs
+    remainder = num_frames % num_video_inputs
+    return [base + (1 if input_idx < remainder else 0) for input_idx in range(num_video_inputs)]
 
 
 def frame_batches_for_example(example, mp4_dir: str | None, num_frames: int, frame_budget_mode: str = "total"):
     if mp4_dir is None:
         raise ValueError("--mp4-dir is required for non-dry-run Experiment 1 execution.")
-    from src.frame_sampling import UniformFrameSampler
+    from src.frame_sampling import FrameBatch, UniformFrameSampler
 
-    allocations = frames_per_input(num_frames, len(example.inputs), frame_budget_mode)
-    return [
-        UniformFrameSampler(num_frames=frames).sample_video(segment.path_under(mp4_dir), segment)
-        for frames, segment in zip(allocations, example.inputs)
-    ]
+    def with_modality(batch: FrameBatch, modality: str) -> FrameBatch:
+        metadata = dict(batch.metadata)
+        metadata["input_modality"] = modality
+        return replace(batch, metadata=metadata)
+
+    video_allocations = iter(
+        frames_per_video_input(
+            num_frames,
+            sum(1 for segment in example.inputs if not segment.is_image),
+            frame_budget_mode,
+        )
+    )
+    batches = []
+    for segment in example.inputs:
+        if segment.is_image:
+            batch = UniformFrameSampler(num_frames=1).sample_video(segment.path_under(mp4_dir), segment)
+            batches.append(with_modality(batch, "image"))
+        else:
+            batch = UniformFrameSampler(num_frames=next(video_allocations)).sample_video(
+                segment.path_under(mp4_dir), segment
+            )
+            batches.append(with_modality(batch, "video"))
+    return batches
 
 
 def main() -> None:

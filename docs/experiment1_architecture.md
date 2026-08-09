@@ -17,9 +17,10 @@ No Qwen checkpoint was downloaded. `torch` is not installed in the local venv, s
 The inspected Qwen2.5-VL path is:
 
 ```text
-video pixels
-  -> Qwen2_5_VLProcessor / video processor
+video pixels / reference-image frames
+  -> Qwen2_5_VLProcessor / image and video processors
   -> pixel_values_videos + video_grid_thw + second_per_grid_ts
+  -> pixel_values + image_grid_thw
   -> Qwen2_5_VisionPatchEmbed
   -> Qwen2_5_VisionTransformerPretrainedModel.blocks
   -> Qwen2_5_VLPatchMerger
@@ -50,9 +51,15 @@ The processor expands visual placeholders according to:
 
 ```text
 num_video_tokens = prod(video_grid_thw) / merge_size**2
+num_image_tokens = prod(image_grid_thw) / merge_size**2
 ```
 
 The model-side visual merger uses `vision_config.spatial_merge_size`, defaulting to `2` in the inspected config source. Qwen visual tokens are dynamic-resolution tokens; one LLM visual token should be interpreted as a merged spatiotemporal grid cell, not as one raw frame or one original patch.
+
+HD-EPIC `time` inputs are treated as reference images, not pseudo-videos. They
+receive one sampled frame and are sent through Qwen's image pathway. Video
+interval inputs are sent through Qwen's video pathway and consume the
+configurable video-frame budget.
 
 Experiment 1 reconstructs the reduced grid as:
 
@@ -71,7 +78,7 @@ for t in T_llm:
       visual token
 ```
 
-This must be manually validated on a small GPU run by comparing produced `video_grid_thw`, visual placeholder count, and token positions from the real processor/model inputs.
+This must be manually validated on a small GPU run by comparing produced `video_grid_thw`, `image_grid_thw`, visual placeholder count, and token positions from the real processor/model inputs.
 
 ## Frame and Input Metadata
 
@@ -79,11 +86,11 @@ Qwen temporal bins may represent multiple sampled frames. Artifact metadata
 therefore records the sampled frame indices and timestamps represented by each
 visual-token temporal bin.
 
-For multi-video examples, artifacts preserve per-input frame relevance in
+For multi-input examples, artifacts preserve per-input frame relevance in
 `raw_frame_scores_by_input` and `normalized_frame_scores_by_input`. The older
 `raw_frame_scores` field is retained for backwards compatibility but merges
 same-numbered temporal bins across visual inputs, so it should not be used for
-object-motion interpretation.
+object-motion or image-reference interpretation.
 
 ## Attention Extraction
 

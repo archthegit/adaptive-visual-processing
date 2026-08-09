@@ -72,7 +72,7 @@ def accuracy_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
 def layer_fusion_summary(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
     if not artifacts:
         return {}
-    num_layers = len(artifacts[0]["relevance"]["normalized_frame_scores"])
+    num_layers = len(frame_scores_for_summary(artifacts[0]))
     by_category: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for artifact in artifacts:
         by_category[artifact["category"]].append(artifact)
@@ -81,11 +81,11 @@ def layer_fusion_summary(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         stats = []
         for layer_idx in range(num_layers):
             top1_values = [
-                max(artifact["relevance"]["normalized_frame_scores"][layer_idx])
+                max(frame_scores_for_summary(artifact)[layer_idx])
                 for artifact in items
             ]
             entropy_values = [
-                artifact["relevance"]["concentration_by_layer"][layer_idx]["normalized_entropy"]
+                normalized_entropy(frame_scores_for_summary(artifact)[layer_idx])
                 for artifact in items
             ]
             absolute_mass_values = [
@@ -112,6 +112,26 @@ def layer_fusion_summary(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         "peak_overall_top1_layer": max(overall, key=lambda item: item["mean_top1_frame_mass"]),
         "lowest_overall_entropy_layer": min(overall, key=lambda item: item["mean_normalized_entropy"]),
     }
+
+
+def frame_scores_for_summary(artifact: dict[str, Any]) -> list[list[float]]:
+    relevance = artifact["relevance"]
+    by_input = relevance.get("normalized_frame_scores_by_input")
+    if by_input:
+        return [
+            [float(value) for input_scores in layer for value in input_scores]
+            for layer in by_input
+        ]
+    return relevance["normalized_frame_scores"]
+
+
+def normalized_entropy(scores: list[float]) -> float:
+    values = [float(score) for score in scores if float(score) > 0.0]
+    if len(scores) <= 1 or not values:
+        return 0.0
+    import math
+
+    return float(-sum(value * math.log(value) for value in values) / math.log(len(scores)))
 
 
 def main() -> None:

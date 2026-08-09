@@ -1,5 +1,6 @@
 from src.experiment1.token_layout import (
     build_token_layout,
+    cells_from_grid_specs,
     cells_from_video_grid,
     derive_question_token_indices,
     token_indices_for_char_span,
@@ -66,6 +67,23 @@ def test_video_grid_maps_visual_tokens_to_temporal_spatial_cells():
     assert cells[-1].timestamp == 0.5
 
 
+def test_mixed_image_video_grid_specs_preserve_input_order():
+    cells = cells_from_grid_specs(
+        [10, 11, 12],
+        [
+            {"input_index": 0, "modality": "video", "grid": (1, 2, 2), "seconds_per_grid": 0.5},
+            {"input_index": 1, "modality": "image", "grid": (1, 2, 2), "seconds_per_grid": None},
+            {"input_index": 2, "modality": "video", "grid": (1, 2, 2), "seconds_per_grid": 1.0},
+        ],
+        spatial_merge_size=2,
+    )
+    assert [(cell.modality, cell.input_index, cell.token_index) for cell in cells] == [
+        ("video", 0, 10),
+        ("image", 1, 11),
+        ("video", 2, 12),
+    ]
+
+
 def test_build_token_layout_combines_question_visual_and_grid_metadata():
     prompt = "User: VV What? Answer:"
     layout = build_token_layout(
@@ -113,6 +131,40 @@ def test_build_token_layout_falls_back_from_unexpanded_prompt_to_expanded_input_
     )
     assert layout.question_token_indices == (10, 11, 12, 13, 14)
     assert layout.visual_token_indices == (6, 7, 8)
+
+
+def test_build_token_layout_handles_mixed_image_video_grids():
+    prompt = "User: VIV What? Answer:"
+    layout = build_token_layout(
+        input_ids=[
+            ord("U"),
+            500,
+            600,
+            500,
+            ord(" "),
+            ord("W"),
+            ord("h"),
+            ord("a"),
+            ord("t"),
+            ord("?"),
+        ],
+        tokenizer=FakeTokenizer(),
+        rendered_prompt=prompt,
+        question_text="What?",
+        video_grid_thw=[(1, 2, 2), (1, 2, 2)],
+        image_grid_thw=[(1, 2, 2)],
+        visual_input_modalities=["video", "image", "video"],
+        spatial_merge_size=2,
+        video_token_id=500,
+        image_token_id=600,
+        second_per_grid_ts=[0.5, 1.0],
+    )
+    assert [(cell.modality, cell.input_index) for cell in layout.visual_cells] == [
+        ("video", 0),
+        ("image", 1),
+        ("video", 2),
+    ]
+    assert layout.visual_grid_metadata["visual_input_modalities"] == ["video", "image", "video"]
 
 
 def test_build_token_layout_falls_back_to_offsets_when_token_subsequence_fails():

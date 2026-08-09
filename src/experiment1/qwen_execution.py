@@ -21,6 +21,10 @@ def _pil_frames(batch: FrameBatch) -> list[Image.Image]:
     return [Image.fromarray(frame) for frame in batch.frames]
 
 
+def _pil_image(batch: FrameBatch) -> Image.Image:
+    return Image.fromarray(batch.frames[0])
+
+
 def normalize_video_kwargs(video_kwargs: dict[str, Any]) -> dict[str, Any]:
     """Keep qwen-vl-utils kwargs compatible with strict processor validators."""
     normalized = dict(video_kwargs)
@@ -129,14 +133,23 @@ def run_qwen_relevance_example(
     question_text = parse_question_tags(example.question, example)
     content: list[dict[str, Any]] = []
     for batch in frame_batches:
-        content.append(
-            {
-                "type": "video",
-                "video": _pil_frames(batch),
-                "sample_fps": effective_sample_fps(batch),
-                **resolution.to_processor_kwargs(),
-            }
-        )
+        if batch.metadata.get("input_modality") == "image":
+            content.append(
+                {
+                    "type": "image",
+                    "image": _pil_image(batch),
+                    **resolution.to_processor_kwargs(),
+                }
+            )
+        else:
+            content.append(
+                {
+                    "type": "video",
+                    "video": _pil_frames(batch),
+                    "sample_fps": effective_sample_fps(batch),
+                    **resolution.to_processor_kwargs(),
+                }
+            )
     content.append({"type": "text", "text": prompt})
     messages = [{"role": "user", "content": content}]
     rendered = model._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -155,16 +168,25 @@ def run_qwen_relevance_example(
     input_ids = inputs["input_ids"][0].detach().cpu().tolist()
     mm_token_type_ids = inputs.get("mm_token_type_ids")
     mm_ids = mm_token_type_ids[0].detach().cpu().tolist() if mm_token_type_ids is not None else None
-    video_grid_thw = inputs["video_grid_thw"].detach().cpu().tolist()
+    video_grid_tensor = inputs.get("video_grid_thw")
+    image_grid_tensor = inputs.get("image_grid_thw")
+    video_grid_thw = video_grid_tensor.detach().cpu().tolist() if video_grid_tensor is not None else []
+    image_grid_thw = image_grid_tensor.detach().cpu().tolist() if image_grid_tensor is not None else []
     second_per_grid_ts = inputs.get("second_per_grid_ts")
     seconds = second_per_grid_ts.detach().cpu().tolist() if second_per_grid_ts is not None else []
     spatial_merge_size = int(model._model.config.vision_config.spatial_merge_size)
+    visual_input_modalities = [
+        "image" if batch.metadata.get("input_modality") == "image" else "video"
+        for batch in frame_batches
+    ]
     layout = build_token_layout(
         input_ids=input_ids,
         tokenizer=model._processor.tokenizer,
         rendered_prompt=rendered,
         question_text=question_text,
         video_grid_thw=video_grid_thw,
+        image_grid_thw=image_grid_thw,
+        visual_input_modalities=visual_input_modalities,
         spatial_merge_size=spatial_merge_size,
         video_token_id=getattr(model._processor, "video_token_id", None),
         image_token_id=getattr(model._processor, "image_token_id", None),
@@ -264,6 +286,8 @@ def run_qwen_relevance_example(
             "generation_runtime_seconds": time.time() - gen_started,
             "input_token_count": len(input_ids),
             "video_grid_thw": video_grid_thw,
+            "image_grid_thw": image_grid_thw,
+            "visual_input_modalities": visual_input_modalities,
             "second_per_grid_ts": seconds,
             "source_video_paths": [str(batch.video_path) if batch.video_path else None for batch in frame_batches],
             "effective_sample_fps": [effective_sample_fps(batch) for batch in frame_batches],
