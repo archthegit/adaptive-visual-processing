@@ -3,7 +3,10 @@ __pycache__/
 .pytest_cache/
 .venv/
 
+data/
 outputs/*
 !outputs/.gitkeep
 !outputs/pilot_manifest.jsonl
 !outputs/pilot_summary.json
+!outputs/experiment1_manifest.jsonl
+!outputs/experiment1_summary.json

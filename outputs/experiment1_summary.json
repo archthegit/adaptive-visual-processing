@@ -1,0 +1,57 @@
+{
+  "seed": 20260808,
+  "examples_per_category": 12,
+  "source_questions_dir": "/private/tmp/hd-epic-annotations/vqa-benchmark",
+  "available_question_types": {
+    "fine_grained": [
+      "fine_grained_action_localization",
+      "fine_grained_action_recognition",
+      "fine_grained_how_recognition",
+      "fine_grained_why_recognition"
+    ],
+    "gaze": [
+      "gaze_gaze_estimation",
+      "gaze_interaction_anticipation"
+    ],
+    "ingredient": [
+      "ingredient_exact_ingredient_recognition",
+      "ingredient_ingredient_adding_localization",
+      "ingredient_ingredient_recognition",
+      "ingredient_ingredient_retrieval",
+      "ingredient_ingredient_weight",
+      "ingredient_ingredients_order"
+    ],
+    "object_motion": [
+      "object_motion_object_movement_counting",
+      "object_motion_object_movement_itinerary",
+      "object_motion_stationary_object_localization"
+    ]
+  },
+  "pilot": {
+    "num_examples": 48,
+    "by_category": {
+      "fine_grained": 12,
+      "gaze": 12,
+      "ingredient": 12,
+      "object_motion": 12
+    },
+    "by_question_type": {
+      "fine_grained_action_localization": 3,
+      "fine_grained_action_recognition": 3,
+      "fine_grained_how_recognition": 3,
+      "fine_grained_why_recognition": 3,
+      "gaze_gaze_estimation": 6,
+      "gaze_interaction_anticipation": 6,
+      "ingredient_exact_ingredient_recognition": 2,
+      "ingredient_ingredient_adding_localization": 2,
+      "ingredient_ingredient_recognition": 2,
+      "ingredient_ingredient_retrieval": 2,
+      "ingredient_ingredient_weight": 2,
+      "ingredient_ingredients_order": 2,
+      "object_motion_object_movement_counting": 4,
+      "object_motion_object_movement_itinerary": 4,
+      "object_motion_stationary_object_localization": 4
+    }
+  },
+  "output_jsonl": "outputs/experiment1_manifest.jsonl"
+}

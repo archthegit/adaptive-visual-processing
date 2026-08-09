@@ -15,6 +15,7 @@ class QwenConfig:
     device_map: str = "auto"
     torch_dtype: str = "auto"
     max_new_tokens: int = 4
+    attn_implementation: str = "eager"
 
 
 class Qwen25VLWrapper:
@@ -44,6 +45,7 @@ class Qwen25VLWrapper:
             self.config.model_id,
             torch_dtype=self.config.torch_dtype,
             device_map=self.config.device_map,
+            attn_implementation=self.config.attn_implementation,
         )
         self._model.eval()
 
