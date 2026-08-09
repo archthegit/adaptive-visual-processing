@@ -54,6 +54,10 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
   - accuracy on completed examples: 1/9
   - single-input visual tokens: 2704
   - two-input object-motion examples failed with CUDA OOM on A100 40GB under naive full-attention extraction
+- Vision-access validation on `fine_grained_action_localization_1309`:
+  - no cutoff with `reduced_sdpa`: predicted index 3
+  - early cutoff with `reduced_sdpa`: predicted index -1
+  - relevance comparison showed large changes, including max normalized-frame-score difference 0.757 and absolute visual-mass difference 0.488
 
 ### Initial Insights
 
@@ -68,7 +72,7 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 
 - Current full-attention debug extractor remains the correctness baseline for small runs.
 - New `--attention-extraction reduced_sdpa` mode avoids returning/storing full attention tensors and captures reduced question-to-visual relevance per layer.
-- New visual-access cutoff path masks text/query attention to visual-token keys after `none/early/middle/late` or an explicit layer index. Local tests prove attention outputs change after the cutoff and remain unchanged before the cutoff.
+- New visual-access cutoff path masks text/query attention to visual-token keys after `none/early/middle/late` or an explicit layer index. Local tests prove attention outputs change after the cutoff and remain unchanged before the cutoff, and Colab validation showed prediction/relevance changes on a real Qwen run.
 - The reduced extractor has local synthetic correctness tests, but still needs Colab validation against `full` on one 4-8 frame HD-EPIC example before it is used as the main medium/high-resolution path.
 
 ### Blockers / Dependencies

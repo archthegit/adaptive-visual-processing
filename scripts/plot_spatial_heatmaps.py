@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,11 +28,67 @@ def parse_args() -> argparse.Namespace:
 def read_frame(video_path: str, frame_index: int) -> np.ndarray:
     try:
         import decord
-    except ImportError as exc:
-        raise RuntimeError("Install decord to extract frames for spatial overlays.") from exc
-    reader = decord.VideoReader(video_path, ctx=decord.cpu(0))
-    frame_index = max(0, min(int(frame_index), len(reader) - 1))
-    return reader[frame_index].asnumpy()
+    except ImportError:
+        return read_frame_ffmpeg(video_path, frame_index)
+    else:
+        reader = decord.VideoReader(video_path, ctx=decord.cpu(0))
+        frame_index = max(0, min(int(frame_index), len(reader) - 1))
+        return reader[frame_index].asnumpy()
+
+
+def probe_video(video_path: str) -> dict[str, Any]:
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,avg_frame_rate,nb_frames,duration",
+        "-of",
+        "json",
+        video_path,
+    ]
+    result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
+    stream = json.loads(result.stdout)["streams"][0]
+    numerator, denominator = stream["avg_frame_rate"].split("/")
+    fps = float(numerator) / float(denominator)
+    if fps <= 0:
+        raise RuntimeError(f"Could not determine a positive FPS for {video_path}.")
+    if stream.get("nb_frames") and stream["nb_frames"] != "N/A":
+        num_frames = int(stream["nb_frames"])
+    else:
+        num_frames = max(1, int(round(float(stream["duration"]) * fps)))
+    return {"width": int(stream["width"]), "height": int(stream["height"]), "fps": fps, "num_frames": num_frames}
+
+
+def read_frame_ffmpeg(video_path: str, frame_index: int) -> np.ndarray:
+    info = probe_video(video_path)
+    frame_index = max(0, min(int(frame_index), info["num_frames"] - 1))
+    timestamp = frame_index / info["fps"]
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{timestamp:.6f}",
+        "-i",
+        video_path,
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "pipe:1",
+    ]
+    result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE)
+    frame = np.frombuffer(result.stdout, dtype=np.uint8)
+    expected = info["height"] * info["width"] * 3
+    if frame.size != expected:
+        raise RuntimeError(f"ffmpeg returned {frame.size} bytes, expected {expected}.")
+    return frame.reshape((info["height"], info["width"], 3))
 
 
 def represented_frame_index(cells: list[dict[str, Any]], input_index: int, temporal_bin: int) -> int:
@@ -80,4 +137,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,3 +1,6 @@
+import subprocess
+
+from scripts.plot_spatial_heatmaps import read_frame_ffmpeg
 from scripts.plot_spatial_heatmaps import represented_frame_index
 
 
@@ -11,3 +14,24 @@ def test_represented_frame_index_uses_middle_sampled_frame():
     ]
     assert represented_frame_index(cells, input_index=0, temporal_bin=1) == 3
 
+
+def test_read_frame_ffmpeg_reads_synthetic_mp4(tmp_path):
+    video_path = tmp_path / "synthetic.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=32x24:rate=5:duration=1",
+            "-pix_fmt",
+            "yuv420p",
+            str(video_path),
+        ],
+        check=True,
+    )
+    frame = read_frame_ffmpeg(str(video_path), 2)
+    assert frame.shape == (24, 32, 3)
