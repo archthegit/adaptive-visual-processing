@@ -76,6 +76,37 @@ def map_unexpanded_to_expanded_indices(
     return mapping
 
 
+def token_indices_for_char_span(
+    tokenizer: Any,
+    text: str,
+    start: int,
+    end: int,
+) -> tuple[int, ...]:
+    if start < 0 or end <= start:
+        return tuple()
+    try:
+        encoded = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
+    except TypeError:
+        return tuple()
+    offsets = encoded.get("offset_mapping")
+    if offsets is None:
+        return tuple()
+    if hasattr(offsets, "tolist"):
+        offsets = offsets.tolist()
+    if offsets and isinstance(offsets[0], list) and offsets[0] and isinstance(offsets[0][0], (list, tuple)):
+        offsets = offsets[0]
+    indices: list[int] = []
+    for index, offset in enumerate(offsets):
+        if offset is None:
+            continue
+        token_start, token_end = int(offset[0]), int(offset[1])
+        if token_end <= token_start:
+            continue
+        if token_start < end and token_end > start:
+            indices.append(index)
+    return tuple(indices)
+
+
 def derive_question_token_indices(
     tokenizer: Any,
     rendered_prompt: str | None,
@@ -101,6 +132,14 @@ def derive_question_token_indices(
         return tuple()
     unexpanded_ids = _to_list(tokenizer(rendered_prompt, add_special_tokens=False)["input_ids"])
     unexpanded_span = find_subsequence(unexpanded_ids, scoped_ids)
+    if not unexpanded_span:
+        char_start = rendered_prompt.find(scoped)
+        unexpanded_span = token_indices_for_char_span(
+            tokenizer,
+            rendered_prompt,
+            char_start,
+            char_start + len(scoped) if char_start >= 0 else -1,
+        )
     if not unexpanded_span:
         return tuple()
     index_map = map_unexpanded_to_expanded_indices(unexpanded_ids, all_ids, visual_token_ids or set())
@@ -197,7 +236,11 @@ def build_token_layout(
         visual_token_ids={token_id for token_id in (video_token_id, image_token_id) if token_id is not None},
     )
     if not question_indices:
-        raise ValueError("Could not derive question token indices from tokenizer/prompt.")
+        raise ValueError(
+            "Could not derive question token indices from tokenizer/prompt. "
+            f"query_scope={query_scope!r}, question_text={question_text!r}, "
+            f"input_tokens={len(ids)}, visual_tokens={len(visual_indices)}."
+        )
     cells = cells_from_video_grid(visual_indices, video_grid_thw, spatial_merge_size, second_per_grid_ts)
     return TokenLayout(
         question_token_indices=question_indices,

@@ -2,14 +2,31 @@ from src.experiment1.token_layout import (
     build_token_layout,
     cells_from_video_grid,
     derive_question_token_indices,
+    token_indices_for_char_span,
     visual_indices_from_ids,
     map_unexpanded_to_expanded_indices,
 )
 
 
 class FakeTokenizer:
-    def __call__(self, text, add_special_tokens=False):
-        return {"input_ids": [ord(char) for char in text]}
+    def __call__(self, text, add_special_tokens=False, return_offsets_mapping=False):
+        encoded = {"input_ids": [ord(char) for char in text]}
+        if return_offsets_mapping:
+            encoded["offset_mapping"] = [(index, index + 1) for index in range(len(text))]
+        return encoded
+
+
+class OffsetFallbackTokenizer:
+    def __call__(self, text, add_special_tokens=False, return_offsets_mapping=False):
+        ids = [500 if char == "V" else ord(char) for char in text]
+        if return_offsets_mapping:
+            return {
+                "input_ids": ids,
+                "offset_mapping": [(index, index + 1) for index in range(len(text))],
+            }
+        if text == "What?":
+            return {"input_ids": [999]}
+        return {"input_ids": ids}
 
 
 def test_question_indices_are_derived_from_tokenized_prompt_not_hardcoded():
@@ -31,6 +48,13 @@ def test_unexpanded_to_expanded_mapping_skips_repeated_visual_tokens():
         {500},
     )
     assert mapping == {0: 0, 2: 4, 3: 5}
+
+
+def test_token_indices_for_char_span_uses_overlapping_offsets():
+    prompt = "User: video What? Answer:"
+    start = prompt.index("What?")
+    indices = token_indices_for_char_span(FakeTokenizer(), prompt, start, start + len("What?"))
+    assert indices == tuple(range(start, start + len("What?")))
 
 
 def test_video_grid_maps_visual_tokens_to_temporal_spatial_cells():
@@ -89,3 +113,34 @@ def test_build_token_layout_falls_back_from_unexpanded_prompt_to_expanded_input_
     )
     assert layout.question_token_indices == (10, 11, 12, 13, 14)
     assert layout.visual_token_indices == (6, 7, 8)
+
+
+def test_build_token_layout_falls_back_to_offsets_when_token_subsequence_fails():
+    prompt = "User: V What? Answer:"
+    layout = build_token_layout(
+        input_ids=[
+            ord("U"),
+            ord("s"),
+            ord("e"),
+            ord("r"),
+            ord(":"),
+            ord(" "),
+            500,
+            500,
+            500,
+            ord(" "),
+            ord("W"),
+            ord("h"),
+            ord("a"),
+            ord("t"),
+            ord("?"),
+        ],
+        tokenizer=OffsetFallbackTokenizer(),
+        rendered_prompt=prompt,
+        question_text="What?",
+        video_grid_thw=[(1, 2, 6)],
+        spatial_merge_size=2,
+        video_token_id=500,
+        second_per_grid_ts=[1.0],
+    )
+    assert layout.question_token_indices == (10, 11, 12, 13, 14)
