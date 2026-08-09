@@ -5,6 +5,7 @@ from src.experiment1.relevance import (
     build_layerwise_relevance_from_token_scores,
     compute_layerwise_relevance,
     normalize_distribution,
+    token_scores_to_frame_scores_by_input,
     token_scores_to_spatial_scores_by_input,
 )
 from src.experiment1.token_layout import TokenLayout, VisualTokenCell
@@ -94,3 +95,21 @@ def test_spatial_scores_preserve_video_input_dimension():
     scores = token_scores_to_spatial_scores_by_input(np.array([[0.25, 0.75]]), layout)
     assert scores.shape == (1, 2, 1, 1, 1)
     np.testing.assert_allclose(scores[0, :, 0, 0, 0], [0.25, 0.75])
+
+
+def test_frame_scores_preserve_video_input_dimension():
+    cells = (
+        VisualTokenCell(2, 0, "video", 0, 0, 0, 0, 1, 1, 1),
+        VisualTokenCell(3, 1, "video", 1, 0, 0, 0, 1, 1, 1),
+    )
+    layout = TokenLayout(
+        question_token_indices=(4,),
+        prompt_token_indices=tuple(range(5)),
+        visual_token_indices=(2, 3),
+        visual_cells=cells,
+        visual_grid_metadata={"video_grid_thw": [[1, 2, 2], [1, 2, 2]], "spatial_merge_size": 2},
+        query_scope="question",
+    )
+    scores = token_scores_to_frame_scores_by_input(np.array([[0.25, 0.75]]), layout)
+    assert scores.shape == (1, 2, 1)
+    np.testing.assert_allclose(scores[0, :, 0], [0.25, 0.75])

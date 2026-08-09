@@ -27,7 +27,21 @@ def normalize_video_kwargs(video_kwargs: dict[str, Any]) -> dict[str, Any]:
     fps = normalized.get("fps")
     if isinstance(fps, list) and len(fps) >= 1 and all(item == fps[0] for item in fps):
         normalized["fps"] = fps[0]
+    elif isinstance(fps, list):
+        raise ValueError(
+            "Qwen processor returned per-video FPS values, but this installed processor validates `fps` as a scalar. "
+            f"Refusing to collapse different FPS values silently: {fps}"
+        )
     return normalized
+
+
+def effective_sample_fps(batch: FrameBatch) -> float:
+    if len(batch.timestamps) <= 1:
+        return 1.0
+    duration = float(batch.timestamps[-1] - batch.timestamps[0])
+    if duration <= 0:
+        return 1.0
+    return float((len(batch.timestamps) - 1) / duration)
 
 
 def cuda_memory_metadata(torch_module: Any) -> dict[str, int]:
@@ -80,6 +94,18 @@ def visual_token_cell_metadata(layout: Any, frame_batches: list[FrameBatch]) -> 
     return records
 
 
+def next_token_topk_from_outputs(outputs: Any, k: int = 10) -> list[dict[str, float | int]]:
+    logits = getattr(outputs, "logits", None)
+    if logits is None:
+        return []
+    next_logits = logits[0, -1].detach().float().cpu()
+    values, indices = next_logits.topk(min(k, next_logits.shape[0]))
+    return [
+        {"token_id": int(token_id), "logit": float(logit)}
+        for token_id, logit in zip(indices.tolist(), values.tolist())
+    ]
+
+
 def run_qwen_relevance_example(
     model: Qwen25VLWrapper,
     example: VQAExample,
@@ -107,7 +133,7 @@ def run_qwen_relevance_example(
             {
                 "type": "video",
                 "video": _pil_frames(batch),
-                "sample_fps": 1.0,
+                "sample_fps": effective_sample_fps(batch),
                 **resolution.to_processor_kwargs(),
             }
         )
@@ -151,6 +177,7 @@ def run_qwen_relevance_example(
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
     started = time.time()
+    prefill_next_token_topk: list[dict[str, float | int]] = []
     if attention_extraction == "full":
         context = (
             masked_eager_attention_context(model._model, layout, vision_access_through_layer)
@@ -169,13 +196,16 @@ def run_qwen_relevance_example(
             raise RuntimeError(
                 "Qwen did not return decoder attentions. Ensure attn_implementation='eager' and output_attentions=True."
             )
+        prefill_next_token_topk = next_token_topk_from_outputs(outputs)
         relevance = compute_layerwise_relevance(attentions, layout)
         del outputs, attentions
     elif attention_extraction == "reduced_sdpa":
         expected_layers = int(model._model.config.text_config.num_hidden_layers)
         with reduced_attention_context(model._model, layout, vision_access_through_layer) as capture:
             with torch.inference_mode():
-                model._model(**inputs, output_attentions=False, use_cache=False)
+                outputs = model._model(**inputs, output_attentions=False, use_cache=False)
+        prefill_next_token_topk = next_token_topk_from_outputs(outputs)
+        del outputs
         token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
         relevance = build_layerwise_relevance_from_token_scores(
             token_scores, layout, "qwen_reduced_sdpa_question_visual_rows"
@@ -236,6 +266,8 @@ def run_qwen_relevance_example(
             "video_grid_thw": video_grid_thw,
             "second_per_grid_ts": seconds,
             "source_video_paths": [str(batch.video_path) if batch.video_path else None for batch in frame_batches],
+            "effective_sample_fps": [effective_sample_fps(batch) for batch in frame_batches],
+            "prefill_next_token_topk": prefill_next_token_topk,
             **memory_after_prefill,
         },
     }

@@ -73,6 +73,18 @@ for t in T_llm:
 
 This must be manually validated on a small GPU run by comparing produced `video_grid_thw`, visual placeholder count, and token positions from the real processor/model inputs.
 
+## Frame and Input Metadata
+
+Qwen temporal bins may represent multiple sampled frames. Artifact metadata
+therefore records the sampled frame indices and timestamps represented by each
+visual-token temporal bin.
+
+For multi-video examples, artifacts preserve per-input frame relevance in
+`raw_frame_scores_by_input` and `normalized_frame_scores_by_input`. The older
+`raw_frame_scores` field is retained for backwards compatibility but merges
+same-numbered temporal bins across visual inputs, so it should not be used for
+object-motion interpretation.
+
 ## Attention Extraction
 
 The installed decoder attention class is `Qwen2_5_VLAttention`. Its forward path calls the Transformers attention interface selected by `config._attn_implementation`.
@@ -100,6 +112,8 @@ full
 
 reduced_sdpa
   Registers a custom Transformers attention implementation.
+  Registers the same custom implementation name with Transformers'
+  causal-mask interface.
   Normal attention output is computed with torch scaled_dot_product_attention.
   Separately computes only question-token rows over all keys, selects visual
   columns, averages batch/heads/question tokens immediately, and stores one
@@ -126,6 +140,14 @@ approximation. Before using it for medium/high resolution or long-frame runs,
 validate it against `full` on a 4-8 frame example and compare per-layer token or
 frame scores within numerical tolerance.
 
+Important correctness note: custom attention implementation names must also be
+registered with `transformers.masking_utils.ALL_MASK_ATTENTION_FUNCTIONS`. If
+they are not, `create_causal_mask` treats the backend as externally-managed and
+returns `None`; using SDPA with `is_causal=False` would then leak future tokens
+during prefill. The current implementation registers both custom attention
+names with `eager_mask`, which materializes an additive causal mask and disables
+causal-mask skipping.
+
 ## Vision-Access Intervention Implementation
 
 The runner now connects `--vision-access-through-layer` to Qwen decoder
@@ -147,6 +169,9 @@ The intervention has local synthetic tests proving attention outputs change
 after the cutoff and remain unchanged before the cutoff. It still needs real
 Qwen/Colab validation showing answer logits or predictions change on at least
 one HD-EPIC example.
+
+The earlier Colab run comparing `none` vs `early` before the causal-mask
+registration fix is invalid and should not be interpreted experimentally.
 
 ## Remaining Vision-Access Validation
 

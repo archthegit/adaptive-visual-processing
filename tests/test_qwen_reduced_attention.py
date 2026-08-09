@@ -43,11 +43,39 @@ def test_set_attention_implementation_only_changes_decoder_layers():
     assert changed == [(text_config, "eager")]
 
 
+def test_custom_attention_implementations_register_causal_masks():
+    import pytest
+
+    torch = pytest.importorskip("torch")
+    from transformers.masking_utils import create_causal_mask
+
+    from src.experiment1 import qwen_reduced_attention as reduced
+
+    reduced.register_reduced_attention()
+
+    class Config:
+        is_causal = True
+
+        def __init__(self, implementation):
+            self._attn_implementation = implementation
+
+    for implementation in [reduced.ATTENTION_IMPLEMENTATION, reduced.MASKED_EAGER_IMPLEMENTATION]:
+        mask = create_causal_mask(
+            config=Config(implementation),
+            inputs_embeds=torch.zeros(1, 4, 8),
+            attention_mask=None,
+            past_key_values=None,
+        )
+        assert mask is not None
+        assert mask.shape == (1, 1, 4, 4)
+        assert mask[0, 0, 0, 1] < -1e20
+        assert mask[0, 0, 3, 0] == 0
+
+
 def test_reduced_attention_matches_full_attention_for_question_visual_rows():
-    try:
-        import torch
-    except ImportError:
-        return
+    import pytest
+
+    torch = pytest.importorskip("torch")
 
     from src.experiment1 import qwen_reduced_attention as reduced
 
@@ -76,11 +104,51 @@ def test_reduced_attention_matches_full_attention_for_question_visual_rows():
     np.testing.assert_allclose(capture.ordered_token_scores(), [expected], rtol=1e-6, atol=1e-6)
 
 
-def test_visual_access_intervention_changes_attention_after_cutoff():
+def test_reduced_attention_respects_additive_causal_mask():
+    import pytest
+
+    torch = pytest.importorskip("torch")
+    from transformers.masking_utils import create_causal_mask
+
+    from src.experiment1 import qwen_reduced_attention as reduced
+
+    class Config:
+        is_causal = True
+        _attn_implementation = reduced.ATTENTION_IMPLEMENTATION
+
+    class Module:
+        num_key_value_groups = 1
+        training = False
+        layer_idx = 0
+
+    reduced.register_reduced_attention()
+    query = torch.tensor([[[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]])
+    key = torch.tensor([[[[1.0, 0.0], [0.0, 1.0], [2.0, 2.0]]]])
+    value = torch.eye(3).reshape(1, 1, 3, 3)
+    mask = create_causal_mask(
+        config=Config(),
+        inputs_embeds=torch.zeros(1, 3, 2),
+        attention_mask=None,
+        past_key_values=None,
+    )
+    capture = reduced.ReducedAttentionCapture(question_token_indices=(0, 1), visual_token_indices=(2,))
+    old_capture = reduced._ACTIVE_CAPTURE
+    reduced._ACTIVE_CAPTURE = capture
     try:
-        import torch
-    except ImportError:
-        return
+        reduced.qwen_relevance_reduced_sdpa_forward(Module(), query, key, value, mask, scaling=1.0)
+    finally:
+        reduced._ACTIVE_CAPTURE = old_capture
+
+    masked_logits = torch.matmul(query, key.transpose(2, 3)) + mask
+    expected = torch.softmax(masked_logits, dim=-1)[:, :, [0, 1], :][:, :, :, [2]].mean(dim=(0, 1, 2)).numpy()
+    np.testing.assert_allclose(capture.ordered_token_scores(), [expected], rtol=1e-6, atol=1e-6)
+    assert expected[0] == 0.0
+
+
+def test_visual_access_intervention_changes_attention_after_cutoff():
+    import pytest
+
+    torch = pytest.importorskip("torch")
 
     from src.experiment1 import qwen_reduced_attention as reduced
 
@@ -111,10 +179,9 @@ def test_visual_access_intervention_changes_attention_after_cutoff():
 
 
 def test_visual_access_intervention_keeps_attention_before_cutoff():
-    try:
-        import torch
-    except ImportError:
-        return
+    import pytest
+
+    torch = pytest.importorskip("torch")
 
     from src.experiment1 import qwen_reduced_attention as reduced
 

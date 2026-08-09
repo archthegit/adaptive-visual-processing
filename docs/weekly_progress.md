@@ -29,6 +29,8 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 - Refactored relevance construction so reduced token scores can be converted into full layer/frame/spatial summaries without requiring full attention tensors at that boundary.
 - Implemented an opt-in `reduced_sdpa` Qwen attention extraction mode that computes normal attention output with SDPA and captures only question-token rows x visual-token columns for relevance.
 - Connected `--vision-access-through-layer` to Qwen decoder attention during both prefill and generation using an additive text-to-visual key mask after the cutoff layer.
+- Fixed the critical causal-mask registration bug for custom Qwen attention backends. Before this fix, `reduced_sdpa` and cutoff runs could attend to future prompt tokens during prefill and are invalid.
+- Changed Experiment 1 frame budgeting so `--num-frames` is a total budget split across visual inputs by default, preventing two-video object-motion questions from receiving double the frames/tokens. Legacy per-input behavior remains available via `--frame-budget-mode per-input`.
 - Added absolute visual-attention mass by decoder layer, in addition to visual-token-normalized relevance.
 - Preserved visual-token layout metadata with explicit `video_input_index`, `temporal_bin`, `spatial_row`, `spatial_col`, and represented sampled frame indices/timestamps.
 - Added spatial heatmap overlay plotting for Experiment 1 artifacts.
@@ -54,10 +56,11 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
   - accuracy on completed examples: 1/9
   - single-input visual tokens: 2704
   - two-input object-motion examples failed with CUDA OOM on A100 40GB under naive full-attention extraction
-- Vision-access validation on `fine_grained_action_localization_1309`:
+- Invalidated vision-access validation on `fine_grained_action_localization_1309` before causal-mask fix:
   - no cutoff with `reduced_sdpa`: predicted index 3
   - early cutoff with `reduced_sdpa`: predicted index -1
   - relevance comparison showed large changes, including max normalized-frame-score difference 0.757 and absolute visual-mass difference 0.488
+  - status: invalid because custom attention names had not yet been registered with Transformers' causal-mask interface
 
 ### Initial Insights
 
@@ -67,19 +70,20 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 - The layer x temporal-bin heatmap shows a strong average bias toward the earliest Qwen temporal bin; this could reflect dataset evidence location, model positional bias, or mini-pilot selection bias.
 - Fine-grained localization stayed at 0/3 across low 4-frame, low 8-frame, and medium 8-frame settings, so this tiny pilot does not support the idea that global frame count or medium global resolution alone solves fine-grained failures.
 - Absolute visual-attention mass is now logged because within-visual normalization alone cannot answer whether the model's total reliance on visual tokens decreases by layer.
+- Earlier reduced/cutoff findings should not be used as scientific evidence until rerun after the causal-mask registration fix.
 
 ### Code / Infrastructure
 
 - Current full-attention debug extractor remains the correctness baseline for small runs.
-- New `--attention-extraction reduced_sdpa` mode avoids returning/storing full attention tensors and captures reduced question-to-visual relevance per layer.
-- New visual-access cutoff path masks text/query attention to visual-token keys after `none/early/middle/late` or an explicit layer index. Local tests prove attention outputs change after the cutoff and remain unchanged before the cutoff, and Colab validation showed prediction/relevance changes on a real Qwen run.
-- The reduced extractor has local synthetic correctness tests, but still needs Colab validation against `full` on one 4-8 frame HD-EPIC example before it is used as the main medium/high-resolution path.
+- New `--attention-extraction reduced_sdpa` mode avoids returning/storing full attention tensors and captures reduced question-to-visual relevance per layer while preserving causal masks via registered mask functions.
+- New visual-access cutoff path masks text/query attention to visual-token keys after `none/early/middle/late` or an explicit layer index. Local tests prove attention outputs change after the cutoff and remain unchanged before the cutoff.
+- The reduced extractor has local synthetic correctness tests, including a causal-mask test, but still needs Colab validation against `full` on one 4-8 frame HD-EPIC example before it is used as the main medium/high-resolution path.
 
 ### Blockers / Dependencies
 
 - Full balanced 48-example pilot currently requires 72 unique MP4s, about 70.1 GiB, which is too slow for tight Colab iteration.
-- Medium/high resolution and multi-input examples require memory-efficient attention extraction before scaling.
-- Faithful layer-wise visual-access intervention still requires a Qwen decoder attention-mask patch; hidden-state zeroing remains intentionally avoided.
+- Medium/high resolution and multi-input examples require validated memory-efficient attention extraction before scaling.
+- Faithful layer-wise visual-access intervention is implemented at the Qwen attention-interface level, but requires real-Qwen revalidation after the causal-mask fix. Hidden-state zeroing remains intentionally avoided.
 
 ### Next Steps
 

@@ -20,6 +20,8 @@ FIELDS = (
     "absolute_visual_mass_by_layer",
     "raw_frame_scores",
     "normalized_frame_scores",
+    "raw_frame_scores_by_input",
+    "normalized_frame_scores_by_input",
     "raw_spatial_scores_by_input",
     "normalized_spatial_scores_by_input",
     "aggregate_frame_scores",

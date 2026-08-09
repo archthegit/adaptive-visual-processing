@@ -20,6 +20,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mp4-dir", default=None)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--num-frames", type=int, default=8)
+    parser.add_argument(
+        "--frame-budget-mode",
+        default="total",
+        choices=["total", "per-input"],
+        help=(
+            "Interpret --num-frames as a total budget split across visual inputs, "
+            "or as the legacy per-input frame count."
+        ),
+    )
     parser.add_argument("--resolution-config", default="low", choices=["low", "medium", "high"])
     parser.add_argument("--vision-access-through-layer", default="none")
     parser.add_argument("--query-scope", default="question", choices=["question", "full_user_prompt"])
@@ -69,13 +78,35 @@ def load_examples_by_id(questions_dir: str | None, records: list[dict[str, Any]]
     return examples
 
 
-def frame_batches_for_example(example, mp4_dir: str | None, num_frames: int):
+def frames_per_input(num_frames: int, num_inputs: int, mode: str = "total") -> list[int]:
+    if num_frames <= 0:
+        raise ValueError("--num-frames must be positive.")
+    if num_inputs <= 0:
+        raise ValueError("Example has no visual inputs.")
+    if mode == "per-input":
+        return [num_frames for _ in range(num_inputs)]
+    if mode != "total":
+        raise ValueError("frame budget mode must be 'total' or 'per-input'.")
+    if num_frames < num_inputs:
+        raise ValueError(
+            f"--num-frames={num_frames} is smaller than the {num_inputs} visual inputs. "
+            "Increase --num-frames or use --frame-budget-mode per-input."
+        )
+    base = num_frames // num_inputs
+    remainder = num_frames % num_inputs
+    return [base + (1 if input_idx < remainder else 0) for input_idx in range(num_inputs)]
+
+
+def frame_batches_for_example(example, mp4_dir: str | None, num_frames: int, frame_budget_mode: str = "total"):
     if mp4_dir is None:
         raise ValueError("--mp4-dir is required for non-dry-run Experiment 1 execution.")
     from src.frame_sampling import UniformFrameSampler
 
-    sampler = UniformFrameSampler(num_frames=num_frames)
-    return [sampler.sample_video(segment.path_under(mp4_dir), segment) for segment in example.inputs]
+    allocations = frames_per_input(num_frames, len(example.inputs), frame_budget_mode)
+    return [
+        UniformFrameSampler(num_frames=frames).sample_video(segment.path_under(mp4_dir), segment)
+        for frames, segment in zip(allocations, example.inputs)
+    ]
 
 
 def main() -> None:
@@ -109,6 +140,7 @@ def main() -> None:
                     "question_type": record["question_type"],
                     "status": status,
                     "num_frames": args.num_frames,
+                    "frame_budget_mode": args.frame_budget_mode,
                     "resolution": resolution.to_metadata(),
                     "vision_access_through_layer": args.vision_access_through_layer,
                     "query_scope": args.query_scope,
@@ -121,7 +153,7 @@ def main() -> None:
         assert qwen_model is not None
         example = examples_by_id[record["question_id"]]
         try:
-            frame_batches = frame_batches_for_example(example, args.mp4_dir, args.num_frames)
+            frame_batches = frame_batches_for_example(example, args.mp4_dir, args.num_frames, args.frame_budget_mode)
             artifact = run_qwen_relevance_example(
                 qwen_model,
                 example,
@@ -167,6 +199,7 @@ def main() -> None:
         "config": {
             "manifest": args.manifest,
             "num_frames": args.num_frames,
+            "frame_budget_mode": args.frame_budget_mode,
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,
             "query_scope": args.query_scope,

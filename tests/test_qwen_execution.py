@@ -1,4 +1,12 @@
-from src.experiment1.qwen_execution import cuda_memory_metadata, normalize_video_kwargs, represented_sampled_frames
+import pytest
+
+from src.experiment1.qwen_execution import (
+    cuda_memory_metadata,
+    effective_sample_fps,
+    next_token_topk_from_outputs,
+    normalize_video_kwargs,
+    represented_sampled_frames,
+)
 
 
 class _Batch:
@@ -18,7 +26,25 @@ def test_normalize_video_kwargs_collapses_identical_multi_fps_list():
 
 
 def test_normalize_video_kwargs_preserves_multi_fps_list():
-    assert normalize_video_kwargs({"fps": [1.0, 2.0]}) == {"fps": [1.0, 2.0]}
+    with pytest.raises(ValueError, match="Refusing to collapse different FPS"):
+        normalize_video_kwargs({"fps": [1.0, 2.0]})
+
+
+def test_effective_sample_fps_uses_sampled_timestamp_span():
+    class Batch:
+        timestamps = (10.0, 20.0, 30.0, 40.0)
+
+    assert effective_sample_fps(Batch()) == 0.1
+
+
+def test_next_token_topk_from_outputs_extracts_compact_logits():
+    torch = pytest.importorskip("torch")
+
+    class Outputs:
+        logits = torch.tensor([[[0.0, 2.0, 1.0]]])
+
+    topk = next_token_topk_from_outputs(Outputs(), k=2)
+    assert topk == [{"token_id": 1, "logit": 2.0}, {"token_id": 2, "logit": 1.0}]
 
 
 def test_cuda_memory_metadata_is_empty_without_cuda():
