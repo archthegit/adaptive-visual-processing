@@ -3,14 +3,15 @@ from src.experiment1.manifest import (
     available_experiment1_types,
     experiment1_manifest_record,
     select_experiment1_examples,
+    select_video_aware_experiment1_examples,
 )
 
 
-def _example(question_type: str, idx: int):
+def _example(question_type: str, idx: int, video_id: str = "P00-synthetic"):
     return parse_vqa_example(
         f"{question_type}_{idx}",
         {
-            "inputs": {"video 1": {"id": "P00-synthetic"}},
+            "inputs": {"video 1": {"id": video_id}},
             "question": "Where is the relevant object?",
             "choices": ["A", "B", "C", "D", "E"],
             "correct_idx": idx % 5,
@@ -43,3 +44,24 @@ def test_experiment1_manifest_balances_four_categories():
         "fine_grained",
         "object_motion",
     }
+
+
+def test_video_aware_experiment1_manifest_prefers_available_videos():
+    examples = [
+        _example("gaze_gaze_estimation", 1, "P01-have"),
+        _example("ingredient_ingredient_recognition", 2, "P01-have"),
+        _example("fine_grained_action_recognition", 3, "P02-new"),
+        _example("object_motion_object_movement_counting", 4, "P03-new"),
+        _example("gaze_gaze_estimation", 5, "P04-too-many"),
+    ]
+    selected = select_video_aware_experiment1_examples(
+        examples,
+        target_size=4,
+        max_new_videos=2,
+        seed=11,
+        preferred_video_ids={"P01-have"},
+    )
+    assert len(selected) == 4
+    used_videos = {video_id for example in selected for video_id in example.video_ids}
+    assert "P01-have" in used_videos
+    assert len(used_videos - {"P01-have"}) <= 2

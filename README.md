@@ -279,6 +279,50 @@ python scripts/run_experiment1.py \
 
 This targets one downloaded MP4 instead of requiring the full 48-example manifest video set.
 
+Video-aware mini pilot when the balanced pilot requires too many MP4s:
+
+```bash
+python scripts/create_video_aware_experiment1_manifest.py \
+  --questions-dir /content/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir data/hd_epic_mp4 \
+  --target-size 12 \
+  --max-new-videos 8 \
+  --seed 20260808 \
+  --output-jsonl outputs/experiment1_video_aware_manifest.jsonl \
+  --summary-json outputs/experiment1_video_aware_summary.json
+```
+
+This keeps the same Experiment 1 categories but prefers videos already present
+under `--mp4-dir` and limits extra MP4s. Plan the required downloads:
+
+```bash
+python scripts/download_manifest_videos.py \
+  --manifest outputs/experiment1_video_aware_manifest.jsonl \
+  --output-dir data/hd_epic_mp4 \
+  --dry-run
+```
+
+Then download and run the smaller pilot:
+
+```bash
+python scripts/download_manifest_videos.py \
+  --manifest outputs/experiment1_video_aware_manifest.jsonl \
+  --output-dir data/hd_epic_mp4 \
+  --yes
+
+python scripts/run_experiment1.py \
+  --questions-dir /content/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir data/hd_epic_mp4 \
+  --manifest outputs/experiment1_video_aware_manifest.jsonl \
+  --num-frames 4 \
+  --resolution-config low \
+  --vision-access-through-layer none \
+  --query-scope question \
+  --max-new-tokens 16 \
+  --output-dir outputs/experiment1_qwen_video_aware_low_f4 \
+  --allow-7b-inference
+```
+
 ## Download Manifest Videos
 
 HD-EPIC MP4s are not stored in the annotation repository. To fetch only the videos referenced by a manifest:
