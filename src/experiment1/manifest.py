@@ -26,13 +26,16 @@ def available_experiment1_types(examples: list[VQAExample]) -> dict[str, list[st
 
 
 def select_experiment1_examples(
-    examples: list[VQAExample], examples_per_category: int = 12, seed: int = 20260808
+    examples: list[VQAExample],
+    examples_per_category: int = 12,
+    seed: int = 20260808,
+    max_video_inputs: int | None = None,
 ) -> list[VQAExample]:
     rng = random.Random(seed)
     grouped: dict[str, dict[str, list[VQAExample]]] = defaultdict(lambda: defaultdict(list))
     for example in examples:
         category = infer_experiment1_category(example.question_type)
-        if category is not None:
+        if category is not None and example_within_video_input_limit(example, max_video_inputs):
             grouped[category][example.question_type].append(example)
 
     selected: list[VQAExample] = []
@@ -79,6 +82,7 @@ def select_video_aware_experiment1_examples(
     max_new_videos: int = 8,
     seed: int = 20260808,
     preferred_video_ids: set[str] | None = None,
+    max_video_inputs: int | None = 1,
 ) -> list[VQAExample]:
     """Select a balanced Experiment 1 subset while limiting new MP4 downloads.
 
@@ -91,6 +95,7 @@ def select_video_aware_experiment1_examples(
         example
         for example in examples
         if infer_experiment1_category(example.question_type) in EXPERIMENT1_CATEGORIES
+        and example_within_video_input_limit(example, max_video_inputs)
     ]
     categories = [category for category in EXPERIMENT1_CATEGORIES if any(infer_experiment1_category(ex.question_type) == category for ex in eligible)]
     quotas = _balanced_category_quotas(target_size, categories)
@@ -172,12 +177,22 @@ def experiment1_manifest_record(example: VQAExample) -> dict[str, Any]:
     return record
 
 
+def count_video_inputs(example: VQAExample) -> int:
+    return sum(1 for segment in example.inputs if not segment.is_image)
+
+
+def example_within_video_input_limit(example: VQAExample, max_video_inputs: int | None) -> bool:
+    return max_video_inputs is None or count_video_inputs(example) <= max_video_inputs
+
+
 def summarize_experiment1_manifest(examples: list[VQAExample]) -> dict[str, Any]:
     video_ids = sorted({video_id for example in examples for video_id in example.video_ids})
+    video_input_counts = Counter(count_video_inputs(example) for example in examples)
     return {
         "num_examples": len(examples),
         "by_category": dict(sorted(Counter(infer_experiment1_category(example.question_type) for example in examples).items())),
         "by_question_type": dict(sorted(Counter(example.question_type for example in examples).items())),
+        "by_num_video_inputs": dict(sorted(video_input_counts.items())),
         "num_unique_videos": len(video_ids),
         "unique_videos": video_ids,
     }

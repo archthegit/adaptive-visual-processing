@@ -118,11 +118,28 @@ def frame_scores_for_summary(artifact: dict[str, Any]) -> list[list[float]]:
     relevance = artifact["relevance"]
     by_input = relevance.get("normalized_frame_scores_by_input")
     if by_input:
+        pairs = valid_input_temporal_pairs(artifact)
         return [
-            [float(value) for input_scores in layer for value in input_scores]
+            normalize_scores([float(layer[input_index][temporal_bin]) for input_index, temporal_bin in pairs])
             for layer in by_input
         ]
     return relevance["normalized_frame_scores"]
+
+
+def normalize_scores(scores: list[float]) -> list[float]:
+    total = sum(scores)
+    if total <= 0.0:
+        return [0.0 for _ in scores]
+    return [float(score / total) for score in scores]
+
+
+def valid_input_temporal_pairs(artifact: dict[str, Any]) -> list[tuple[int, int]]:
+    cells = artifact.get("token_layout", {}).get("visual_token_cells", [])
+    pairs = {
+        (int(cell["video_input_index"]), int(cell["temporal_bin"]))
+        for cell in cells
+    }
+    return sorted(pairs)
 
 
 def normalized_entropy(scores: list[float]) -> float:

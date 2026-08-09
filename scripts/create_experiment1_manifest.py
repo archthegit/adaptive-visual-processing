@@ -22,6 +22,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create the Experiment 1 HD-EPIC VQA manifest.")
     parser.add_argument("--questions-dir", required=True)
     parser.add_argument("--examples-per-category", type=int, default=12)
+    parser.add_argument(
+        "--max-video-inputs",
+        type=int,
+        default=None,
+        help="Optionally exclude examples with more than this many real video inputs. Image-time inputs do not count.",
+    )
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument("--output-jsonl", default="outputs/experiment1_manifest.jsonl")
     parser.add_argument("--summary-json", default="outputs/experiment1_summary.json")
@@ -31,7 +37,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     dataset = HDEpicVQADataset(args.questions_dir)
-    selected = select_experiment1_examples(dataset.examples, args.examples_per_category, args.seed)
+    selected = select_experiment1_examples(
+        dataset.examples,
+        args.examples_per_category,
+        args.seed,
+        max_video_inputs=args.max_video_inputs,
+    )
     output_path = Path(args.output_jsonl)
     if output_path.exists():
         output_path.unlink()
@@ -40,6 +51,7 @@ def main() -> None:
     summary = {
         "seed": args.seed,
         "examples_per_category": args.examples_per_category,
+        "max_video_inputs": args.max_video_inputs,
         "source_questions_dir": str(Path(args.questions_dir)),
         "available_question_types": available_experiment1_types(dataset.examples),
         "pilot": summarize_experiment1_manifest(selected),

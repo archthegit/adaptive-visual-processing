@@ -26,6 +26,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--questions-dir", required=True)
     parser.add_argument("--target-size", type=int, default=12)
     parser.add_argument("--max-new-videos", type=int, default=8)
+    parser.add_argument(
+        "--max-video-inputs",
+        type=int,
+        default=1,
+        help="Exclude examples with more than this many real video inputs. Image-time inputs do not count.",
+    )
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument("--mp4-dir", default=None, help="Prefer videos already present under this directory.")
     parser.add_argument("--preferred-video-id", action="append", default=None)
@@ -61,6 +67,7 @@ def main() -> None:
         max_new_videos=args.max_new_videos,
         seed=args.seed,
         preferred_video_ids=preferred,
+        max_video_inputs=args.max_video_inputs,
     )
     records = [experiment1_manifest_record(example) for example in selected]
     output_path = Path(args.output_jsonl)
@@ -70,6 +77,7 @@ def main() -> None:
         "target_size": args.target_size,
         "actual_size": len(selected),
         "max_new_videos": args.max_new_videos,
+        "max_video_inputs": args.max_video_inputs,
         "seed": args.seed,
         "preferred_video_count": len(preferred),
         "preferred_videos_used": sorted(
@@ -85,4 +93,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

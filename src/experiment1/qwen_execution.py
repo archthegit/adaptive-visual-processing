@@ -48,6 +48,23 @@ def effective_sample_fps(batch: FrameBatch) -> float:
     return float((len(batch.timestamps) - 1) / duration)
 
 
+def validate_scalar_video_fps_compatibility(frame_batches: list[FrameBatch], tolerance: float = 1e-6) -> None:
+    video_fps = [
+        effective_sample_fps(batch)
+        for batch in frame_batches
+        if batch.metadata.get("input_modality") != "image"
+    ]
+    if len(video_fps) <= 1:
+        return
+    first = video_fps[0]
+    if any(abs(fps - first) > tolerance for fps in video_fps[1:]):
+        raise ValueError(
+            "Multiple video inputs have different effective FPS values, but the pinned Qwen processor validates "
+            f"`fps` as a scalar. Use a single-video debug manifest or a processor version with per-video FPS support. "
+            f"effective_fps={video_fps}"
+        )
+
+
 def cuda_memory_metadata(torch_module: Any) -> dict[str, int]:
     if not torch_module.cuda.is_available():
         return {}
@@ -128,6 +145,7 @@ def run_qwen_relevance_example(
     model._load()
     assert model._model is not None
     assert model._processor is not None
+    validate_scalar_video_fps_compatibility(frame_batches)
 
     prompt = format_multiple_choice_prompt(example)
     question_text = parse_question_tags(example.question, example)

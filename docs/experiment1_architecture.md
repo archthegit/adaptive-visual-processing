@@ -61,6 +61,11 @@ receive one sampled frame and are sent through Qwen's image pathway. Video
 interval inputs are sent through Qwen's video pathway and consume the
 configurable video-frame budget.
 
+The pinned local Qwen processor validates video FPS as a scalar. The runner
+therefore rejects multiple real video inputs when their sampled effective FPS
+values differ. The initial Experiment 1 validation manifests should use
+`--max-video-inputs 1`, which still permits video-plus-reference-image examples.
+
 Experiment 1 reconstructs the reduced grid as:
 
 ```text

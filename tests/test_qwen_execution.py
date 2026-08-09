@@ -6,6 +6,7 @@ from src.experiment1.qwen_execution import (
     next_token_topk_from_outputs,
     normalize_video_kwargs,
     represented_sampled_frames,
+    validate_scalar_video_fps_compatibility,
 )
 
 
@@ -35,6 +36,32 @@ def test_effective_sample_fps_uses_sampled_timestamp_span():
         timestamps = (10.0, 20.0, 30.0, 40.0)
 
     assert effective_sample_fps(Batch()) == 0.1
+
+
+def test_validate_scalar_video_fps_rejects_mixed_multi_video_rates():
+    class Batch:
+        metadata = {"input_modality": "video"}
+
+        def __init__(self, timestamps):
+            self.timestamps = timestamps
+
+    with pytest.raises(ValueError, match="different effective FPS"):
+        validate_scalar_video_fps_compatibility([
+            Batch((0.0, 1.0, 2.0)),
+            Batch((0.0, 10.0, 20.0)),
+        ])
+
+
+def test_validate_scalar_video_fps_ignores_reference_images():
+    class Batch:
+        def __init__(self, timestamps, modality):
+            self.timestamps = timestamps
+            self.metadata = {"input_modality": modality}
+
+    validate_scalar_video_fps_compatibility([
+        Batch((0.0, 1.0, 2.0), "video"),
+        Batch((10.0,), "image"),
+    ])
 
 
 def test_next_token_topk_from_outputs_extracts_compact_logits():

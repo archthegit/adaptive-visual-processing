@@ -105,6 +105,17 @@ def represented_frame_index(cells: list[dict[str, Any]], input_index: int, tempo
     return int(frame_indices[len(frame_indices) // 2])
 
 
+def available_temporal_bins(cells: list[dict[str, Any]], input_index: int) -> list[int]:
+    bins = {
+        int(cell["temporal_bin"])
+        for cell in cells
+        if int(cell["video_input_index"]) == int(input_index)
+    }
+    if not bins:
+        raise ValueError(f"No visual-token cells for input {input_index}.")
+    return sorted(bins)
+
+
 def main() -> None:
     args = parse_args()
     artifact = json.loads(Path(args.artifact).read_text())
@@ -115,9 +126,9 @@ def main() -> None:
     if layer < 0 or layer >= spatial.shape[0]:
         raise ValueError(f"Layer {args.layer} is outside available range 0-{spatial.shape[0] - 1}.")
     input_index = args.input_index
-    temporal_bins = args.temporal_bin or list(range(spatial.shape[2]))
     video_path = artifact["metadata"]["source_video_paths"][input_index]
     cells = artifact["token_layout"]["visual_token_cells"]
+    temporal_bins = args.temporal_bin or available_temporal_bins(cells, input_index)
 
     written = []
     for temporal_bin in temporal_bins:

@@ -7,6 +7,12 @@ def test_summarize_experiment1_outputs_loads_artifacts_and_layer_stats(tmp_path)
     artifact = {
         "question_id": "q1",
         "category": "gaze",
+        "token_layout": {
+            "visual_token_cells": [
+                {"video_input_index": 0, "temporal_bin": 0},
+                {"video_input_index": 1, "temporal_bin": 0},
+            ]
+        },
         "relevance": {
             "absolute_visual_mass_by_layer": [0.2, 0.4],
             "normalized_frame_scores": [[0.7, 0.3], [0.4, 0.6]],
