@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution-config", default="low", choices=["low", "medium", "high"])
     parser.add_argument("--vision-access-through-layer", default="none")
     parser.add_argument("--query-scope", default="question", choices=["question", "full_user_prompt"])
+    parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--question-id", action="append", default=None, help="Run only this question id. Can be repeated.")
     parser.add_argument("--output-dir", default="outputs/experiment1_debug")
@@ -91,10 +92,10 @@ def main() -> None:
     qwen_model = None
     if args.allow_7b_inference and not args.dry_run:
         from src.experiment1.qwen_execution import run_qwen_relevance_example
-        from src.models.qwen import Qwen25VLWrapper
+        from src.models.qwen import Qwen25VLWrapper, QwenConfig
 
         examples_by_id = load_examples_by_id(args.questions_dir, records)
-        qwen_model = Qwen25VLWrapper()
+        qwen_model = Qwen25VLWrapper(QwenConfig(max_new_tokens=args.max_new_tokens))
 
     for record in records:
         if args.dry_run or not args.allow_7b_inference:
@@ -165,6 +166,7 @@ def main() -> None:
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,
             "query_scope": args.query_scope,
+            "max_new_tokens": args.max_new_tokens,
             "dry_run": args.dry_run,
             "allow_7b_inference": args.allow_7b_inference,
         },

@@ -64,7 +64,8 @@ def format_multiple_choice_prompt(example: VQAExample) -> str:
     text = f"Question: {example.question}. Answers: "
     for idx, choice in enumerate(example.choices):
         text += f"({chr(ord('A') + idx)}) {choice}. "
-    return parse_question_tags(text + "Correct: ", example)
+    text += "Respond with only the letter of the correct answer: "
+    return parse_question_tags(text, example)
 
 
 class BaseVQAModel(Protocol):

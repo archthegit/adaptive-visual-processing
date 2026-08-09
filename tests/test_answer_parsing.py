@@ -25,6 +25,7 @@ class AnswerParsingTests(unittest.TestCase):
         prompt = format_multiple_choice_prompt(example)
         self.assertIn("(0, 500, 1000, 1000)", prompt)
         self.assertIn("03:01", prompt)
+        self.assertIn("Respond with only the letter of the correct answer:", prompt)
 
 
 if __name__ == "__main__":

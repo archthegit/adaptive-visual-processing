@@ -14,7 +14,7 @@ class QwenConfig:
     model_id: str = "Qwen/Qwen2.5-VL-7B-Instruct"
     device_map: str = "auto"
     torch_dtype: str = "auto"
-    max_new_tokens: int = 4
+    max_new_tokens: int = 16
     attn_implementation: str = "eager"
 
 
