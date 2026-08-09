@@ -20,6 +20,15 @@ def _pil_frames(batch: FrameBatch) -> list[Image.Image]:
     return [Image.fromarray(frame) for frame in batch.frames]
 
 
+def normalize_video_kwargs(video_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Keep qwen-vl-utils kwargs compatible with strict processor validators."""
+    normalized = dict(video_kwargs)
+    fps = normalized.get("fps")
+    if isinstance(fps, list) and len(fps) == 1:
+        normalized["fps"] = fps[0]
+    return normalized
+
+
 def run_qwen_relevance_example(
     model: Qwen25VLWrapper,
     example: VQAExample,
@@ -53,6 +62,7 @@ def run_qwen_relevance_example(
     messages = [{"role": "user", "content": content}]
     rendered = model._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    video_kwargs = normalize_video_kwargs(video_kwargs)
 
     inputs = model._processor(
         text=[rendered],
