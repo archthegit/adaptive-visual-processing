@@ -11,7 +11,7 @@ from src.frame_sampling import FrameBatch
 from src.models.base import format_multiple_choice_prompt, parse_choice_response, parse_question_tags
 from src.models.qwen import Qwen25VLWrapper
 
-from .qwen_reduced_attention import reduced_attention_context
+from .qwen_reduced_attention import masked_eager_attention_context, reduced_attention_context
 from .relevance import build_layerwise_relevance_from_token_scores, compute_layerwise_relevance
 from .resolution import ResolutionConfig
 from .token_layout import build_token_layout
@@ -41,6 +41,45 @@ def cuda_memory_metadata(torch_module: Any) -> dict[str, int]:
     }
 
 
+def represented_sampled_frames(batch: FrameBatch, temporal_index: int, grid_t: int) -> dict[str, Any]:
+    if grid_t <= 0:
+        return {"sampled_frame_indices": [], "sampled_timestamps": []}
+    count = len(batch.frame_indices)
+    start = int(round(temporal_index * count / grid_t))
+    end = int(round((temporal_index + 1) * count / grid_t))
+    if end <= start:
+        end = min(count, start + 1)
+    return {
+        "sampled_frame_indices": list(batch.frame_indices[start:end]),
+        "sampled_timestamps": list(batch.timestamps[start:end]),
+        "note": "Qwen temporal bins may merge multiple sampled frames; with 8 sampled frames and 4 bins, each bin represents two sampled frames.",
+    }
+
+
+def visual_token_cell_metadata(layout: Any, frame_batches: list[FrameBatch]) -> list[dict[str, Any]]:
+    records = []
+    for cell in layout.visual_cells:
+        batch = frame_batches[cell.input_index]
+        represented = represented_sampled_frames(batch, cell.temporal_index, cell.grid_t)
+        records.append(
+            {
+                "token_index": cell.token_index,
+                "visual_index": cell.visual_index,
+                "video_input_index": cell.input_index,
+                "temporal_bin": cell.temporal_index,
+                "spatial_row": cell.spatial_y,
+                "spatial_col": cell.spatial_x,
+                "grid_t": cell.grid_t,
+                "grid_h": cell.grid_h,
+                "grid_w": cell.grid_w,
+                "seconds_per_grid": cell.seconds_per_grid,
+                "qwen_timestamp": cell.timestamp,
+                **represented,
+            }
+        )
+    return records
+
+
 def run_qwen_relevance_example(
     model: Qwen25VLWrapper,
     example: VQAExample,
@@ -48,6 +87,7 @@ def run_qwen_relevance_example(
     resolution: ResolutionConfig,
     query_scope: str = "question",
     attention_extraction: str = "full",
+    vision_access_through_layer: str | int | None = None,
 ) -> dict[str, Any]:
     try:
         import torch
@@ -108,10 +148,22 @@ def run_qwen_relevance_example(
         user_prompt_text=prompt,
     )
 
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
     started = time.time()
     if attention_extraction == "full":
-        with torch.inference_mode():
-            outputs = model._model(**inputs, output_attentions=True, use_cache=False)
+        context = (
+            masked_eager_attention_context(model._model, layout, vision_access_through_layer)
+            if vision_access_through_layer not in {None, "none"}
+            else None
+        )
+        if context is None:
+            with torch.inference_mode():
+                outputs = model._model(**inputs, output_attentions=True, use_cache=False)
+        else:
+            with context:
+                with torch.inference_mode():
+                    outputs = model._model(**inputs, output_attentions=True, use_cache=False)
         attentions = getattr(outputs, "attentions", None)
         if attentions is None:
             raise RuntimeError(
@@ -121,7 +173,7 @@ def run_qwen_relevance_example(
         del outputs, attentions
     elif attention_extraction == "reduced_sdpa":
         expected_layers = int(model._model.config.text_config.num_hidden_layers)
-        with reduced_attention_context(model._model, layout) as capture:
+        with reduced_attention_context(model._model, layout, vision_access_through_layer) as capture:
             with torch.inference_mode():
                 model._model(**inputs, output_attentions=False, use_cache=False)
         token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
@@ -137,8 +189,13 @@ def run_qwen_relevance_example(
         torch.cuda.empty_cache()
 
     gen_started = time.time()
-    with torch.inference_mode():
-        output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
+    if vision_access_through_layer in {None, "none"}:
+        with torch.inference_mode():
+            output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
+    else:
+        with masked_eager_attention_context(model._model, layout, vision_access_through_layer):
+            with torch.inference_mode():
+                output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
     raw_response = model._processor.batch_decode(
         output_ids[:, inputs["input_ids"].shape[1] :],
         skip_special_tokens=True,
@@ -164,12 +221,14 @@ def run_qwen_relevance_example(
             "visual_grid_metadata": layout.visual_grid_metadata,
             "num_visual_tokens": layout.num_visual_tokens,
             "query_scope": layout.query_scope,
+            "visual_token_cells": visual_token_cell_metadata(layout, frame_batches),
         },
         "relevance": relevance.to_json_dict(),
         "metadata": {
             "model_id": model.config.model_id,
             "attn_implementation": model.config.attn_implementation,
             "attention_extraction": attention_extraction,
+            "vision_access_through_layer": vision_access_through_layer or "none",
             "resolution": resolution.to_metadata(),
             "prefill_runtime_seconds": prefill_runtime,
             "generation_runtime_seconds": time.time() - gen_started,

@@ -126,20 +126,38 @@ approximation. Before using it for medium/high resolution or long-frame runs,
 validate it against `full` on a 4-8 frame example and compare per-layer token or
 frame scores within numerical tolerance.
 
-## Vision-Access Intervention Blocker
+## Vision-Access Intervention Implementation
 
-The desired intervention is layer-specific masking:
+The runner now connects `--vision-access-through-layer` to Qwen decoder
+attention during both:
+
+```text
+prefill / relevance extraction
+generation / answer decoding
+```
+
+For layers after the cutoff, the custom attention interface adds an additive
+mask from non-visual query rows to visual key columns. Layers at or before the
+cutoff retain normal attention. Generated answer tokens are treated as text
+queries and are also blocked from attending back to prompt visual-token
+positions after the cutoff. This is a text-to-visual attention intervention,
+not hidden-state zeroing.
+
+The intervention has local synthetic tests proving attention outputs change
+after the cutoff and remain unchanged before the cutoff. It still needs real
+Qwen/Colab validation showing answer logits or predictions change on at least
+one HD-EPIC example.
+
+## Remaining Vision-Access Validation
+
+The desired intervention is:
 
 ```text
 layers <= L: normal attention
 layers > L: text/question query rows cannot attend to visual key columns
 ```
 
-In the inspected implementation, `Qwen2_5_VLTextModel.forward` constructs causal masks once, then passes one mask per layer type into each decoder layer. There is no public API to provide a different text-to-visual mask per decoder layer while preserving all other causal behavior.
-
-The local code implements and tests construction of the desired layer-specific masks, but does not patch Qwen internals yet. The smallest faithful implementation on GPU is likely one of:
-
-1. subclass/patch `Qwen2_5_VLTextModel.forward` to add a per-layer additive mask before each `decoder_layer` call, or
-2. wrap each `Qwen2_5_VLDecoderLayer` / `Qwen2_5_VLAttention` to add the layer-specific text-to-visual block to `attention_mask`.
-
-No hidden-state zeroing substitute should be used; it is a different intervention.
+The current implementation performs this at the attention-interface level. The
+next validation is to run the same example with `none` and one cutoff setting
+and verify that logits or predictions differ while unmodified `none` continues
+to reproduce baseline behavior.

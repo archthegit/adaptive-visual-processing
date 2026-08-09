@@ -1,6 +1,10 @@
 import numpy as np
 
-from src.experiment1.qwen_reduced_attention import ReducedAttentionCapture, _set_attention_implementation
+from src.experiment1.qwen_reduced_attention import (
+    ReducedAttentionCapture,
+    VisualAccessIntervention,
+    _set_attention_implementation,
+)
 
 
 class _Config:
@@ -70,3 +74,70 @@ def test_reduced_attention_matches_full_attention_for_question_visual_rows():
     full = torch.softmax(torch.matmul(query, key.transpose(2, 3)), dim=-1)
     expected = full[:, :, [1, 2], :][:, :, :, [0, 2]].mean(dim=(0, 1, 2)).numpy()
     np.testing.assert_allclose(capture.ordered_token_scores(), [expected], rtol=1e-6, atol=1e-6)
+
+
+def test_visual_access_intervention_changes_attention_after_cutoff():
+    try:
+        import torch
+    except ImportError:
+        return
+
+    from src.experiment1 import qwen_reduced_attention as reduced
+
+    class Module:
+        num_key_value_groups = 1
+        training = False
+        layer_idx = 1
+
+    query = torch.tensor([[[[2.0, 0.0], [0.0, 2.0], [1.0, 1.0]]]])
+    key = torch.tensor([[[[2.0, 0.0], [0.0, 2.0], [1.0, 1.0]]]])
+    value = torch.tensor([[[[10.0, 0.0], [0.0, 1.0], [0.0, 2.0]]]])
+    module = Module()
+    baseline, _ = reduced.qwen_relevance_masked_eager_forward(module, query, key, value, None, scaling=1.0)
+
+    old_intervention = reduced._ACTIVE_VISUAL_ACCESS
+    reduced._ACTIVE_VISUAL_ACCESS = VisualAccessIntervention(
+        through_layer=0,
+        visual_token_indices=(0,),
+        prompt_seq_len=3,
+    )
+    try:
+        blocked, weights = reduced.qwen_relevance_masked_eager_forward(module, query, key, value, None, scaling=1.0)
+    finally:
+        reduced._ACTIVE_VISUAL_ACCESS = old_intervention
+
+    assert not torch.allclose(baseline, blocked)
+    assert torch.all(weights[:, :, 1:, 0] == 0)
+
+
+def test_visual_access_intervention_keeps_attention_before_cutoff():
+    try:
+        import torch
+    except ImportError:
+        return
+
+    from src.experiment1 import qwen_reduced_attention as reduced
+
+    class Module:
+        num_key_value_groups = 1
+        training = False
+        layer_idx = 0
+
+    query = torch.tensor([[[[2.0, 0.0], [0.0, 2.0], [1.0, 1.0]]]])
+    key = query.clone()
+    value = torch.tensor([[[[10.0, 0.0], [0.0, 1.0], [0.0, 2.0]]]])
+    module = Module()
+    baseline, _ = reduced.qwen_relevance_masked_eager_forward(module, query, key, value, None, scaling=1.0)
+
+    old_intervention = reduced._ACTIVE_VISUAL_ACCESS
+    reduced._ACTIVE_VISUAL_ACCESS = VisualAccessIntervention(
+        through_layer=0,
+        visual_token_indices=(0,),
+        prompt_seq_len=3,
+    )
+    try:
+        unblocked, _ = reduced.qwen_relevance_masked_eager_forward(module, query, key, value, None, scaling=1.0)
+    finally:
+        reduced._ACTIVE_VISUAL_ACCESS = old_intervention
+
+    assert torch.allclose(baseline, unblocked)

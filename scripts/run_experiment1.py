@@ -129,6 +129,7 @@ def main() -> None:
                 resolution,
                 query_scope=args.query_scope,
                 attention_extraction=args.attention_extraction,
+                vision_access_through_layer=args.vision_access_through_layer,
             )
             artifact["category"] = record["category"]
             artifact["vision_access_through_layer"] = args.vision_access_through_layer

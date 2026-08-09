@@ -17,8 +17,11 @@ from src.io import write_json
 FIELDS = (
     "raw_token_scores",
     "normalized_token_scores",
+    "absolute_visual_mass_by_layer",
     "raw_frame_scores",
     "normalized_frame_scores",
+    "raw_spatial_scores_by_input",
+    "normalized_spatial_scores_by_input",
     "aggregate_frame_scores",
 )
 
@@ -65,7 +68,7 @@ def compare_dirs(left_dir: Path, right_dir: Path) -> dict[str, Any]:
         left = load_artifact(left_records[question_id])
         right = load_artifact(right_records[question_id])
         field_diffs = {
-            field: max_abs_diff(left["relevance"][field], right["relevance"][field])
+            field: max_abs_diff(left["relevance"].get(field, []), right["relevance"].get(field, []))
             for field in FIELDS
         }
         comparisons.append(
@@ -102,4 +105,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

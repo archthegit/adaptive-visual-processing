@@ -19,10 +19,13 @@ class ConcentrationStats:
 class LayerwiseRelevance:
     raw_token_scores: np.ndarray
     normalized_token_scores: np.ndarray
+    absolute_visual_mass_by_layer: np.ndarray
     raw_frame_scores: np.ndarray
     normalized_frame_scores: np.ndarray
     raw_spatial_scores: np.ndarray
     normalized_spatial_scores: np.ndarray
+    raw_spatial_scores_by_input: np.ndarray
+    normalized_spatial_scores_by_input: np.ndarray
     aggregate_frame_scores: np.ndarray
     cumulative_frame_curve: np.ndarray
     concentration_by_layer: tuple[ConcentrationStats, ...]
@@ -32,10 +35,13 @@ class LayerwiseRelevance:
         return {
             "raw_token_scores": self.raw_token_scores.tolist(),
             "normalized_token_scores": self.normalized_token_scores.tolist(),
+            "absolute_visual_mass_by_layer": self.absolute_visual_mass_by_layer.tolist(),
             "raw_frame_scores": self.raw_frame_scores.tolist(),
             "normalized_frame_scores": self.normalized_frame_scores.tolist(),
             "raw_spatial_scores": self.raw_spatial_scores.tolist(),
             "normalized_spatial_scores": self.normalized_spatial_scores.tolist(),
+            "raw_spatial_scores_by_input": self.raw_spatial_scores_by_input.tolist(),
+            "normalized_spatial_scores_by_input": self.normalized_spatial_scores_by_input.tolist(),
             "aggregate_frame_scores": self.aggregate_frame_scores.tolist(),
             "cumulative_frame_curve": self.cumulative_frame_curve.tolist(),
             "concentration_by_layer": [asdict(item) for item in self.concentration_by_layer],
@@ -120,6 +126,17 @@ def token_scores_to_spatial_scores(token_scores: np.ndarray, layout: TokenLayout
     return spatial
 
 
+def token_scores_to_spatial_scores_by_input(token_scores: np.ndarray, layout: TokenLayout) -> np.ndarray:
+    max_input = max(cell.input_index for cell in layout.visual_cells) + 1
+    max_t = max(cell.temporal_index for cell in layout.visual_cells) + 1
+    max_h = max(cell.spatial_y for cell in layout.visual_cells) + 1
+    max_w = max(cell.spatial_x for cell in layout.visual_cells) + 1
+    spatial = np.zeros((token_scores.shape[0], max_input, max_t, max_h, max_w), dtype=np.float64)
+    for cell in layout.visual_cells:
+        spatial[:, cell.input_index, cell.temporal_index, cell.spatial_y, cell.spatial_x] += token_scores[:, cell.visual_index]
+    return spatial
+
+
 def cumulative_curve(frame_scores: np.ndarray) -> np.ndarray:
     scores = np.asarray(frame_scores, dtype=np.float64)
     if scores.ndim != 1:
@@ -150,19 +167,26 @@ def build_layerwise_relevance_from_token_scores(
 ) -> LayerwiseRelevance:
     raw_token = np.asarray(token_scores, dtype=np.float64)
     norm_token = normalize_distribution(raw_token, axis=1)
+    absolute_visual_mass = raw_token.sum(axis=1)
     raw_frame = token_scores_to_frame_scores(raw_token, layout)
     norm_frame = normalize_distribution(raw_frame, axis=1)
     raw_spatial = token_scores_to_spatial_scores(raw_token, layout)
     flat_spatial = raw_spatial.reshape(raw_spatial.shape[0], -1)
     norm_spatial = normalize_distribution(flat_spatial, axis=1).reshape(raw_spatial.shape)
+    raw_spatial_by_input = token_scores_to_spatial_scores_by_input(raw_token, layout)
+    flat_spatial_by_input = raw_spatial_by_input.reshape(raw_spatial_by_input.shape[0], -1)
+    norm_spatial_by_input = normalize_distribution(flat_spatial_by_input, axis=1).reshape(raw_spatial_by_input.shape)
     aggregate_frame = normalize_distribution(raw_frame.mean(axis=0), axis=0)
     return LayerwiseRelevance(
         raw_token_scores=raw_token,
         normalized_token_scores=norm_token,
+        absolute_visual_mass_by_layer=absolute_visual_mass,
         raw_frame_scores=raw_frame,
         normalized_frame_scores=norm_frame,
         raw_spatial_scores=raw_spatial,
         normalized_spatial_scores=norm_spatial,
+        raw_spatial_scores_by_input=raw_spatial_by_input,
+        normalized_spatial_scores_by_input=norm_spatial_by_input,
         aggregate_frame_scores=aggregate_frame,
         cumulative_frame_curve=cumulative_curve(aggregate_frame),
         concentration_by_layer=tuple(concentration_stats(layer) for layer in raw_frame),
@@ -172,6 +196,7 @@ def build_layerwise_relevance_from_token_scores(
             "num_question_tokens": len(layout.question_token_indices),
             "query_scope": layout.query_scope,
             "extraction_method": extraction_method,
+            "absolute_visual_mass_mean": float(absolute_visual_mass.mean()) if absolute_visual_mass.size else 0.0,
         },
     )
 

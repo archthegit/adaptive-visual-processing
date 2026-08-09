@@ -28,6 +28,10 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 - Added a maintained Experiment 1 output summarizer script to replace fragile notebook one-liners.
 - Refactored relevance construction so reduced token scores can be converted into full layer/frame/spatial summaries without requiring full attention tensors at that boundary.
 - Implemented an opt-in `reduced_sdpa` Qwen attention extraction mode that computes normal attention output with SDPA and captures only question-token rows x visual-token columns for relevance.
+- Connected `--vision-access-through-layer` to Qwen decoder attention during both prefill and generation using an additive text-to-visual key mask after the cutoff layer.
+- Added absolute visual-attention mass by decoder layer, in addition to visual-token-normalized relevance.
+- Preserved visual-token layout metadata with explicit `video_input_index`, `temporal_bin`, `spatial_row`, `spatial_col`, and represented sampled frame indices/timestamps.
+- Added spatial heatmap overlay plotting for Experiment 1 artifacts.
 - Updated architecture notes with the exact memory blocker for scalable attention extraction.
 
 ### Experiments / Results
@@ -58,11 +62,13 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 - Mean top-1 temporal-bin mass changed from 0.585 at 4 sampled frames to 0.341 at 8 sampled frames, indicating that relevance spreads across more Qwen temporal bins when more frames are available.
 - The layer x temporal-bin heatmap shows a strong average bias toward the earliest Qwen temporal bin; this could reflect dataset evidence location, model positional bias, or mini-pilot selection bias.
 - Fine-grained localization stayed at 0/3 across low 4-frame, low 8-frame, and medium 8-frame settings, so this tiny pilot does not support the idea that global frame count or medium global resolution alone solves fine-grained failures.
+- Absolute visual-attention mass is now logged because within-visual normalization alone cannot answer whether the model's total reliance on visual tokens decreases by layer.
 
 ### Code / Infrastructure
 
 - Current full-attention debug extractor remains the correctness baseline for small runs.
 - New `--attention-extraction reduced_sdpa` mode avoids returning/storing full attention tensors and captures reduced question-to-visual relevance per layer.
+- New visual-access cutoff path masks text/query attention to visual-token keys after `none/early/middle/late` or an explicit layer index. Local tests prove attention outputs change after the cutoff and remain unchanged before the cutoff.
 - The reduced extractor has local synthetic correctness tests, but still needs Colab validation against `full` on one 4-8 frame HD-EPIC example before it is used as the main medium/high-resolution path.
 
 ### Blockers / Dependencies
@@ -75,7 +81,9 @@ Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance anal
 
 - Validate the new summarizer on Colab outputs.
 - Validate `reduced_sdpa` against the existing full-attention extractor on 4-8 frame examples.
+- Validate the layer-wise visual-access intervention on real Qwen by showing logits or predictions differ from the no-intervention run.
 - Re-run the video-aware mini pilot with `--attention-extraction reduced_sdpa`, then retry medium-resolution two-input examples.
+- Run the low/medium resolution x `none/early/middle/late` visual-access sweep on the completed mini-pilot examples.
 - Expand from the mini pilot to a larger video-aware subset before attempting the full balanced pilot.
 
 ## Week of 2026-08-03

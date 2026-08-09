@@ -8,6 +8,7 @@ def test_summarize_experiment1_outputs_loads_artifacts_and_layer_stats(tmp_path)
         "question_id": "q1",
         "category": "gaze",
         "relevance": {
+            "absolute_visual_mass_by_layer": [0.2, 0.4],
             "normalized_frame_scores": [[0.7, 0.3], [0.4, 0.6]],
             "concentration_by_layer": [
                 {"normalized_entropy": 0.8},
@@ -44,3 +45,4 @@ def test_summarize_experiment1_outputs_loads_artifacts_and_layer_stats(tmp_path)
     assert fusion["num_layers"] == 2
     assert fusion["peak_overall_top1_layer"]["layer"] == 0
     assert fusion["lowest_overall_entropy_layer"]["layer"] == 0
+    assert fusion["overall"][1]["mean_absolute_visual_mass"] == 0.4

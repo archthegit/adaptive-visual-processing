@@ -88,11 +88,17 @@ def layer_fusion_summary(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
                 artifact["relevance"]["concentration_by_layer"][layer_idx]["normalized_entropy"]
                 for artifact in items
             ]
+            absolute_mass_values = [
+                artifact["relevance"].get("absolute_visual_mass_by_layer", [])[layer_idx]
+                for artifact in items
+                if artifact["relevance"].get("absolute_visual_mass_by_layer")
+            ]
             stats.append(
                 {
                     "layer": layer_idx,
                     "mean_top1_frame_mass": statistics.mean(top1_values),
                     "mean_normalized_entropy": statistics.mean(entropy_values),
+                    "mean_absolute_visual_mass": statistics.mean(absolute_mass_values) if absolute_mass_values else None,
                 }
             )
         return stats

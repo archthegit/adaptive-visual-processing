@@ -51,3 +51,28 @@ def plot_layer_concentration(topk_mass: np.ndarray, entropy: np.ndarray, path: s
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
+
+
+def plot_spatial_heatmap_overlay(
+    frame: np.ndarray,
+    heatmap: np.ndarray,
+    path: str | Path,
+    alpha: float = 0.45,
+    title: str | None = None,
+) -> None:
+    plt = _pyplot()
+    image = np.asarray(frame)
+    scores = np.asarray(heatmap, dtype=np.float64)
+    if image.ndim not in {2, 3}:
+        raise ValueError("frame must be HxW or HxWxC.")
+    if scores.ndim != 2:
+        raise ValueError("heatmap must be a 2D array.")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.imshow(image)
+    ax.imshow(scores, cmap="magma", alpha=alpha, extent=(0, image.shape[1], image.shape[0], 0))
+    ax.axis("off")
+    if title:
+        ax.set_title(title)
+    fig.tight_layout(pad=0)
+    fig.savefig(path, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)

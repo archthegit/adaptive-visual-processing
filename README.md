@@ -384,6 +384,38 @@ python scripts/summarize_experiment1_outputs.py \
   --output-dir outputs/experiment1_qwen_video_aware_low_f4
 ```
 
+Run the low/medium resolution x visual-access cutoff sweep on the video-aware
+mini pilot. Keep this at 4-8 frames until reduced attention is validated:
+
+```bash
+for resolution in low medium; do
+  for cutoff in none early middle late; do
+    python scripts/run_experiment1.py \
+      --questions-dir /content/hd-epic-annotations/vqa-benchmark \
+      --mp4-dir data/hd_epic_mp4 \
+      --manifest outputs/experiment1_video_aware_manifest.jsonl \
+      --num-frames 8 \
+      --resolution-config "$resolution" \
+      --vision-access-through-layer "$cutoff" \
+      --query-scope question \
+      --attention-extraction reduced_sdpa \
+      --max-new-tokens 16 \
+      --output-dir "outputs/experiment1_${resolution}_f8_access_${cutoff}" \
+      --allow-7b-inference
+  done
+done
+```
+
+Create spatial heatmap overlays for a completed artifact:
+
+```bash
+python scripts/plot_spatial_heatmaps.py \
+  --artifact outputs/experiment1_qwen_video_aware_low_f8/fine_grained_action_localization_1309.json \
+  --output-dir outputs/spatial_heatmaps \
+  --layer -1 \
+  --input-index 0
+```
+
 ## Download Manifest Videos
 
 HD-EPIC MP4s are not stored in the annotation repository. To fetch only the videos referenced by a manifest:
