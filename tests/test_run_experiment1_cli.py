@@ -4,7 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.run_experiment1 import frame_batches_for_example, frames_per_video_input, parse_args
+from scripts.run_experiment1 import (
+    completed_question_ids,
+    frame_batches_for_example,
+    frames_per_video_input,
+    parse_args,
+    shard_records,
+)
+from src.io import append_jsonl, write_json
 
 
 def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
@@ -25,6 +32,9 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
     assert args.max_new_tokens == 24
     assert args.attention_extraction == "reduced_sdpa"
     assert args.frame_budget_mode == "total"
+    assert args.resume is False
+    assert args.shard_index == 0
+    assert args.num_shards == 1
 
 
 def test_frames_per_input_splits_total_budget_deterministically():
@@ -41,6 +51,23 @@ def test_frames_per_input_supports_legacy_per_input_mode():
 def test_frames_per_input_rejects_too_small_total_budget():
     with pytest.raises(ValueError, match="smaller than the 3 video inputs"):
         frames_per_video_input(2, 3, "total")
+
+
+def test_shard_records_is_deterministic():
+    records = [{"question_id": f"q{i}"} for i in range(7)]
+    assert [record["question_id"] for record in shard_records(records, 1, 3)] == ["q1", "q4"]
+    with pytest.raises(ValueError, match="shard-index"):
+        shard_records(records, 3, 3)
+
+
+def test_completed_question_ids_only_skips_existing_complete_artifacts(tmp_path):
+    artifact = tmp_path / "q1.json"
+    write_json(artifact, {"ok": True})
+    records_path = tmp_path / "records.jsonl"
+    append_jsonl(records_path, {"question_id": "q1", "status": "complete", "artifact": str(artifact)})
+    append_jsonl(records_path, {"question_id": "q2", "status": "complete", "artifact": str(tmp_path / "missing.json")})
+    append_jsonl(records_path, {"question_id": "q3", "status": "failed"})
+    assert completed_question_ids(records_path) == {"q1"}
 
 
 def test_frame_batches_for_example_samples_reference_images_as_one_frame(monkeypatch):

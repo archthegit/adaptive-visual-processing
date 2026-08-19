@@ -11,9 +11,11 @@ from src.frame_sampling import FrameBatch
 from src.models.base import format_multiple_choice_prompt, parse_choice_response, parse_question_tags
 from src.models.qwen import Qwen25VLWrapper
 
+from .answer_scoring import score_answer_choices_from_outputs
 from .qwen_reduced_attention import masked_eager_attention_context, reduced_attention_context
-from .relevance import build_layerwise_relevance_from_token_scores, compute_layerwise_relevance
+from .relevance import aggregate_question_to_visual_attention
 from .resolution import ResolutionConfig
+from .temporal import build_temporal_relevance_from_token_scores, represented_sampled_frames
 from .token_layout import build_token_layout
 
 
@@ -73,21 +75,6 @@ def cuda_memory_metadata(torch_module: Any) -> dict[str, int]:
         "cuda_memory_reserved_bytes": int(torch_module.cuda.memory_reserved()),
         "cuda_max_memory_allocated_bytes": int(torch_module.cuda.max_memory_allocated()),
         "cuda_max_memory_reserved_bytes": int(torch_module.cuda.max_memory_reserved()),
-    }
-
-
-def represented_sampled_frames(batch: FrameBatch, temporal_index: int, grid_t: int) -> dict[str, Any]:
-    if grid_t <= 0:
-        return {"sampled_frame_indices": [], "sampled_timestamps": []}
-    count = len(batch.frame_indices)
-    start = int(round(temporal_index * count / grid_t))
-    end = int(round((temporal_index + 1) * count / grid_t))
-    if end <= start:
-        end = min(count, start + 1)
-    return {
-        "sampled_frame_indices": list(batch.frame_indices[start:end]),
-        "sampled_timestamps": list(batch.timestamps[start:end]),
-        "note": "Qwen temporal bins may merge multiple sampled frames; with 8 sampled frames and 4 bins, each bin represents two sampled frames.",
     }
 
 
@@ -218,6 +205,7 @@ def run_qwen_relevance_example(
         torch.cuda.reset_peak_memory_stats()
     started = time.time()
     prefill_next_token_topk: list[dict[str, float | int]] = []
+    answer_choice_scores: dict[str, Any] = {}
     if attention_extraction == "full":
         context = (
             masked_eager_attention_context(model._model, layout, vision_access_through_layer)
@@ -237,7 +225,18 @@ def run_qwen_relevance_example(
                 "Qwen did not return decoder attentions. Ensure attn_implementation='eager' and output_attentions=True."
             )
         prefill_next_token_topk = next_token_topk_from_outputs(outputs)
-        relevance = compute_layerwise_relevance(attentions, layout)
+        answer_choice_scores = score_answer_choices_from_outputs(
+            outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
+        )
+        token_scores = aggregate_question_to_visual_attention(
+            attentions, layout.question_token_indices, layout.visual_token_indices
+        )
+        temporal_relevance = build_temporal_relevance_from_token_scores(
+            token_scores,
+            layout,
+            frame_batches,
+            "returned_full_attention_temporally_reduced_after_forward",
+        )
         del outputs, attentions
     elif attention_extraction == "reduced_sdpa":
         expected_layers = int(model._model.config.text_config.num_hidden_layers)
@@ -245,10 +244,16 @@ def run_qwen_relevance_example(
             with torch.inference_mode():
                 outputs = model._model(**inputs, output_attentions=False, use_cache=False)
         prefill_next_token_topk = next_token_topk_from_outputs(outputs)
+        answer_choice_scores = score_answer_choices_from_outputs(
+            outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
+        )
         del outputs
         token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
-        relevance = build_layerwise_relevance_from_token_scores(
-            token_scores, layout, "qwen_reduced_sdpa_question_visual_rows"
+        temporal_relevance = build_temporal_relevance_from_token_scores(
+            token_scores,
+            layout,
+            frame_batches,
+            "qwen_reduced_sdpa_temporal_question_visual_rows",
         )
     else:
         raise ValueError("attention_extraction must be 'full' or 'reduced_sdpa'.")
@@ -280,9 +285,21 @@ def run_qwen_relevance_example(
         "choices": list(example.choices),
         "correct_idx": example.correct_idx,
         "correct_answer": example.choices[example.correct_idx],
+        "video_clip": [
+            {
+                "input_key": segment.input_key,
+                "video_id": segment.video_id,
+                "participant_id": segment.participant_id,
+                "start_seconds": segment.start_seconds,
+                "end_seconds": segment.end_seconds,
+                "image_time_seconds": segment.image_time_seconds,
+            }
+            for segment in example.inputs
+        ],
         "raw_response": raw_response,
         "predicted_idx": predicted_idx,
         "correct": predicted_idx == example.correct_idx,
+        "answer_choice_scores": answer_choice_scores,
         "sampled_frame_indices": [batch.frame_indices for batch in frame_batches],
         "sampled_timestamps": [batch.timestamps for batch in frame_batches],
         "token_layout": {
@@ -293,7 +310,7 @@ def run_qwen_relevance_example(
             "query_scope": layout.query_scope,
             "visual_token_cells": visual_token_cell_metadata(layout, frame_batches),
         },
-        "relevance": relevance.to_json_dict(),
+        "temporal_relevance": temporal_relevance.to_json_dict(),
         "metadata": {
             "model_id": model.config.model_id,
             "attn_implementation": model.config.attn_implementation,

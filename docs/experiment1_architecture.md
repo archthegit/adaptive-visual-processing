@@ -17,10 +17,9 @@ No Qwen checkpoint was downloaded. `torch` is not installed in the local venv, s
 The inspected Qwen2.5-VL path is:
 
 ```text
-video pixels / reference-image frames
+single-video pixels
   -> Qwen2_5_VLProcessor / image and video processors
   -> pixel_values_videos + video_grid_thw + second_per_grid_ts
-  -> pixel_values + image_grid_thw
   -> Qwen2_5_VisionPatchEmbed
   -> Qwen2_5_VisionTransformerPretrainedModel.blocks
   -> Qwen2_5_VLPatchMerger
@@ -31,11 +30,11 @@ video pixels / reference-image frames
   -> lm_head / answer tokens
 ```
 
-## Query Relevance Definition
+## Temporal Query Relevance Definition
 
 Qwen2.5-VL does not expose a separate text/vision cross-attention block in this implementation. Visual features are projected/merged and inserted into the decoder sequence at visual placeholder token positions.
 
-For Experiment 1, query-to-visual relevance is therefore:
+For Experiment 1, query-to-visual relevance is:
 
 ```text
 decoder self-attention rows for natural-language question tokens
@@ -43,7 +42,10 @@ decoder self-attention rows for natural-language question tokens
 decoder self-attention columns for visual token positions
 ```
 
-The vision encoder attention is not question-conditioned and should not be labeled query relevance.
+The result is immediately aggregated to temporal bins by summing all spatial
+visual tokens that share the same Qwen `video_grid_thw` temporal index. The
+vision encoder attention is not question-conditioned and should not be labeled
+query relevance.
 
 ## Visual Token Counts and Layout
 
@@ -56,15 +58,13 @@ num_image_tokens = prod(image_grid_thw) / merge_size**2
 
 The model-side visual merger uses `vision_config.spatial_merge_size`, defaulting to `2` in the inspected config source. Qwen visual tokens are dynamic-resolution tokens; one LLM visual token should be interpreted as a merged spatiotemporal grid cell, not as one raw frame or one original patch.
 
-HD-EPIC `time` inputs are treated as reference images, not pseudo-videos. They
-receive one sampled frame and are sent through Qwen's image pathway. Video
-interval inputs are sent through Qwen's video pathway and consume the
-configurable video-frame budget.
+Milestone 1 temporal manifests include exactly one non-image video input per
+question. Image-only, video-plus-image, and multi-video examples are excluded
+from the temporal engineering, pilot, and confirmatory splits.
 
-The pinned local Qwen processor validates video FPS as a scalar. The runner
-therefore rejects multiple real video inputs when their sampled effective FPS
-values differ. The initial Experiment 1 validation manifests should use
-`--max-video-inputs 1`, which still permits video-plus-reference-image examples.
+The pinned local Qwen processor validates video FPS as a scalar. Restricting
+Milestone 1 to one real video input also avoids ambiguous per-video temporal
+metadata and keeps compute comparable across categories.
 
 Experiment 1 reconstructs the reduced grid as:
 
@@ -83,19 +83,31 @@ for t in T_llm:
       visual token
 ```
 
-This must be manually validated on a small GPU run by comparing produced `video_grid_thw`, `image_grid_thw`, visual placeholder count, and token positions from the real processor/model inputs.
+This must be manually validated on a small GPU run by comparing produced
+`video_grid_thw`, visual placeholder count, and token positions from the real
+processor/model inputs.
 
-## Frame and Input Metadata
+## Temporal Bin Metadata
 
 Qwen temporal bins may represent multiple sampled frames. Artifact metadata
 therefore records the sampled frame indices and timestamps represented by each
 visual-token temporal bin.
 
-For multi-input examples, artifacts preserve per-input frame relevance in
-`raw_frame_scores_by_input` and `normalized_frame_scores_by_input`. The older
-`raw_frame_scores` field is retained for backwards compatibility but merges
-same-numbered temporal bins across visual inputs, so it should not be used for
-object-motion or image-reference interpretation.
+Artifacts store temporal-only relevance under `temporal_relevance`:
+
+```text
+raw_temporal_bin_scores[layer, temporal_bin]
+normalized_temporal_bin_scores[layer, temporal_bin]
+absolute_question_to_visual_attention_mass[layer]
+layer_metrics[layer]
+temporal_bins[temporal_bin]
+```
+
+Layer metrics include normalized temporal entropy, top-1 temporal-bin mass, the
+number and fraction of temporal bins needed for 80% attention mass, temporal-bin
+rank order, Spearman correlation with final-layer ordering, and top-K overlap
+with final-layer important bins. Full attention tensors are not retained after
+aggregation.
 
 ## Attention Extraction
 
@@ -149,8 +161,8 @@ This should lower peak attention memory relative to `full` because full
 attention weights are no longer returned or stored. It still computes exact
 question-row probabilities over all keys, so it is not a windowed or sampled
 approximation. Before using it for medium/high resolution or long-frame runs,
-validate it against `full` on a 4-8 frame example and compare per-layer token or
-frame scores within numerical tolerance.
+validate it against `full` on a small example and compare temporal scores and
+answer-choice logits.
 
 Important correctness note: custom attention implementation names must also be
 registered with `transformers.masking_utils.ALL_MASK_ATTENTION_FUNCTIONS`. If
@@ -160,41 +172,9 @@ during prefill. The current implementation registers both custom attention
 names with `eager_mask`, which materializes an additive causal mask and disables
 causal-mask skipping.
 
-## Vision-Access Intervention Implementation
+## Scope Exclusions
 
-The runner now connects `--vision-access-through-layer` to Qwen decoder
-attention during both:
-
-```text
-prefill / relevance extraction
-generation / answer decoding
-```
-
-For layers after the cutoff, the custom attention interface adds an additive
-mask from non-visual query rows to visual key columns. Layers at or before the
-cutoff retain normal attention. Generated answer tokens are treated as text
-queries and are also blocked from attending back to prompt visual-token
-positions after the cutoff. This is a text-to-visual attention intervention,
-not hidden-state zeroing.
-
-The intervention has local synthetic tests proving attention outputs change
-after the cutoff and remain unchanged before the cutoff. It still needs real
-Qwen/Colab validation showing answer logits or predictions change on at least
-one HD-EPIC example.
-
-The earlier Colab run comparing `none` vs `early` before the causal-mask
-registration fix is invalid and should not be interpreted experimentally.
-
-## Remaining Vision-Access Validation
-
-The desired intervention is:
-
-```text
-layers <= L: normal attention
-layers > L: text/question query rows cannot attend to visual key columns
-```
-
-The current implementation performs this at the attention-interface level. The
-next validation is to run the same example with `none` and one cutoff setting
-and verify that logits or predictions differ while unmodified `none` continues
-to reproduce baseline behavior.
+Milestone 1 does not implement spatial selection, spatial heatmaps,
+high-resolution crops, APT, or Experiment 2 behavior. Existing legacy utilities
+may remain in the repository for compatibility, but the Experiment 1 output and
+plots are temporal-only.

@@ -58,6 +58,7 @@ def accuracy_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
             for category, items in sorted(by_category.items())
         },
         "visual_token_counts": sorted({record.get("num_visual_tokens") for record in completed}),
+        "temporal_bin_counts": sorted({record.get("num_temporal_bins") for record in completed if record.get("num_temporal_bins") is not None}),
         "failures": [
             {
                 "question_id": record.get("question_id"),
@@ -85,19 +86,24 @@ def layer_fusion_summary(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
                 for artifact in items
             ]
             entropy_values = [
-                normalized_entropy(frame_scores_for_summary(artifact)[layer_idx])
+                temporal_metric(artifact, layer_idx, "normalized_temporal_entropy")
                 for artifact in items
             ]
             absolute_mass_values = [
-                artifact["relevance"].get("absolute_visual_mass_by_layer", [])[layer_idx]
+                temporal_absolute_mass(artifact)[layer_idx]
                 for artifact in items
-                if artifact["relevance"].get("absolute_visual_mass_by_layer")
+                if len(temporal_absolute_mass(artifact)) > layer_idx
+            ]
+            bins80_values = [
+                temporal_metric(artifact, layer_idx, "bins_to_80pct_mass")
+                for artifact in items
             ]
             stats.append(
                 {
                     "layer": layer_idx,
-                    "mean_top1_frame_mass": statistics.mean(top1_values),
-                    "mean_normalized_entropy": statistics.mean(entropy_values),
+                    "mean_top1_temporal_bin_mass": statistics.mean(top1_values),
+                    "mean_normalized_temporal_entropy": statistics.mean(entropy_values),
+                    "mean_bins_to_80pct_mass": statistics.mean(bins80_values),
                     "mean_absolute_visual_mass": statistics.mean(absolute_mass_values) if absolute_mass_values else None,
                 }
             )
@@ -109,12 +115,14 @@ def layer_fusion_summary(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         "num_layers": num_layers,
         "overall": overall,
         "by_category": {category: layer_stats(items) for category, items in sorted(by_category.items())},
-        "peak_overall_top1_layer": max(overall, key=lambda item: item["mean_top1_frame_mass"]),
-        "lowest_overall_entropy_layer": min(overall, key=lambda item: item["mean_normalized_entropy"]),
+        "peak_overall_top1_layer": max(overall, key=lambda item: item["mean_top1_temporal_bin_mass"]),
+        "lowest_overall_entropy_layer": min(overall, key=lambda item: item["mean_normalized_temporal_entropy"]),
     }
 
 
 def frame_scores_for_summary(artifact: dict[str, Any]) -> list[list[float]]:
+    if "temporal_relevance" in artifact:
+        return artifact["temporal_relevance"]["normalized_temporal_bin_scores"]
     relevance = artifact["relevance"]
     by_input = relevance.get("normalized_frame_scores_by_input")
     if by_input:
@@ -124,6 +132,30 @@ def frame_scores_for_summary(artifact: dict[str, Any]) -> list[list[float]]:
             for layer in by_input
         ]
     return relevance["normalized_frame_scores"]
+
+
+def temporal_metric(artifact: dict[str, Any], layer_idx: int, field: str) -> float:
+    if "temporal_relevance" in artifact:
+        return float(artifact["temporal_relevance"]["layer_metrics"][layer_idx][field])
+    if field == "normalized_temporal_entropy":
+        return normalized_entropy(frame_scores_for_summary(artifact)[layer_idx])
+    if field == "bins_to_80pct_mass":
+        scores = sorted(frame_scores_for_summary(artifact)[layer_idx], reverse=True)
+        total = sum(scores)
+        if total <= 0:
+            return 0.0
+        running = 0.0
+        for index, score in enumerate(scores, start=1):
+            running += score / total
+            if running >= 0.8:
+                return float(index)
+    raise KeyError(field)
+
+
+def temporal_absolute_mass(artifact: dict[str, Any]) -> list[float]:
+    if "temporal_relevance" in artifact:
+        return artifact["temporal_relevance"].get("absolute_question_to_visual_attention_mass", [])
+    return artifact.get("relevance", {}).get("absolute_visual_mass_by_layer", [])
 
 
 def normalize_scores(scores: list[float]) -> list[float]:

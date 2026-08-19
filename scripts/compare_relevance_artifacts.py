@@ -15,16 +15,17 @@ from src.io import write_json
 
 
 FIELDS = (
+    "raw_temporal_bin_scores",
+    "normalized_temporal_bin_scores",
+    "absolute_question_to_visual_attention_mass",
+)
+
+LEGACY_FIELDS = (
     "raw_token_scores",
     "normalized_token_scores",
     "absolute_visual_mass_by_layer",
     "raw_frame_scores",
     "normalized_frame_scores",
-    "raw_frame_scores_by_input",
-    "normalized_frame_scores_by_input",
-    "raw_spatial_scores_by_input",
-    "normalized_spatial_scores_by_input",
-    "aggregate_frame_scores",
 )
 
 
@@ -80,6 +81,12 @@ def compare_topk_logits(left: dict[str, Any], right: dict[str, Any]) -> dict[str
     }
 
 
+def relevance_payload(artifact: dict[str, Any]) -> tuple[str, dict[str, Any], tuple[str, ...]]:
+    if "temporal_relevance" in artifact:
+        return "temporal_relevance", artifact["temporal_relevance"], FIELDS
+    return "relevance", artifact["relevance"], LEGACY_FIELDS
+
+
 def compare_dirs(left_dir: Path, right_dir: Path) -> dict[str, Any]:
     left_records = load_records(left_dir)
     right_records = load_records(right_dir)
@@ -88,15 +95,21 @@ def compare_dirs(left_dir: Path, right_dir: Path) -> dict[str, Any]:
     for question_id in common_ids:
         left = load_artifact(left_records[question_id])
         right = load_artifact(right_records[question_id])
+        left_name, left_relevance, fields = relevance_payload(left)
+        right_name, right_relevance, right_fields = relevance_payload(right)
+        if fields != right_fields:
+            fields = tuple(sorted(set(fields) & set(right_fields)))
         field_diffs = {
-            field: max_abs_diff(left["relevance"].get(field, []), right["relevance"].get(field, []))
-            for field in FIELDS
+            field: max_abs_diff(left_relevance.get(field, []), right_relevance.get(field, []))
+            for field in fields
         }
         comparisons.append(
             {
                 "question_id": question_id,
                 "left_correct": left["correct"],
                 "right_correct": right["correct"],
+                "left_relevance_payload": left_name,
+                "right_relevance_payload": right_name,
                 "left_extraction": left["metadata"].get("attention_extraction", "unknown"),
                 "right_extraction": right["metadata"].get("attention_extraction", "unknown"),
                 "max_abs_diff_by_field": field_diffs,

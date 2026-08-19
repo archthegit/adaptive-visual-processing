@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -12,7 +13,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.experiment1.resolution import get_resolution_config
-from src.io import append_jsonl, write_json
+from src.io import append_jsonl, write_json, write_json_atomic
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,6 +41,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="outputs/experiment1_debug")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--allow-7b-inference", action="store_true")
+    parser.add_argument("--resume", action="store_true", help="Skip examples whose complete artifact already exists.")
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--num-shards", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=20260818)
     return parser.parse_args()
 
 
@@ -63,6 +68,44 @@ def filter_records(records: list[dict[str, Any]], question_ids: list[str] | None
     if missing:
         raise ValueError(f"Requested question IDs not found in manifest: {sorted(missing)}")
     return filtered
+
+
+def shard_records(records: list[dict[str, Any]], shard_index: int, num_shards: int) -> list[dict[str, Any]]:
+    if num_shards <= 0:
+        raise ValueError("--num-shards must be positive.")
+    if not 0 <= shard_index < num_shards:
+        raise ValueError("--shard-index must satisfy 0 <= shard-index < num-shards.")
+    return [record for index, record in enumerate(records) if index % num_shards == shard_index]
+
+
+def completed_question_ids(records_path: Path) -> set[str]:
+    if not records_path.exists():
+        return set()
+    completed: set[str] = set()
+    with records_path.open("r") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            artifact = record.get("artifact")
+            if record.get("status") == "complete" and artifact and Path(artifact).exists():
+                completed.add(str(record["question_id"]))
+    return completed
+
+
+def current_git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return None
+    return result.stdout.strip()
 
 
 def load_examples_by_id(questions_dir: str | None, records: list[dict[str, Any]]):
@@ -134,10 +177,13 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     resolution = get_resolution_config(args.resolution_config)
     records = filter_records(load_manifest(args.manifest, args.limit), args.question_id)
+    records = shard_records(records, args.shard_index, args.num_shards)
     started = time.time()
     jsonl_path = output_dir / "records.jsonl"
-    if jsonl_path.exists():
+    if jsonl_path.exists() and not args.resume:
         jsonl_path.unlink()
+    complete_on_resume = completed_question_ids(jsonl_path) if args.resume else set()
+    git_commit = current_git_commit()
 
     examples_by_id = None
     qwen_model = None
@@ -149,6 +195,18 @@ def main() -> None:
         qwen_model = Qwen25VLWrapper(QwenConfig(max_new_tokens=args.max_new_tokens))
 
     for record in records:
+        if record["question_id"] in complete_on_resume:
+            append_jsonl(
+                jsonl_path,
+                {
+                    "question_id": record["question_id"],
+                    "category": record["category"],
+                    "question_type": record["question_type"],
+                    "status": "skipped_complete",
+                    "resume": True,
+                },
+            )
+            continue
         if args.dry_run or not args.allow_7b_inference:
             status = "dry_run" if args.dry_run else "blocked_requires_allow_7b_inference"
             append_jsonl(
@@ -164,6 +222,10 @@ def main() -> None:
                     "vision_access_through_layer": args.vision_access_through_layer,
                     "query_scope": args.query_scope,
                     "attention_extraction": args.attention_extraction,
+                    "seed": args.seed,
+                    "git_commit": git_commit,
+                    "shard_index": args.shard_index,
+                    "num_shards": args.num_shards,
                 },
             )
             continue
@@ -184,8 +246,22 @@ def main() -> None:
             )
             artifact["category"] = record["category"]
             artifact["vision_access_through_layer"] = args.vision_access_through_layer
+            artifact["run_config"] = {
+                "manifest": args.manifest,
+                "num_frames": args.num_frames,
+                "frame_budget_mode": args.frame_budget_mode,
+                "resolution_config": args.resolution_config,
+                "vision_access_through_layer": args.vision_access_through_layer,
+                "query_scope": args.query_scope,
+                "attention_extraction": args.attention_extraction,
+                "max_new_tokens": args.max_new_tokens,
+                "seed": args.seed,
+                "shard_index": args.shard_index,
+                "num_shards": args.num_shards,
+                "git_commit": git_commit,
+            }
             artifact_path = output_dir / f"{record['question_id']}.json"
-            write_json(artifact_path, artifact)
+            write_json_atomic(artifact_path, artifact)
             append_jsonl(
                 jsonl_path,
                 {
@@ -197,6 +273,8 @@ def main() -> None:
                     "correct": artifact["correct"],
                     "predicted_idx": artifact["predicted_idx"],
                     "num_visual_tokens": artifact["token_layout"]["num_visual_tokens"],
+                    "num_temporal_bins": artifact["temporal_relevance"]["metadata"]["num_temporal_bins"],
+                    "peak_cuda_memory_bytes": artifact["metadata"].get("cuda_max_memory_allocated_bytes"),
                 },
             )
         except Exception as exc:
@@ -208,6 +286,7 @@ def main() -> None:
                     "question_type": record["question_type"],
                     "status": "failed",
                     "error": str(exc),
+                    "retryable": True,
                 },
             )
 
@@ -226,6 +305,11 @@ def main() -> None:
             "max_new_tokens": args.max_new_tokens,
             "dry_run": args.dry_run,
             "allow_7b_inference": args.allow_7b_inference,
+            "resume": args.resume,
+            "shard_index": args.shard_index,
+            "num_shards": args.num_shards,
+            "seed": args.seed,
+            "git_commit": git_commit,
         },
     }
     write_json(output_dir / "summary.json", summary)
