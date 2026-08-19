@@ -265,8 +265,10 @@ def test_decoder_direct_access_mask_blocks_exact_requested_temporal_columns():
         layer_idx = 0
 
     query = torch.tensor([[[[1.0, 0.5], [0.5, 1.0]]]])
-    key = torch.tensor([[[[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0], [1.0, 1.0]]]])
-    value = torch.eye(5).reshape(1, 1, 5, 5)
+    key = torch.tensor(
+        [[[[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0], [1.0, 1.0], [2.0, 1.0], [1.0, 2.0]]]]
+    )
+    value = torch.eye(7).reshape(1, 1, 7, 7)
     baseline, _ = reduced.qwen_relevance_masked_eager_forward(Module(), query, key, value, None, scaling=1.0)
 
     old_mask = reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK
@@ -286,7 +288,7 @@ def test_decoder_direct_access_mask_blocks_exact_requested_temporal_columns():
 
     assert not torch.allclose(baseline, blocked)
     assert torch.all(weights[:, :, :, [1, 3]] == 0)
-    assert torch.all(weights[:, :, :, [0, 2, 4]] > 0)
+    assert torch.all(weights[:, :, :, [0, 2, 4, 5, 6]] > 0)
 
 
 def test_decoder_direct_access_block_mask_values_exact_requested_columns():
