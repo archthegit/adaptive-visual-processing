@@ -369,8 +369,6 @@ def run_qwen_relevance_example(
             len(example.choices),
         )
         del intervention_scoring_outputs
-    elif pre_encoder_bins:
-        intervention_answer_choice_scores = answer_choice_scores
     answer_scoring_runtime = time.time() - scoring_started
 
     memory_after_prefill = cuda_memory_metadata(torch)
@@ -473,9 +471,14 @@ def run_qwen_relevance_example(
             "intervention_answer_choice_score_source": (
                 "separate_masked_eager_prefill_forward"
                 if decoder_intervention_active
-                else "separate_prefill_forward_on_pre_encoder_masked_inputs"
-                if pre_encoder_bins
                 else None
+            ),
+            "answer_choice_comparison_scope": (
+                "compare_answer_choice_scores_with_matching_unmasked_baseline_artifact"
+                if pre_encoder_bins
+                else "same_artifact_intervention_answer_choice_scores"
+                if decoder_intervention_active
+                else "baseline_only"
             ),
             **memory_after_prefill,
         },

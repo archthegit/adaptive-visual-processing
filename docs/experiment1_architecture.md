@@ -185,9 +185,11 @@ validate it against `full` on a small example and compare temporal scores and
 answer-choice logits.
 
 Answer-choice scores in `answer_choice_scores` are computed from a separate
-unmodified prefill forward pass. If an intervention such as temporal-bin masking
-is active, intervention logits are stored separately in
-`intervention_answer_choice_scores`.
+prefill forward pass. For baseline and decoder direct-access masking runs this
+is the unmodified input. For pre-encoder masking runs this is already the masked
+input, so compare it against the matching baseline artifact's
+`answer_choice_scores`. Do not compare pre-encoder `answer_choice_scores`
+against same-artifact `intervention_answer_choice_scores`.
 
 Important correctness note: custom attention implementation names must also be
 registered with `transformers.masking_utils.ALL_MASK_ATTENTION_FUNCTIONS`. If
@@ -214,8 +216,12 @@ tokens can directly attend to those temporal-bin columns.
 
 The recommended analysis is to remove final-layer high-ranked bins and compare
 the intervention choice logits against removals of low-ranked and random bins.
-The normal `answer_choice_scores` field remains unmodified; use
-`intervention_answer_choice_scores` for causal comparisons.
+For decoder direct-access masking, the normal `answer_choice_scores` field
+remains unmodified and `intervention_answer_choice_scores` stores the masked
+decoder scoring forward. For pre-encoder masking, `answer_choice_scores` is
+already scored on masked frames and there is no separate same-artifact
+intervention score; compare baseline and masked artifacts with
+`scripts/compare_relevance_artifacts.py`.
 
 ## Dataset Balance Caveat
 

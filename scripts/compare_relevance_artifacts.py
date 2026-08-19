@@ -81,6 +81,45 @@ def compare_topk_logits(left: dict[str, Any], right: dict[str, Any]) -> dict[str
     }
 
 
+def compare_answer_choice_scores(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    left_scores = left.get("answer_choice_scores") or {}
+    right_scores = right.get("answer_choice_scores") or {}
+    fields = (
+        "choice_logits",
+        "choice_log_probabilities",
+        "normalized_choice_probabilities",
+    )
+    field_diffs = {
+        field: max_abs_diff(left_scores.get(field, []), right_scores.get(field, []))
+        for field in fields
+    }
+    left_correct_logp = left_scores.get("correct_choice_log_probability")
+    right_correct_logp = right_scores.get("correct_choice_log_probability")
+    left_margin = left_scores.get("correct_vs_strongest_incorrect_margin")
+    right_margin = right_scores.get("correct_vs_strongest_incorrect_margin")
+    return {
+        "max_abs_diff_by_field": field_diffs,
+        "left_correct_choice_log_probability": left_correct_logp,
+        "right_correct_choice_log_probability": right_correct_logp,
+        "correct_choice_log_probability_delta": (
+            float(right_correct_logp) - float(left_correct_logp)
+            if left_correct_logp is not None and right_correct_logp is not None
+            else None
+        ),
+        "left_correct_vs_strongest_incorrect_margin": left_margin,
+        "right_correct_vs_strongest_incorrect_margin": right_margin,
+        "correct_margin_delta": (
+            float(right_margin) - float(left_margin)
+            if left_margin is not None and right_margin is not None
+            else None
+        ),
+        "comparison_scope": (
+            "Use this field for baseline-vs-pre-encoder-masked comparisons; "
+            "pre-encoder artifacts score already-masked inputs."
+        ),
+    }
+
+
 def relevance_payload(artifact: dict[str, Any]) -> tuple[str, dict[str, Any], tuple[str, ...]]:
     if "temporal_relevance" in artifact:
         return "temporal_relevance", artifact["temporal_relevance"], FIELDS
@@ -115,6 +154,7 @@ def compare_dirs(left_dir: Path, right_dir: Path) -> dict[str, Any]:
                 "max_abs_diff_by_field": field_diffs,
                 "max_abs_diff": max(field_diffs.values()),
                 "prefill_next_token_topk": compare_topk_logits(left, right),
+                "answer_choice_scores": compare_answer_choice_scores(left, right),
             }
         )
     return {
