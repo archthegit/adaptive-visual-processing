@@ -88,6 +88,8 @@ def temporal_representation_summary(name: str, temporal_representations: np.ndar
 
 
 def _find_named_module(model: Any, suffixes: tuple[str, ...]) -> tuple[str, Any] | None:
+    if not hasattr(model, "named_modules"):
+        return None
     for name, module in model.named_modules():
         if any(name == suffix or name.endswith(f".{suffix}") for suffix in suffixes):
             return name, module
@@ -105,13 +107,24 @@ def vision_stage_indices(num_blocks: int) -> dict[str, int]:
 
 
 def qwen_vision_window_indices(model: Any, video_grid_thw: Any) -> tuple[Any | None, Any | None]:
+    if video_grid_thw is None:
+        return None, None
+    try:
+        has_video_grid = len(video_grid_thw) > 0
+    except TypeError:
+        has_video_grid = True
+    if not has_video_grid:
+        return None, None
+
     try:
         from transformers.vision_utils import get_vision_window_index
-    except Exception:
-        return None, None
-    visual = getattr(model, "visual", None)
+    except Exception as exc:
+        raise RuntimeError("Cannot recover Qwen vision window reverse indices: transformers helper unavailable.") from exc
+
+    visual_found = _find_named_module(model, ("visual",))
+    visual = visual_found[1] if visual_found is not None else getattr(model, "visual", None)
     if visual is None:
-        return None, None
+        raise RuntimeError("Cannot recover Qwen vision window reverse indices: visual module was not found.")
     try:
         window_index, _cu_window = get_vision_window_index(
             video_grid_thw,
@@ -120,14 +133,17 @@ def qwen_vision_window_indices(model: Any, video_grid_thw: Any) -> tuple[Any | N
             patch_size=visual.patch_size,
             kwargs={},
         )
-    except Exception:
-        return None, None
+    except Exception as exc:
+        raise RuntimeError("Cannot recover Qwen vision window reverse indices from video_grid_thw.") from exc
     try:
         import torch
 
-        return window_index, torch.argsort(window_index)
+        reverse_indices = torch.argsort(window_index)
     except Exception:
-        return window_index, np.argsort(np.asarray(window_index))
+        reverse_indices = np.argsort(np.asarray(window_index))
+    if reverse_indices is None:
+        raise RuntimeError("Cannot recover Qwen vision window reverse indices: reverse index is empty.")
+    return window_index, reverse_indices
 
 
 @dataclass
@@ -198,6 +214,12 @@ class VisionTemporalCapture:
             spec = self.stage_specs.get(label, {"order": "canonical", "spatial_merge_size": self.spatial_merge_size})
             ordered = raw
             if spec["order"] == "window":
+                if self.reverse_indices is None:
+                    stages[label] = {
+                        "available": False,
+                        "error": "Cannot canonicalize Qwen window-ordered vision stage without reverse indices.",
+                    }
+                    continue
                 try:
                     ordered = canonicalize_window_ordered_groups(raw, self.reverse_indices)
                 except ValueError as exc:
