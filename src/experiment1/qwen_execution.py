@@ -12,6 +12,7 @@ from src.models.base import format_multiple_choice_prompt, parse_choice_response
 from src.models.qwen import Qwen25VLWrapper
 
 from .answer_scoring import score_answer_choices_from_outputs
+from .encoder_temporal import vision_temporal_capture_context
 from .qwen_reduced_attention import masked_eager_attention_context, reduced_attention_context
 from .relevance import aggregate_question_to_visual_attention
 from .resolution import ResolutionConfig
@@ -122,6 +123,7 @@ def run_qwen_relevance_example(
     query_scope: str = "question",
     attention_extraction: str = "full",
     vision_access_through_layer: str | int | None = None,
+    remove_temporal_bins: tuple[int, ...] | None = None,
 ) -> dict[str, Any]:
     try:
         import torch
@@ -205,29 +207,38 @@ def run_qwen_relevance_example(
         torch.cuda.reset_peak_memory_stats()
     started = time.time()
     prefill_next_token_topk: list[dict[str, float | int]] = []
-    answer_choice_scores: dict[str, Any] = {}
+    intervention_answer_choice_scores: dict[str, Any] = {}
+    intervention_active = bool(remove_temporal_bins) or vision_access_through_layer not in {None, "none"}
     if attention_extraction == "full":
         context = (
-            masked_eager_attention_context(model._model, layout, vision_access_through_layer)
-            if vision_access_through_layer not in {None, "none"}
+            masked_eager_attention_context(
+                model._model,
+                layout,
+                vision_access_through_layer,
+                remove_temporal_bins=remove_temporal_bins,
+            )
+            if vision_access_through_layer not in {None, "none"} or remove_temporal_bins
             else None
         )
         if context is None:
-            with torch.inference_mode():
-                outputs = model._model(**inputs, output_attentions=True, use_cache=False)
-        else:
-            with context:
+            with vision_temporal_capture_context(model._model, video_grid_thw, spatial_merge_size) as encoder_capture:
                 with torch.inference_mode():
                     outputs = model._model(**inputs, output_attentions=True, use_cache=False)
+        else:
+            with context:
+                with vision_temporal_capture_context(model._model, video_grid_thw, spatial_merge_size) as encoder_capture:
+                    with torch.inference_mode():
+                        outputs = model._model(**inputs, output_attentions=True, use_cache=False)
         attentions = getattr(outputs, "attentions", None)
         if attentions is None:
             raise RuntimeError(
                 "Qwen did not return decoder attentions. Ensure attn_implementation='eager' and output_attentions=True."
             )
         prefill_next_token_topk = next_token_topk_from_outputs(outputs)
-        answer_choice_scores = score_answer_choices_from_outputs(
-            outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
-        )
+        if intervention_active:
+            intervention_answer_choice_scores = score_answer_choices_from_outputs(
+                outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
+            )
         token_scores = aggregate_question_to_visual_attention(
             attentions, layout.question_token_indices, layout.visual_token_indices
         )
@@ -240,13 +251,20 @@ def run_qwen_relevance_example(
         del outputs, attentions
     elif attention_extraction == "reduced_sdpa":
         expected_layers = int(model._model.config.text_config.num_hidden_layers)
-        with reduced_attention_context(model._model, layout, vision_access_through_layer) as capture:
-            with torch.inference_mode():
-                outputs = model._model(**inputs, output_attentions=False, use_cache=False)
+        with reduced_attention_context(
+            model._model,
+            layout,
+            vision_access_through_layer,
+            remove_temporal_bins=remove_temporal_bins,
+        ) as capture:
+            with vision_temporal_capture_context(model._model, video_grid_thw, spatial_merge_size) as encoder_capture:
+                with torch.inference_mode():
+                    outputs = model._model(**inputs, output_attentions=False, use_cache=False)
         prefill_next_token_topk = next_token_topk_from_outputs(outputs)
-        answer_choice_scores = score_answer_choices_from_outputs(
-            outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
-        )
+        if intervention_active:
+            intervention_answer_choice_scores = score_answer_choices_from_outputs(
+                outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
+            )
         del outputs
         token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
         temporal_relevance = build_temporal_relevance_from_token_scores(
@@ -259,16 +277,42 @@ def run_qwen_relevance_example(
         raise ValueError("attention_extraction must be 'full' or 'reduced_sdpa'.")
 
     prefill_runtime = time.time() - started
+
+    scoring_started = time.time()
+    with torch.inference_mode():
+        scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
+    answer_choice_scores = score_answer_choices_from_outputs(
+        scoring_outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
+    )
+    unmodified_prefill_next_token_topk = next_token_topk_from_outputs(scoring_outputs)
+    del scoring_outputs
+    answer_scoring_runtime = time.time() - scoring_started
+
     memory_after_prefill = cuda_memory_metadata(torch)
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
     gen_started = time.time()
     if vision_access_through_layer in {None, "none"}:
-        with torch.inference_mode():
-            output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
+        if remove_temporal_bins:
+            with masked_eager_attention_context(
+                model._model,
+                layout,
+                vision_access_through_layer,
+                remove_temporal_bins=remove_temporal_bins,
+            ):
+                with torch.inference_mode():
+                    output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
+        else:
+            with torch.inference_mode():
+                output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
     else:
-        with masked_eager_attention_context(model._model, layout, vision_access_through_layer):
+        with masked_eager_attention_context(
+            model._model,
+            layout,
+            vision_access_through_layer,
+            remove_temporal_bins=remove_temporal_bins,
+        ):
             with torch.inference_mode():
                 output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
     raw_response = model._processor.batch_decode(
@@ -300,6 +344,7 @@ def run_qwen_relevance_example(
         "predicted_idx": predicted_idx,
         "correct": predicted_idx == example.correct_idx,
         "answer_choice_scores": answer_choice_scores,
+        "intervention_answer_choice_scores": intervention_answer_choice_scores,
         "sampled_frame_indices": [batch.frame_indices for batch in frame_batches],
         "sampled_timestamps": [batch.timestamps for batch in frame_batches],
         "token_layout": {
@@ -311,13 +356,16 @@ def run_qwen_relevance_example(
             "visual_token_cells": visual_token_cell_metadata(layout, frame_batches),
         },
         "temporal_relevance": temporal_relevance.to_json_dict(),
+        "encoder_temporal": encoder_capture.to_json_dict(),
         "metadata": {
             "model_id": model.config.model_id,
             "attn_implementation": model.config.attn_implementation,
             "attention_extraction": attention_extraction,
             "vision_access_through_layer": vision_access_through_layer or "none",
+            "removed_temporal_bins": list(remove_temporal_bins or ()),
             "resolution": resolution.to_metadata(),
             "prefill_runtime_seconds": prefill_runtime,
+            "answer_scoring_runtime_seconds": answer_scoring_runtime,
             "generation_runtime_seconds": time.time() - gen_started,
             "input_token_count": len(input_ids),
             "video_grid_thw": video_grid_thw,
@@ -327,6 +375,8 @@ def run_qwen_relevance_example(
             "source_video_paths": [str(batch.video_path) if batch.video_path else None for batch in frame_batches],
             "effective_sample_fps": [effective_sample_fps(batch) for batch in frame_batches],
             "prefill_next_token_topk": prefill_next_token_topk,
+            "unmodified_prefill_next_token_topk": unmodified_prefill_next_token_topk,
+            "answer_choice_score_source": "separate_unmodified_prefill_forward",
             **memory_after_prefill,
         },
     }

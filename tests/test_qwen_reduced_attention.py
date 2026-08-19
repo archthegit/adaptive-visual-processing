@@ -2,9 +2,11 @@ import numpy as np
 
 from src.experiment1.qwen_reduced_attention import (
     ReducedAttentionCapture,
+    TemporalBinRemoval,
     VisualAccessIntervention,
     _set_attention_implementation,
 )
+from src.experiment1.token_layout import TokenLayout, VisualTokenCell
 
 
 class _Config:
@@ -208,3 +210,50 @@ def test_visual_access_intervention_keeps_attention_before_cutoff():
         reduced._ACTIVE_VISUAL_ACCESS = old_intervention
 
     assert torch.allclose(baseline, unblocked)
+
+
+def test_temporal_bin_removal_maps_temporal_cells_to_visual_tokens():
+    layout = TokenLayout(
+        question_token_indices=(4,),
+        prompt_token_indices=tuple(range(6)),
+        visual_token_indices=(0, 1, 2, 3),
+        visual_cells=(
+            VisualTokenCell(0, 0, "video", 0, 0, 0, 0, 2, 1, 2),
+            VisualTokenCell(1, 1, "video", 0, 0, 0, 1, 2, 1, 2),
+            VisualTokenCell(2, 2, "video", 0, 1, 0, 0, 2, 1, 2),
+            VisualTokenCell(3, 3, "video", 0, 1, 0, 1, 2, 1, 2),
+        ),
+        visual_grid_metadata={},
+        query_scope="question",
+    )
+    removal = TemporalBinRemoval.from_layout(layout, (1,))
+    assert removal is not None
+    assert removal.visual_token_indices == (2, 3)
+
+
+def test_temporal_bin_removal_blocks_text_attention_to_removed_bin():
+    import pytest
+
+    torch = pytest.importorskip("torch")
+
+    from src.experiment1 import qwen_reduced_attention as reduced
+
+    class Module:
+        num_key_value_groups = 1
+        training = False
+        layer_idx = 0
+
+    query = torch.tensor([[[[2.0, 0.0], [0.0, 2.0], [1.0, 1.0]]]])
+    key = query.clone()
+    value = torch.eye(3).reshape(1, 1, 3, 3)
+    baseline, _ = reduced.qwen_relevance_masked_eager_forward(Module(), query, key, value, None, scaling=1.0)
+
+    old_removal = reduced._ACTIVE_TEMPORAL_REMOVAL
+    reduced._ACTIVE_TEMPORAL_REMOVAL = TemporalBinRemoval(visual_token_indices=(0,), prompt_seq_len=3)
+    try:
+        blocked, weights = reduced.qwen_relevance_masked_eager_forward(Module(), query, key, value, None, scaling=1.0)
+    finally:
+        reduced._ACTIVE_TEMPORAL_REMOVAL = old_removal
+
+    assert not torch.allclose(baseline, blocked)
+    assert torch.all(weights[:, :, 1:, 0] == 0)

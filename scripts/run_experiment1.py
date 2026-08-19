@@ -33,6 +33,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--resolution-config", default="low", choices=["low", "medium", "high"])
     parser.add_argument("--vision-access-through-layer", default="none")
+    parser.add_argument(
+        "--remove-temporal-bin",
+        action="append",
+        type=int,
+        default=None,
+        help="Causally remove this Qwen temporal bin from text/question attention. Can be repeated.",
+    )
     parser.add_argument("--query-scope", default="question", choices=["question", "full_user_prompt"])
     parser.add_argument("--attention-extraction", default="full", choices=["full", "reduced_sdpa"])
     parser.add_argument("--max-new-tokens", type=int, default=16)
@@ -108,6 +115,14 @@ def current_git_commit() -> str | None:
     return result.stdout.strip()
 
 
+def records_filename(shard_index: int, num_shards: int) -> str:
+    return "records.jsonl" if num_shards == 1 else f"records_shard-{shard_index:05d}-of-{num_shards:05d}.jsonl"
+
+
+def summary_filename(shard_index: int, num_shards: int) -> str:
+    return "summary.json" if num_shards == 1 else f"summary_shard-{shard_index:05d}-of-{num_shards:05d}.json"
+
+
 def load_examples_by_id(questions_dir: str | None, records: list[dict[str, Any]]):
     if questions_dir is None:
         raise ValueError("--questions-dir is required for non-dry-run Experiment 1 execution.")
@@ -179,7 +194,7 @@ def main() -> None:
     records = filter_records(load_manifest(args.manifest, args.limit), args.question_id)
     records = shard_records(records, args.shard_index, args.num_shards)
     started = time.time()
-    jsonl_path = output_dir / "records.jsonl"
+    jsonl_path = output_dir / records_filename(args.shard_index, args.num_shards)
     if jsonl_path.exists() and not args.resume:
         jsonl_path.unlink()
     complete_on_resume = completed_question_ids(jsonl_path) if args.resume else set()
@@ -220,6 +235,7 @@ def main() -> None:
                     "frame_budget_mode": args.frame_budget_mode,
                     "resolution": resolution.to_metadata(),
                     "vision_access_through_layer": args.vision_access_through_layer,
+                    "removed_temporal_bins": list(args.remove_temporal_bin or ()),
                     "query_scope": args.query_scope,
                     "attention_extraction": args.attention_extraction,
                     "seed": args.seed,
@@ -243,6 +259,7 @@ def main() -> None:
                 query_scope=args.query_scope,
                 attention_extraction=args.attention_extraction,
                 vision_access_through_layer=args.vision_access_through_layer,
+                remove_temporal_bins=tuple(args.remove_temporal_bin or ()),
             )
             artifact["category"] = record["category"]
             artifact["vision_access_through_layer"] = args.vision_access_through_layer
@@ -252,6 +269,7 @@ def main() -> None:
                 "frame_budget_mode": args.frame_budget_mode,
                 "resolution_config": args.resolution_config,
                 "vision_access_through_layer": args.vision_access_through_layer,
+                "removed_temporal_bins": list(args.remove_temporal_bin or ()),
                 "query_scope": args.query_scope,
                 "attention_extraction": args.attention_extraction,
                 "max_new_tokens": args.max_new_tokens,
@@ -300,6 +318,7 @@ def main() -> None:
             "frame_budget_mode": args.frame_budget_mode,
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,
+            "removed_temporal_bins": list(args.remove_temporal_bin or ()),
             "query_scope": args.query_scope,
             "attention_extraction": args.attention_extraction,
             "max_new_tokens": args.max_new_tokens,
@@ -312,7 +331,7 @@ def main() -> None:
             "git_commit": git_commit,
         },
     }
-    write_json(output_dir / "summary.json", summary)
+    write_json(output_dir / summary_filename(args.shard_index, args.num_shards), summary)
     print(json.dumps(summary, indent=2))
 
 

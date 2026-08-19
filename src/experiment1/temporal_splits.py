@@ -103,6 +103,7 @@ def _select_balanced(
     rng: random.Random,
     used_question_ids: set[str],
     max_per_source_video: int,
+    source_counts: Counter[str],
     excluded_source_videos: set[str] | None = None,
 ) -> list[VQAExample]:
     excluded = set(excluded_source_videos or set())
@@ -111,10 +112,12 @@ def _select_balanced(
         for item in candidates
         if item.question_id not in used_question_ids and item.inputs[0].video_id not in excluded
     ]
-    if len(pool) < count and excluded:
-        pool = [item for item in candidates if item.question_id not in used_question_ids]
+    if len(pool) < count:
+        raise ValueError(
+            f"Could not select {count} examples while excluding source videos {sorted(excluded)}; "
+            f"only {len(pool)} eligible candidates remain."
+        )
     selected: list[VQAExample] = []
-    source_counts: Counter[str] = Counter()
     subtype_counts: Counter[str] = Counter()
     participant_counts: Counter[str] = Counter()
     duration_counts: Counter[str] = Counter()
@@ -190,47 +193,51 @@ def create_temporal_splits(
     splits = {"engineering": [], "pilot": [], "confirmatory": []}
     used_ids: set[str] = set()
     pilot_video_ids: set[str] = set()
-    confirmatory_video_overlap_feasible = True
+    source_counts_by_split: dict[str, Counter[str]] = {
+        "engineering": Counter(),
+        "pilot": Counter(),
+        "confirmatory": Counter(),
+    }
 
     for category in EXPERIMENT1_CATEGORIES:
         bucket = by_category[category]
         splits["engineering"].extend(
-            _select_balanced(bucket, config.engineering_per_category, rng, used_ids, config.max_per_source_video)
+            _select_balanced(
+                bucket,
+                config.engineering_per_category,
+                rng,
+                used_ids,
+                config.max_per_source_video,
+                source_counts_by_split["engineering"],
+            )
         )
-        pilot = _select_balanced(bucket, config.pilot_per_category, rng, used_ids, config.max_per_source_video)
+        pilot = _select_balanced(
+            bucket,
+            config.pilot_per_category,
+            rng,
+            used_ids,
+            config.max_per_source_video,
+            source_counts_by_split["pilot"],
+        )
         splits["pilot"].extend(pilot)
         pilot_video_ids.update(item.inputs[0].video_id for item in pilot)
 
     for category in EXPERIMENT1_CATEGORIES:
-        before_ids = set(used_ids)
-        try:
-            confirmatory = _select_balanced(
-                by_category[category],
-                config.confirmatory_per_category,
-                rng,
-                used_ids,
-                config.max_per_source_video,
-                excluded_source_videos=pilot_video_ids,
-            )
-        except ValueError:
-            used_ids.clear()
-            used_ids.update(before_ids)
-            confirmatory_video_overlap_feasible = False
-            confirmatory = _select_balanced(
-                by_category[category],
-                config.confirmatory_per_category,
-                rng,
-                used_ids,
-                config.max_per_source_video,
-            )
-        if any(item.inputs[0].video_id in pilot_video_ids for item in confirmatory):
-            confirmatory_video_overlap_feasible = False
+        confirmatory = _select_balanced(
+            by_category[category],
+            config.confirmatory_per_category,
+            rng,
+            used_ids,
+            config.max_per_source_video,
+            source_counts_by_split["confirmatory"],
+            excluded_source_videos=pilot_video_ids,
+        )
         splits["confirmatory"].extend(confirmatory)
 
     for key in splits:
         splits[key].sort(key=lambda item: (infer_experiment1_category(item.question_type) or "", item.question_type, item.question_id))
 
-    summary = build_temporal_split_summary(splits, eligible, config, confirmatory_video_overlap_feasible)
+    summary = build_temporal_split_summary(splits, eligible, config)
     return splits, summary
 
 
@@ -253,7 +260,6 @@ def build_temporal_split_summary(
     splits: dict[str, list[VQAExample]],
     eligible: list[VQAExample],
     config: TemporalSplitConfig,
-    confirmatory_video_overlap_feasible: bool,
 ) -> dict[str, Any]:
     pilot_videos = {item.inputs[0].video_id for item in splits["pilot"]}
     confirmatory_videos = {item.inputs[0].video_id for item in splits["confirmatory"]}
@@ -274,5 +280,5 @@ def build_temporal_split_summary(
             "pilot_confirmatory": sorted(ids_by_split["pilot"] & ids_by_split["confirmatory"]),
         },
         "pilot_confirmatory_source_video_overlap": sorted(pilot_videos & confirmatory_videos),
-        "pilot_confirmatory_source_video_overlap_avoided": confirmatory_video_overlap_feasible and not (pilot_videos & confirmatory_videos),
+        "pilot_confirmatory_source_video_overlap_avoided": not (pilot_videos & confirmatory_videos),
     }

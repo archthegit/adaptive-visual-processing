@@ -47,6 +47,19 @@ visual tokens that share the same Qwen `video_grid_thw` temporal index. The
 vision encoder attention is not question-conditioned and should not be labeled
 query relevance.
 
+Experiment 1 also records non-query-conditioned temporal representations from
+the Qwen vision path when the expected modules are present:
+
+```text
+visual.patch_embed output -> pool by video_grid_thw temporal bin
+visual.merger output      -> pool by merged video_grid_thw temporal bin
+```
+
+For each captured stage, artifacts include temporal embedding vectors and
+adjacent-bin cosine similarities. These encoder/merger summaries answer a
+different question from decoder relevance: whether neighboring temporal bins are
+represented similarly before the language decoder consumes them.
+
 ## Visual Token Counts and Layout
 
 The processor expands visual placeholders according to:
@@ -109,6 +122,9 @@ rank order, Spearman correlation with final-layer ordering, and top-K overlap
 with final-layer important bins. Full attention tensors are not retained after
 aggregation.
 
+Artifacts also store `encoder_temporal` with pooled temporal representations and
+adjacent-bin similarity for captured vision stages.
+
 ## Attention Extraction
 
 The installed decoder attention class is `Qwen2_5_VLAttention`. Its forward path calls the Transformers attention interface selected by `config._attn_implementation`.
@@ -164,6 +180,11 @@ approximation. Before using it for medium/high resolution or long-frame runs,
 validate it against `full` on a small example and compare temporal scores and
 answer-choice logits.
 
+Answer-choice scores in `answer_choice_scores` are computed from a separate
+unmodified prefill forward pass. If an intervention such as temporal-bin removal
+is active, intervention logits are stored separately in
+`intervention_answer_choice_scores`.
+
 Important correctness note: custom attention implementation names must also be
 registered with `transformers.masking_utils.ALL_MASK_ATTENTION_FUNCTIONS`. If
 they are not, `create_causal_mask` treats the backend as externally-managed and
@@ -171,6 +192,25 @@ returns `None`; using SDPA with `is_causal=False` would then leak future tokens
 during prefill. The current implementation registers both custom attention
 names with `eager_mask`, which materializes an additive causal mask and disables
 causal-mask skipping.
+
+## Causal Temporal-Bin Removal
+
+`--remove-temporal-bin` adds an attention mask from non-visual query rows to all
+visual key columns belonging to the requested Qwen temporal bin. The same mask
+path is used for prefill and generation. This is the causal check that should be
+run on engineering examples before the 48-example pilot.
+
+The recommended analysis is to remove final-layer high-ranked bins and compare
+the intervention choice logits against removals of low-ranked bins. The normal
+`answer_choice_scores` field remains unmodified; use
+`intervention_answer_choice_scores` for causal comparisons.
+
+## Dataset Balance Caveat
+
+Temporal splits record bounded duration, duration bucket, participant and source
+video IDs because duration/category confounds are expected in HD-EPIC. Category
+comparisons should be treated as descriptive unless duration/subtype controls
+are applied. Within-category temporal claims are more defensible.
 
 ## Scope Exclusions
 

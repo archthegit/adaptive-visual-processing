@@ -14,6 +14,7 @@ ATTENTION_IMPLEMENTATION = "qwen_relevance_reduced_sdpa"
 MASKED_EAGER_IMPLEMENTATION = "qwen_relevance_masked_eager"
 _ACTIVE_CAPTURE: "ReducedAttentionCapture | None" = None
 _ACTIVE_VISUAL_ACCESS: "VisualAccessIntervention | None" = None
+_ACTIVE_TEMPORAL_REMOVAL: "TemporalBinRemoval | None" = None
 
 
 def _repeat_kv(hidden_states: Any, n_rep: int) -> Any:
@@ -71,6 +72,26 @@ class VisualAccessIntervention:
         return self.through_layer is not None
 
 
+@dataclass(frozen=True)
+class TemporalBinRemoval:
+    visual_token_indices: tuple[int, ...]
+    prompt_seq_len: int
+
+    @classmethod
+    def from_layout(cls, layout: TokenLayout, temporal_bins: tuple[int, ...] | None) -> "TemporalBinRemoval | None":
+        if not temporal_bins:
+            return None
+        requested = set(int(item) for item in temporal_bins)
+        visual_indices = tuple(
+            cell.token_index
+            for cell in layout.visual_cells
+            if cell.modality == "video" and cell.temporal_index in requested
+        )
+        if not visual_indices:
+            raise ValueError(f"Requested temporal bins {sorted(requested)} do not map to any video visual tokens.")
+        return cls(visual_token_indices=visual_indices, prompt_seq_len=len(layout.prompt_token_indices))
+
+
 def register_reduced_attention() -> None:
     from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS, eager_mask
     from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
@@ -114,15 +135,18 @@ def reduced_attention_context(
     model: Any,
     layout: TokenLayout,
     vision_access_through_layer: str | int | None = None,
+    remove_temporal_bins: tuple[int, ...] | None = None,
 ) -> Iterator[ReducedAttentionCapture]:
-    global _ACTIVE_CAPTURE, _ACTIVE_VISUAL_ACCESS
+    global _ACTIVE_CAPTURE, _ACTIVE_VISUAL_ACCESS, _ACTIVE_TEMPORAL_REMOVAL
     register_reduced_attention()
     capture = ReducedAttentionCapture.from_layout(layout)
     previous_capture = _ACTIVE_CAPTURE
     previous_intervention = _ACTIVE_VISUAL_ACCESS
+    previous_removal = _ACTIVE_TEMPORAL_REMOVAL
     _ACTIVE_VISUAL_ACCESS = VisualAccessIntervention.from_layout(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
+    _ACTIVE_TEMPORAL_REMOVAL = TemporalBinRemoval.from_layout(layout, remove_temporal_bins)
     previous_configs = _set_attention_implementation(model, ATTENTION_IMPLEMENTATION)
     _ACTIVE_CAPTURE = capture
     try:
@@ -130,6 +154,7 @@ def reduced_attention_context(
     finally:
         _ACTIVE_CAPTURE = previous_capture
         _ACTIVE_VISUAL_ACCESS = previous_intervention
+        _ACTIVE_TEMPORAL_REMOVAL = previous_removal
         for config, previous_implementation in previous_configs:
             config._attn_implementation = previous_implementation
 
@@ -139,18 +164,22 @@ def masked_eager_attention_context(
     model: Any,
     layout: TokenLayout,
     vision_access_through_layer: str | int | None,
+    remove_temporal_bins: tuple[int, ...] | None = None,
 ) -> Iterator[None]:
-    global _ACTIVE_VISUAL_ACCESS
+    global _ACTIVE_VISUAL_ACCESS, _ACTIVE_TEMPORAL_REMOVAL
     register_reduced_attention()
     previous_intervention = _ACTIVE_VISUAL_ACCESS
+    previous_removal = _ACTIVE_TEMPORAL_REMOVAL
     _ACTIVE_VISUAL_ACCESS = VisualAccessIntervention.from_layout(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
+    _ACTIVE_TEMPORAL_REMOVAL = TemporalBinRemoval.from_layout(layout, remove_temporal_bins)
     previous_configs = _set_attention_implementation(model, MASKED_EAGER_IMPLEMENTATION)
     try:
         yield
     finally:
         _ACTIVE_VISUAL_ACCESS = previous_intervention
+        _ACTIVE_TEMPORAL_REMOVAL = previous_removal
         for config, previous_implementation in previous_configs:
             config._attn_implementation = previous_implementation
 
@@ -208,11 +237,38 @@ def _visual_access_block_mask(module: Any, query: Any, key_states: Any, position
     return mask
 
 
-def _apply_visual_access_block(attention_mask: Any, module: Any, query: Any, key_states: Any, position_ids: Any | None) -> Any:
+def _temporal_removal_block_mask(query: Any, key_states: Any, position_ids: Any | None) -> Any | None:
+    removal = _ACTIVE_TEMPORAL_REMOVAL
+    if removal is None:
+        return None
+    key_len = int(key_states.shape[2])
+    removed_indices = [idx for idx in removal.visual_token_indices if idx < key_len]
+    if not removed_indices:
+        return None
+    query_positions = _query_absolute_positions(query, key_states, position_ids)
+    blocked_rows = [
+        row_idx
+        for row_idx, absolute_pos in enumerate(query_positions)
+        if absolute_pos not in removal.visual_token_indices
+    ]
+    if not blocked_rows:
+        return None
+    import torch
+
+    mask = torch.zeros((1, 1, int(query.shape[2]), key_len), dtype=query.dtype, device=query.device)
+    blocked_value = torch.finfo(query.dtype).min
+    for row_idx in blocked_rows:
+        mask[:, :, row_idx, removed_indices] = blocked_value
+    return mask
+
+
+def _apply_experiment1_blocks(attention_mask: Any, module: Any, query: Any, key_states: Any, position_ids: Any | None) -> Any:
     block = _visual_access_block_mask(module, query, key_states, position_ids)
-    if block is None:
-        return attention_mask
-    return block if attention_mask is None else attention_mask + block
+    temporal_block = _temporal_removal_block_mask(query, key_states, position_ids)
+    for candidate in (block, temporal_block):
+        if candidate is not None:
+            attention_mask = candidate if attention_mask is None else attention_mask + candidate
+    return attention_mask
 
 
 def qwen_relevance_masked_eager_forward(
@@ -230,7 +286,7 @@ def qwen_relevance_masked_eager_forward(
 
     key_states = _repeat_kv(key, module.num_key_value_groups)
     value_states = _repeat_kv(value, module.num_key_value_groups)
-    attention_mask = _apply_visual_access_block(attention_mask, module, query, key_states, kwargs.get("position_ids"))
+    attention_mask = _apply_experiment1_blocks(attention_mask, module, query, key_states, kwargs.get("position_ids"))
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
@@ -257,7 +313,7 @@ def qwen_relevance_reduced_sdpa_forward(
 
     key_states = _repeat_kv(key, module.num_key_value_groups)
     value_states = _repeat_kv(value, module.num_key_value_groups)
-    attention_mask = _apply_visual_access_block(attention_mask, module, query, key_states, kwargs.get("position_ids"))
+    attention_mask = _apply_experiment1_blocks(attention_mask, module, query, key_states, kwargs.get("position_ids"))
 
     attn_output = F.scaled_dot_product_attention(
         query,

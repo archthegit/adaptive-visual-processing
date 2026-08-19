@@ -1,4 +1,6 @@
 from src.dataset import parse_vqa_example
+import pytest
+
 from src.experiment1.temporal_splits import (
     TemporalSplitConfig,
     create_temporal_splits,
@@ -15,9 +17,9 @@ QUESTION_TYPES = {
 }
 
 
-def _example(category, idx, video_suffix=None, image=False, extra_video=False):
+def _example(category, idx, video_suffix=None, image=False, extra_video=False, video_id=None):
     qtype = QUESTION_TYPES[category]
-    video_id = f"P{idx % 4:02d}-video-{video_suffix or idx}"
+    video_id = video_id or f"P{idx % 4:02d}-video-{video_suffix or idx}"
     inputs = {
         "video 1": {
             "id": video_id,
@@ -49,8 +51,11 @@ def test_single_video_temporal_filter_rejects_images_and_multi_video():
 
 def test_temporal_splits_are_deterministic_and_disjoint():
     examples = []
-    for category in QUESTION_TYPES:
-        examples.extend(_example(category, idx + category_index * 100) for idx in range(8) for category_index in [list(QUESTION_TYPES).index(category)])
+    for category_index, category in enumerate(QUESTION_TYPES):
+        examples.extend(
+            _example(category, idx + category_index * 100, video_suffix=f"{category}-{idx}")
+            for idx in range(12)
+        )
     config = TemporalSplitConfig(
         engineering_per_category=1,
         pilot_per_category=2,
@@ -71,7 +76,30 @@ def test_temporal_splits_are_deterministic_and_disjoint():
     assert not (split_ids[0] & split_ids[1])
     assert not (split_ids[0] & split_ids[2])
     assert not (split_ids[1] & split_ids[2])
+    pilot_videos = {item.inputs[0].video_id for item in splits_a["pilot"]}
+    confirmatory_videos = {item.inputs[0].video_id for item in splits_a["confirmatory"]}
+    assert not (pilot_videos & confirmatory_videos)
     assert summary_a == summary_b
+
+
+def test_temporal_splits_fail_when_confirmatory_video_isolation_is_impossible():
+    examples = []
+    for category_index, category in enumerate(QUESTION_TYPES):
+        examples.extend(
+            _example(category, idx + category_index * 100, video_id=f"P{category_index:02d}-shared-{idx % 2}")
+            for idx in range(8)
+        )
+    with pytest.raises(ValueError, match="excluding source videos"):
+        create_temporal_splits(
+            examples,
+            TemporalSplitConfig(
+                engineering_per_category=1,
+                pilot_per_category=2,
+                confirmatory_per_category=2,
+                seed=7,
+                max_per_source_video=10,
+            ),
+        )
 
 
 def test_temporal_manifest_record_exposes_temporal_source_metadata():

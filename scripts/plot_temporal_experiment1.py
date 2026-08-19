@@ -20,6 +20,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plot-dir", default=None)
     parser.add_argument("--artifact", action="append", default=None, help="Specific artifact JSON to plot. Can repeat.")
     parser.add_argument("--bootstrap-samples", type=int, default=1000)
+    parser.add_argument("--rank-top-k", type=int, default=10)
+    parser.add_argument("--max-heatmap-width", type=float, default=12.0)
     parser.add_argument("--seed", type=int, default=20260818)
     return parser.parse_args()
 
@@ -64,10 +66,10 @@ def source_video_id(artifact: dict[str, Any]) -> str:
     return str(paths[0]) if paths else "unknown"
 
 
-def save_example_heatmap(artifact: dict[str, Any], plot_dir: Path) -> None:
+def save_example_heatmap(artifact: dict[str, Any], plot_dir: Path, max_width: float) -> None:
     plt = _plt()
     scores = np.asarray(artifact["temporal_relevance"]["normalized_temporal_bin_scores"], dtype=np.float64)
-    fig, ax = plt.subplots(figsize=(max(5, scores.shape[1] * 0.7), 6))
+    fig, ax = plt.subplots(figsize=(min(max_width, max(5, scores.shape[1] * 0.18)), 6))
     image = ax.imshow(scores, aspect="auto", interpolation="nearest", cmap="viridis")
     ax.set_title(f"{artifact['question_id']} temporal relevance")
     ax.set_xlabel("Temporal bin")
@@ -78,23 +80,24 @@ def save_example_heatmap(artifact: dict[str, Any], plot_dir: Path) -> None:
     plt.close(fig)
 
 
-def save_rank_trajectory(artifact: dict[str, Any], plot_dir: Path) -> None:
+def save_rank_trajectory(artifact: dict[str, Any], plot_dir: Path, top_k: int) -> None:
     plt = _plt()
     metrics = artifact["temporal_relevance"]["layer_metrics"]
     num_bins = artifact["temporal_relevance"]["metadata"]["num_temporal_bins"]
+    final_top_bins = [int(item) for item in metrics[-1]["temporal_bin_rank_order"][: max(1, min(top_k, num_bins))]]
     positions = np.zeros((len(metrics), num_bins), dtype=np.float64)
     for layer_idx, metric in enumerate(metrics):
         for rank, temporal_bin in enumerate(metric["temporal_bin_rank_order"], start=1):
             positions[layer_idx, int(temporal_bin)] = rank
     fig, ax = plt.subplots(figsize=(7, 5))
     layers = np.arange(len(metrics))
-    for temporal_bin in range(num_bins):
+    for temporal_bin in final_top_bins:
         ax.plot(layers, positions[:, temporal_bin], marker="o", linewidth=1.2, label=f"bin {temporal_bin}")
     ax.invert_yaxis()
     ax.set_title(f"{artifact['question_id']} temporal-bin rank trajectory")
     ax.set_xlabel("Decoder layer")
     ax.set_ylabel("Rank, 1 = most attended")
-    ax.legend(loc="best", fontsize=8)
+    ax.legend(loc="best", fontsize=8, title=f"final top {len(final_top_bins)}")
     fig.tight_layout()
     fig.savefig(plot_dir / f"{artifact['question_id']}_rank_trajectory.png", dpi=180)
     plt.close(fig)
@@ -165,8 +168,8 @@ def main() -> None:
     plot_dir.mkdir(parents=True, exist_ok=True)
     artifacts = load_artifacts(output_dir, args.artifact)
     for artifact in artifacts:
-        save_example_heatmap(artifact, plot_dir)
-        save_rank_trajectory(artifact, plot_dir)
+        save_example_heatmap(artifact, plot_dir, args.max_heatmap_width)
+        save_rank_trajectory(artifact, plot_dir, args.rank_top_k)
     save_aggregate_curves(artifacts, plot_dir, args.bootstrap_samples, args.seed)
     print(json.dumps({"plot_dir": str(plot_dir), "num_artifacts": len(artifacts)}, indent=2))
 

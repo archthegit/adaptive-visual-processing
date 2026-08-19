@@ -9,7 +9,9 @@ from scripts.run_experiment1 import (
     frame_batches_for_example,
     frames_per_video_input,
     parse_args,
+    records_filename,
     shard_records,
+    summary_filename,
 )
 from src.io import append_jsonl, write_json
 
@@ -26,6 +28,8 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
             "24",
             "--attention-extraction",
             "reduced_sdpa",
+            "--remove-temporal-bin",
+            "2",
         ],
     )
     args = parse_args()
@@ -35,6 +39,7 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
     assert args.resume is False
     assert args.shard_index == 0
     assert args.num_shards == 1
+    assert args.remove_temporal_bin == [2]
 
 
 def test_frames_per_input_splits_total_budget_deterministically():
@@ -58,6 +63,13 @@ def test_shard_records_is_deterministic():
     assert [record["question_id"] for record in shard_records(records, 1, 3)] == ["q1", "q4"]
     with pytest.raises(ValueError, match="shard-index"):
         shard_records(records, 3, 3)
+
+
+def test_sharded_output_filenames_are_isolated():
+    assert records_filename(0, 1) == "records.jsonl"
+    assert summary_filename(0, 1) == "summary.json"
+    assert records_filename(2, 8) == "records_shard-00002-of-00008.jsonl"
+    assert summary_filename(2, 8) == "summary_shard-00002-of-00008.json"
 
 
 def test_completed_question_ids_only_skips_existing_complete_artifacts(tmp_path):
