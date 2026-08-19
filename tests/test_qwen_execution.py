@@ -3,11 +3,14 @@ import pytest
 from src.experiment1.qwen_execution import (
     cuda_memory_metadata,
     effective_sample_fps,
+    frame_indices_for_temporal_bins,
+    mask_frame_batch_temporal_bins,
     next_token_topk_from_outputs,
     normalize_video_kwargs,
     represented_sampled_frames,
     validate_scalar_video_fps_compatibility,
 )
+from src.frame_sampling import FrameBatch
 
 
 class _Batch:
@@ -91,3 +94,23 @@ def test_represented_sampled_frames_labels_two_frames_per_temporal_bin():
     assert represented["sampled_frame_indices"] == [4, 5]
     assert represented["sampled_timestamps"] == [4.0, 5.0]
     assert "two sampled frames" in represented["note"]
+
+
+def test_pre_encoder_temporal_mask_maps_bins_to_sampled_frames():
+    import numpy as np
+
+    assert frame_indices_for_temporal_bins(8, 4, (1, 3)) == [2, 3, 6, 7]
+    batch = FrameBatch(
+        frames=np.ones((8, 2, 2, 3), dtype=np.uint8),
+        frame_indices=tuple(range(8)),
+        timestamps=tuple(float(idx) for idx in range(8)),
+        video_path=None,
+        metadata={"input_modality": "video"},
+    )
+
+    masked = mask_frame_batch_temporal_bins(batch, 4, (1, 3))
+
+    assert masked.metadata["pre_encoder_removed_temporal_bins"] == [1, 3]
+    assert masked.metadata["pre_encoder_masked_sample_positions"] == [2, 3, 6, 7]
+    assert masked.frames[[2, 3, 6, 7]].sum() == 0
+    assert masked.frames[[0, 1, 4, 5]].sum() > 0

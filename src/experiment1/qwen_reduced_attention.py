@@ -14,7 +14,7 @@ ATTENTION_IMPLEMENTATION = "qwen_relevance_reduced_sdpa"
 MASKED_EAGER_IMPLEMENTATION = "qwen_relevance_masked_eager"
 _ACTIVE_CAPTURE: "ReducedAttentionCapture | None" = None
 _ACTIVE_VISUAL_ACCESS: "VisualAccessIntervention | None" = None
-_ACTIVE_TEMPORAL_REMOVAL: "TemporalBinRemoval | None" = None
+_ACTIVE_DECODER_DIRECT_ACCESS_MASK: "DecoderDirectAccessMask | None" = None
 
 
 def _repeat_kv(hidden_states: Any, n_rep: int) -> Any:
@@ -73,12 +73,12 @@ class VisualAccessIntervention:
 
 
 @dataclass(frozen=True)
-class TemporalBinRemoval:
+class DecoderDirectAccessMask:
     visual_token_indices: tuple[int, ...]
     prompt_seq_len: int
 
     @classmethod
-    def from_layout(cls, layout: TokenLayout, temporal_bins: tuple[int, ...] | None) -> "TemporalBinRemoval | None":
+    def from_layout(cls, layout: TokenLayout, temporal_bins: tuple[int, ...] | None) -> "DecoderDirectAccessMask | None":
         if not temporal_bins:
             return None
         requested = set(int(item) for item in temporal_bins)
@@ -90,6 +90,9 @@ class TemporalBinRemoval:
         if not visual_indices:
             raise ValueError(f"Requested temporal bins {sorted(requested)} do not map to any video visual tokens.")
         return cls(visual_token_indices=visual_indices, prompt_seq_len=len(layout.prompt_token_indices))
+
+
+TemporalBinRemoval = DecoderDirectAccessMask
 
 
 def register_reduced_attention() -> None:
@@ -135,18 +138,20 @@ def reduced_attention_context(
     model: Any,
     layout: TokenLayout,
     vision_access_through_layer: str | int | None = None,
-    remove_temporal_bins: tuple[int, ...] | None = None,
+    decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
 ) -> Iterator[ReducedAttentionCapture]:
-    global _ACTIVE_CAPTURE, _ACTIVE_VISUAL_ACCESS, _ACTIVE_TEMPORAL_REMOVAL
+    global _ACTIVE_CAPTURE, _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK
     register_reduced_attention()
     capture = ReducedAttentionCapture.from_layout(layout)
     previous_capture = _ACTIVE_CAPTURE
     previous_intervention = _ACTIVE_VISUAL_ACCESS
-    previous_removal = _ACTIVE_TEMPORAL_REMOVAL
+    previous_direct_access_mask = _ACTIVE_DECODER_DIRECT_ACCESS_MASK
     _ACTIVE_VISUAL_ACCESS = VisualAccessIntervention.from_layout(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
-    _ACTIVE_TEMPORAL_REMOVAL = TemporalBinRemoval.from_layout(layout, remove_temporal_bins)
+    _ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask.from_layout(
+        layout, decoder_direct_access_mask_temporal_bins
+    )
     previous_configs = _set_attention_implementation(model, ATTENTION_IMPLEMENTATION)
     _ACTIVE_CAPTURE = capture
     try:
@@ -154,7 +159,7 @@ def reduced_attention_context(
     finally:
         _ACTIVE_CAPTURE = previous_capture
         _ACTIVE_VISUAL_ACCESS = previous_intervention
-        _ACTIVE_TEMPORAL_REMOVAL = previous_removal
+        _ACTIVE_DECODER_DIRECT_ACCESS_MASK = previous_direct_access_mask
         for config, previous_implementation in previous_configs:
             config._attn_implementation = previous_implementation
 
@@ -164,22 +169,24 @@ def masked_eager_attention_context(
     model: Any,
     layout: TokenLayout,
     vision_access_through_layer: str | int | None,
-    remove_temporal_bins: tuple[int, ...] | None = None,
+    decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
 ) -> Iterator[None]:
-    global _ACTIVE_VISUAL_ACCESS, _ACTIVE_TEMPORAL_REMOVAL
+    global _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK
     register_reduced_attention()
     previous_intervention = _ACTIVE_VISUAL_ACCESS
-    previous_removal = _ACTIVE_TEMPORAL_REMOVAL
+    previous_direct_access_mask = _ACTIVE_DECODER_DIRECT_ACCESS_MASK
     _ACTIVE_VISUAL_ACCESS = VisualAccessIntervention.from_layout(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
-    _ACTIVE_TEMPORAL_REMOVAL = TemporalBinRemoval.from_layout(layout, remove_temporal_bins)
+    _ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask.from_layout(
+        layout, decoder_direct_access_mask_temporal_bins
+    )
     previous_configs = _set_attention_implementation(model, MASKED_EAGER_IMPLEMENTATION)
     try:
         yield
     finally:
         _ACTIVE_VISUAL_ACCESS = previous_intervention
-        _ACTIVE_TEMPORAL_REMOVAL = previous_removal
+        _ACTIVE_DECODER_DIRECT_ACCESS_MASK = previous_direct_access_mask
         for config, previous_implementation in previous_configs:
             config._attn_implementation = previous_implementation
 
@@ -194,19 +201,9 @@ def _slice_attention_mask(attention_mask: Any, question_indices: Any) -> Any:
     return attention_mask
 
 
-def _query_absolute_positions(query: Any, key_states: Any, position_ids: Any | None) -> list[int]:
+def _query_sequence_positions(query: Any, key_states: Any) -> list[int]:
     q_len = int(query.shape[2])
     key_len = int(key_states.shape[2])
-    if position_ids is not None:
-        ids = position_ids
-        if hasattr(ids, "detach"):
-            ids = ids.detach()
-        if len(ids.shape) == 3:
-            ids = ids[0]
-        if len(ids.shape) == 2:
-            ids = ids[0]
-        if len(ids.shape) == 1 and int(ids.shape[0]) == q_len:
-            return [int(item) for item in ids.cpu().tolist()]
     return list(range(key_len - q_len, key_len))
 
 
@@ -220,7 +217,7 @@ def _visual_access_block_mask(module: Any, query: Any, key_states: Any, position
     visual_indices = [idx for idx in intervention.visual_token_indices if idx < key_len]
     if not visual_indices:
         return None
-    query_positions = _query_absolute_positions(query, key_states, position_ids)
+    query_positions = _query_sequence_positions(query, key_states)
     blocked_rows = [
         row_idx
         for row_idx, absolute_pos in enumerate(query_positions)
@@ -237,19 +234,19 @@ def _visual_access_block_mask(module: Any, query: Any, key_states: Any, position
     return mask
 
 
-def _temporal_removal_block_mask(query: Any, key_states: Any, position_ids: Any | None) -> Any | None:
-    removal = _ACTIVE_TEMPORAL_REMOVAL
-    if removal is None:
+def _decoder_direct_access_block_mask(query: Any, key_states: Any) -> Any | None:
+    direct_access_mask = _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    if direct_access_mask is None:
         return None
     key_len = int(key_states.shape[2])
-    removed_indices = [idx for idx in removal.visual_token_indices if idx < key_len]
-    if not removed_indices:
+    masked_indices = [idx for idx in direct_access_mask.visual_token_indices if idx < key_len]
+    if not masked_indices:
         return None
-    query_positions = _query_absolute_positions(query, key_states, position_ids)
+    query_positions = _query_sequence_positions(query, key_states)
     blocked_rows = [
         row_idx
         for row_idx, absolute_pos in enumerate(query_positions)
-        if absolute_pos not in removal.visual_token_indices
+        if absolute_pos not in direct_access_mask.visual_token_indices
     ]
     if not blocked_rows:
         return None
@@ -258,13 +255,13 @@ def _temporal_removal_block_mask(query: Any, key_states: Any, position_ids: Any 
     mask = torch.zeros((1, 1, int(query.shape[2]), key_len), dtype=query.dtype, device=query.device)
     blocked_value = torch.finfo(query.dtype).min
     for row_idx in blocked_rows:
-        mask[:, :, row_idx, removed_indices] = blocked_value
+        mask[:, :, row_idx, masked_indices] = blocked_value
     return mask
 
 
 def _apply_experiment1_blocks(attention_mask: Any, module: Any, query: Any, key_states: Any, position_ids: Any | None) -> Any:
     block = _visual_access_block_mask(module, query, key_states, position_ids)
-    temporal_block = _temporal_removal_block_mask(query, key_states, position_ids)
+    temporal_block = _decoder_direct_access_block_mask(query, key_states)
     for candidate in (block, temporal_block):
         if candidate is not None:
             attention_mask = candidate if attention_mask is None else attention_mask + candidate

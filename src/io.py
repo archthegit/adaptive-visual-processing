@@ -24,6 +24,14 @@ def append_jsonl(path: str | Path, item: dict[str, Any]) -> None:
         handle.write(json.dumps(item, default=_json_default) + "\n")
 
 
+def write_jsonl(path: str | Path, items: list[dict[str, Any]]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as handle:
+        for item in items:
+            handle.write(json.dumps(item, default=_json_default) + "\n")
+
+
 def write_json(path: str | Path, item: dict[str, Any]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

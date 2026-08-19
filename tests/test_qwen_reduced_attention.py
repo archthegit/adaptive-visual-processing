@@ -1,9 +1,11 @@
 import numpy as np
 
 from src.experiment1.qwen_reduced_attention import (
+    DecoderDirectAccessMask,
     ReducedAttentionCapture,
-    TemporalBinRemoval,
     VisualAccessIntervention,
+    _decoder_direct_access_block_mask,
+    _query_sequence_positions,
     _set_attention_implementation,
 )
 from src.experiment1.token_layout import TokenLayout, VisualTokenCell
@@ -212,7 +214,7 @@ def test_visual_access_intervention_keeps_attention_before_cutoff():
     assert torch.allclose(baseline, unblocked)
 
 
-def test_temporal_bin_removal_maps_temporal_cells_to_visual_tokens():
+def test_decoder_direct_access_mask_maps_temporal_cells_to_visual_tokens():
     layout = TokenLayout(
         question_token_indices=(4,),
         prompt_token_indices=tuple(range(6)),
@@ -226,12 +228,31 @@ def test_temporal_bin_removal_maps_temporal_cells_to_visual_tokens():
         visual_grid_metadata={},
         query_scope="question",
     )
-    removal = TemporalBinRemoval.from_layout(layout, (1,))
+    removal = DecoderDirectAccessMask.from_layout(layout, (1,))
     assert removal is not None
     assert removal.visual_token_indices == (2, 3)
 
 
-def test_temporal_bin_removal_blocks_text_attention_to_removed_bin():
+def test_query_sequence_positions_ignore_realistic_qwen_rope_position_ids():
+    import pytest
+
+    torch = pytest.importorskip("torch")
+
+    query = torch.zeros(1, 2, 3, 4)
+    key_states = torch.zeros(1, 2, 9, 4)
+    position_ids = torch.tensor(
+        [
+            [[0, 0, 0]],
+            [[3, 4, 5]],
+            [[9, 9, 10]],
+        ]
+    )
+
+    assert position_ids.shape == (3, 1, 3)
+    assert _query_sequence_positions(query, key_states) == [6, 7, 8]
+
+
+def test_decoder_direct_access_mask_blocks_exact_requested_temporal_columns():
     import pytest
 
     torch = pytest.importorskip("torch")
@@ -243,17 +264,47 @@ def test_temporal_bin_removal_blocks_text_attention_to_removed_bin():
         training = False
         layer_idx = 0
 
-    query = torch.tensor([[[[2.0, 0.0], [0.0, 2.0], [1.0, 1.0]]]])
-    key = query.clone()
-    value = torch.eye(3).reshape(1, 1, 3, 3)
+    query = torch.tensor([[[[1.0, 0.5], [0.5, 1.0]]]])
+    key = torch.tensor([[[[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0], [1.0, 1.0]]]])
+    value = torch.eye(5).reshape(1, 1, 5, 5)
     baseline, _ = reduced.qwen_relevance_masked_eager_forward(Module(), query, key, value, None, scaling=1.0)
 
-    old_removal = reduced._ACTIVE_TEMPORAL_REMOVAL
-    reduced._ACTIVE_TEMPORAL_REMOVAL = TemporalBinRemoval(visual_token_indices=(0,), prompt_seq_len=3)
+    old_mask = reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask(visual_token_indices=(1, 3), prompt_seq_len=5)
     try:
-        blocked, weights = reduced.qwen_relevance_masked_eager_forward(Module(), query, key, value, None, scaling=1.0)
+        blocked, weights = reduced.qwen_relevance_masked_eager_forward(
+            Module(),
+            query,
+            key,
+            value,
+            None,
+            scaling=1.0,
+            position_ids=torch.tensor([[[0, 0]], [[7, 8]], [[4, 4]]]),
+        )
     finally:
-        reduced._ACTIVE_TEMPORAL_REMOVAL = old_removal
+        reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = old_mask
 
     assert not torch.allclose(baseline, blocked)
-    assert torch.all(weights[:, :, 1:, 0] == 0)
+    assert torch.all(weights[:, :, :, [1, 3]] == 0)
+    assert torch.all(weights[:, :, :, [0, 2, 4]] > 0)
+
+
+def test_decoder_direct_access_block_mask_values_exact_requested_columns():
+    import pytest
+
+    torch = pytest.importorskip("torch")
+    from src.experiment1 import qwen_reduced_attention as reduced
+
+    query = torch.zeros(1, 1, 2, 4)
+    key_states = torch.zeros(1, 1, 5, 4)
+    old_mask = reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask(visual_token_indices=(0, 2), prompt_seq_len=5)
+    try:
+        mask = _decoder_direct_access_block_mask(query, key_states)
+    finally:
+        reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = old_mask
+
+    assert mask is not None
+    blocked_value = torch.finfo(query.dtype).min
+    assert torch.all(mask[:, :, :, [0, 2]] == blocked_value)
+    assert torch.all(mask[:, :, :, [1, 3, 4]] == 0)

@@ -123,7 +123,11 @@ with final-layer important bins. Full attention tensors are not retained after
 aggregation.
 
 Artifacts also store `encoder_temporal` with pooled temporal representations and
-adjacent-bin similarity for captured vision stages.
+adjacent-bin similarity for captured Qwen vision stages. Early/middle/late
+vision block hooks are canonicalized back from Qwen's window order before
+temporal pooling, and the final stage uses the canonical post-merger visual
+output. Raw merger-hook output is treated as pre-reverse-index and is not
+interpreted as chronological without canonicalization.
 
 ## Attention Extraction
 
@@ -181,7 +185,7 @@ validate it against `full` on a small example and compare temporal scores and
 answer-choice logits.
 
 Answer-choice scores in `answer_choice_scores` are computed from a separate
-unmodified prefill forward pass. If an intervention such as temporal-bin removal
+unmodified prefill forward pass. If an intervention such as temporal-bin masking
 is active, intervention logits are stored separately in
 `intervention_answer_choice_scores`.
 
@@ -193,16 +197,24 @@ during prefill. The current implementation registers both custom attention
 names with `eager_mask`, which materializes an additive causal mask and disables
 causal-mask skipping.
 
-## Causal Temporal-Bin Removal
+## Temporal Interventions
 
-`--remove-temporal-bin` adds an attention mask from non-visual query rows to all
-visual key columns belonging to the requested Qwen temporal bin. The same mask
-path is used for prefill and generation. This is the causal check that should be
-run on engineering examples before the 48-example pilot.
+`--decoder-mask-temporal-bin` performs decoder direct-access masking: it adds an
+attention mask from non-visual query rows to all visual key columns belonging to
+the requested Qwen temporal bin. Query rows are determined from `key_len` and
+`q_len`; Qwen's three-axis multimodal RoPE `position_ids` are not treated as
+absolute sequence indices. The same mask path is used for prefill and
+generation.
+
+`--pre-encoder-mask-temporal-bin` is a separate intervention. It masks the
+sampled frames represented by the requested Qwen temporal bin before the Qwen
+vision encoder runs. This tests whether the temporal evidence is needed before
+vision encoding, while decoder direct-access masking tests whether later text
+tokens can directly attend to those temporal-bin columns.
 
 The recommended analysis is to remove final-layer high-ranked bins and compare
-the intervention choice logits against removals of low-ranked bins. The normal
-`answer_choice_scores` field remains unmodified; use
+the intervention choice logits against removals of low-ranked and random bins.
+The normal `answer_choice_scores` field remains unmodified; use
 `intervention_answer_choice_scores` for causal comparisons.
 
 ## Dataset Balance Caveat

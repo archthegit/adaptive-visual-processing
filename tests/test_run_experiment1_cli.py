@@ -28,7 +28,7 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
             "24",
             "--attention-extraction",
             "reduced_sdpa",
-            "--remove-temporal-bin",
+            "--decoder-mask-temporal-bin",
             "2",
         ],
     )
@@ -39,7 +39,8 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
     assert args.resume is False
     assert args.shard_index == 0
     assert args.num_shards == 1
-    assert args.remove_temporal_bin == [2]
+    assert args.decoder_mask_temporal_bin == [2]
+    assert args.pre_encoder_mask_temporal_bin is None
 
 
 def test_frames_per_input_splits_total_budget_deterministically():

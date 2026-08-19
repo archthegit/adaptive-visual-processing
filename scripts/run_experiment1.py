@@ -34,11 +34,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution-config", default="low", choices=["low", "medium", "high"])
     parser.add_argument("--vision-access-through-layer", default="none")
     parser.add_argument(
-        "--remove-temporal-bin",
+        "--decoder-mask-temporal-bin",
         action="append",
         type=int,
         default=None,
-        help="Causally remove this Qwen temporal bin from text/question attention. Can be repeated.",
+        help="Block direct decoder attention from text/question rows to this Qwen temporal bin. Can be repeated.",
+    )
+    parser.add_argument(
+        "--pre-encoder-mask-temporal-bin",
+        action="append",
+        type=int,
+        default=None,
+        help="Mask sampled frames represented by this Qwen temporal bin before the vision encoder. Can be repeated.",
     )
     parser.add_argument("--query-scope", default="question", choices=["question", "full_user_prompt"])
     parser.add_argument("--attention-extraction", default="full", choices=["full", "reduced_sdpa"])
@@ -113,6 +120,23 @@ def current_git_commit() -> str | None:
     except Exception:
         return None
     return result.stdout.strip()
+
+
+def intervention_bins(record: dict[str, Any], args: argparse.Namespace) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    decoder_bins = args.decoder_mask_temporal_bin
+    pre_encoder_bins = args.pre_encoder_mask_temporal_bin
+    if decoder_bins is None:
+        decoder_bins = record.get("decoder_direct_access_mask_temporal_bins")
+    if pre_encoder_bins is None:
+        pre_encoder_bins = record.get("pre_encoder_mask_temporal_bins")
+    decoder_tuple = tuple(int(item) for item in (decoder_bins or ()))
+    pre_encoder_tuple = tuple(int(item) for item in (pre_encoder_bins or ()))
+    if decoder_tuple and pre_encoder_tuple:
+        raise ValueError(
+            "Decoder direct-access masking and pre-encoder temporal masking are separate interventions; "
+            "run them in separate output directories."
+        )
+    return decoder_tuple, pre_encoder_tuple
 
 
 def records_filename(shard_index: int, num_shards: int) -> str:
@@ -210,6 +234,7 @@ def main() -> None:
         qwen_model = Qwen25VLWrapper(QwenConfig(max_new_tokens=args.max_new_tokens))
 
     for record in records:
+        decoder_mask_bins, pre_encoder_mask_bins = intervention_bins(record, args)
         if record["question_id"] in complete_on_resume:
             append_jsonl(
                 jsonl_path,
@@ -235,7 +260,8 @@ def main() -> None:
                     "frame_budget_mode": args.frame_budget_mode,
                     "resolution": resolution.to_metadata(),
                     "vision_access_through_layer": args.vision_access_through_layer,
-                    "removed_temporal_bins": list(args.remove_temporal_bin or ()),
+                    "decoder_direct_access_mask_temporal_bins": list(decoder_mask_bins),
+                    "pre_encoder_mask_temporal_bins": list(pre_encoder_mask_bins),
                     "query_scope": args.query_scope,
                     "attention_extraction": args.attention_extraction,
                     "seed": args.seed,
@@ -259,17 +285,22 @@ def main() -> None:
                 query_scope=args.query_scope,
                 attention_extraction=args.attention_extraction,
                 vision_access_through_layer=args.vision_access_through_layer,
-                remove_temporal_bins=tuple(args.remove_temporal_bin or ()),
+                decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+                pre_encoder_remove_temporal_bins=pre_encoder_mask_bins,
             )
             artifact["category"] = record["category"]
             artifact["vision_access_through_layer"] = args.vision_access_through_layer
+            if record.get("intervention"):
+                artifact["intervention"] = record["intervention"]
             artifact["run_config"] = {
                 "manifest": args.manifest,
                 "num_frames": args.num_frames,
                 "frame_budget_mode": args.frame_budget_mode,
                 "resolution_config": args.resolution_config,
                 "vision_access_through_layer": args.vision_access_through_layer,
-                "removed_temporal_bins": list(args.remove_temporal_bin or ()),
+                "decoder_direct_access_mask_temporal_bins": list(decoder_mask_bins),
+                "pre_encoder_mask_temporal_bins": list(pre_encoder_mask_bins),
+                "intervention": record.get("intervention"),
                 "query_scope": args.query_scope,
                 "attention_extraction": args.attention_extraction,
                 "max_new_tokens": args.max_new_tokens,
@@ -318,7 +349,8 @@ def main() -> None:
             "frame_budget_mode": args.frame_budget_mode,
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,
-            "removed_temporal_bins": list(args.remove_temporal_bin or ()),
+            "decoder_direct_access_mask_temporal_bin_cli": list(args.decoder_mask_temporal_bin or ()),
+            "pre_encoder_mask_temporal_bin_cli": list(args.pre_encoder_mask_temporal_bin or ()),
             "query_scope": args.query_scope,
             "attention_extraction": args.attention_extraction,
             "max_new_tokens": args.max_new_tokens,
