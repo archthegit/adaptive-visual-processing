@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, asdict
 from typing import Any, Sequence
 
@@ -38,7 +39,7 @@ class AnswerChoiceScores:
 
 def _token_ids(tokenizer: Any, text: str) -> list[int]:
     encoded = tokenizer(text, add_special_tokens=False)
-    ids = encoded["input_ids"] if isinstance(encoded, dict) else encoded
+    ids = encoded["input_ids"] if isinstance(encoded, Mapping) else encoded
     if hasattr(ids, "tolist"):
         ids = ids.tolist()
     if ids and isinstance(ids[0], list):

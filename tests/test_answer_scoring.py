@@ -1,3 +1,5 @@
+from collections import UserDict
+
 import numpy as np
 import pytest
 
@@ -26,3 +28,14 @@ def test_choice_mapping_rejects_multi_token_letters():
 
     with pytest.raises(ValueError, match="does not map to exactly one"):
         validate_choice_token_mapping(BadTokenizer(), ("A",))
+
+
+def test_choice_mapping_accepts_mapping_like_tokenizer_outputs():
+    class MappingTokenizer:
+        def __call__(self, text, add_special_tokens=False):
+            mapping = {"A": [10], "B": [11], "C": [12], "D": [13], "E": [14]}
+            return UserDict({"input_ids": mapping.get(text, [99, 100])})
+
+    mapping = validate_choice_token_mapping(MappingTokenizer(), ("A", "B"))
+
+    assert [item.token_id for item in mapping] == [10, 11]
