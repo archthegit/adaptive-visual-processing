@@ -1,0 +1,29 @@
+{
+  "num_records": 8,
+  "output_jsonl": "outputs/experiment1_temporal_engineering_f32/records.jsonl",
+  "runtime_seconds": 187.39316082000732,
+  "config": {
+    "manifest": "outputs/experiment1_temporal_splits/engineering.jsonl",
+    "num_frames": 32,
+    "frame_budget_mode": "total",
+    "resolution": {
+      "name": "low",
+      "min_pixels": 100352,
+      "max_pixels": 200704,
+      "description": "Small visual-token budget for debugging."
+    },
+    "vision_access_through_layer": "none",
+    "decoder_direct_access_mask_temporal_bin_cli": [],
+    "pre_encoder_mask_temporal_bin_cli": [],
+    "query_scope": "question",
+    "attention_extraction": "reduced_sdpa",
+    "max_new_tokens": 16,
+    "dry_run": false,
+    "allow_7b_inference": true,
+    "resume": true,
+    "shard_index": 0,
+    "num_shards": 1,
+    "seed": 20260818,
+    "git_commit": "d7a67366de6f4980d4882a9e1189a5631bf8aa0f"
+  }
+}

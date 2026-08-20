@@ -1,0 +1,1052 @@
+{
+  "output_dir": "outputs/experiment1_temporal_engineering_f32",
+  "accuracy": {
+    "total_records": 8,
+    "completed": 8,
+    "failed": 0,
+    "status_counts": {
+      "complete": 8
+    },
+    "correct": 2,
+    "accuracy": 0.25,
+    "by_category": {
+      "fine_grained": {
+        "completed": 2,
+        "correct": 1,
+        "accuracy": 0.5
+      },
+      "gaze": {
+        "completed": 2,
+        "correct": 1,
+        "accuracy": 0.5
+      },
+      "ingredient": {
+        "completed": 2,
+        "correct": 0,
+        "accuracy": 0.0
+      },
+      "object_motion": {
+        "completed": 2,
+        "correct": 0,
+        "accuracy": 0.0
+      }
+    },
+    "visual_token_counts": [
+      4096
+    ],
+    "temporal_bin_counts": [
+      16
+    ],
+    "failures": []
+  },
+  "layer_fusion": {
+    "num_artifacts": 8,
+    "num_layers": 28,
+    "overall": [
+      {
+        "layer": 0,
+        "mean_top1_temporal_bin_mass": 0.07868963642420095,
+        "mean_normalized_temporal_entropy": 0.9971784004809412,
+        "mean_bins_to_80pct_mass": 12.875,
+        "mean_absolute_visual_mass": 0.34741295017990126
+      },
+      {
+        "layer": 1,
+        "mean_top1_temporal_bin_mass": 0.07812755571284656,
+        "mean_normalized_temporal_entropy": 0.997094287634696,
+        "mean_bins_to_80pct_mass": 13.0,
+        "mean_absolute_visual_mass": 0.2974414244878574
+      },
+      {
+        "layer": 2,
+        "mean_top1_temporal_bin_mass": 0.1023365809616584,
+        "mean_normalized_temporal_entropy": 0.990032570930632,
+        "mean_bins_to_80pct_mass": 12.25,
+        "mean_absolute_visual_mass": 0.17420498154993425
+      },
+      {
+        "layer": 3,
+        "mean_top1_temporal_bin_mass": 0.1172280094180968,
+        "mean_normalized_temporal_entropy": 0.9861870903903055,
+        "mean_bins_to_80pct_mass": 12.125,
+        "mean_absolute_visual_mass": 0.19288265161048912
+      },
+      {
+        "layer": 4,
+        "mean_top1_temporal_bin_mass": 0.1274011900754751,
+        "mean_normalized_temporal_entropy": 0.9828260665279717,
+        "mean_bins_to_80pct_mass": 12.125,
+        "mean_absolute_visual_mass": 0.07359510458164209
+      },
+      {
+        "layer": 5,
+        "mean_top1_temporal_bin_mass": 0.12866485089876203,
+        "mean_normalized_temporal_entropy": 0.9814743462857592,
+        "mean_bins_to_80pct_mass": 12.0,
+        "mean_absolute_visual_mass": 0.09125579418259022
+      },
+      {
+        "layer": 6,
+        "mean_top1_temporal_bin_mass": 0.12054305469175039,
+        "mean_normalized_temporal_entropy": 0.9882616227920509,
+        "mean_bins_to_80pct_mass": 12.5,
+        "mean_absolute_visual_mass": 0.0720522940354158
+      },
+      {
+        "layer": 7,
+        "mean_top1_temporal_bin_mass": 0.16849373235624188,
+        "mean_normalized_temporal_entropy": 0.9679024465455459,
+        "mean_bins_to_80pct_mass": 11.875,
+        "mean_absolute_visual_mass": 0.07093149459362635
+      },
+      {
+        "layer": 8,
+        "mean_top1_temporal_bin_mass": 0.15548335399785,
+        "mean_normalized_temporal_entropy": 0.9682019023787678,
+        "mean_bins_to_80pct_mass": 11.625,
+        "mean_absolute_visual_mass": 0.16898107061989265
+      },
+      {
+        "layer": 9,
+        "mean_top1_temporal_bin_mass": 0.1601126601231652,
+        "mean_normalized_temporal_entropy": 0.9668471599740216,
+        "mean_bins_to_80pct_mass": 11.625,
+        "mean_absolute_visual_mass": 0.21781555108553619
+      },
+      {
+        "layer": 10,
+        "mean_top1_temporal_bin_mass": 0.16124239544855967,
+        "mean_normalized_temporal_entropy": 0.970782118157153,
+        "mean_bins_to_80pct_mass": 12.0,
+        "mean_absolute_visual_mass": 0.11336813814528135
+      },
+      {
+        "layer": 11,
+        "mean_top1_temporal_bin_mass": 0.12364484824797939,
+        "mean_normalized_temporal_entropy": 0.9812674819565049,
+        "mean_bins_to_80pct_mass": 12.0,
+        "mean_absolute_visual_mass": 0.18743443154688322
+      },
+      {
+        "layer": 12,
+        "mean_top1_temporal_bin_mass": 0.11091203952953459,
+        "mean_normalized_temporal_entropy": 0.9856926598665084,
+        "mean_bins_to_80pct_mass": 12.0,
+        "mean_absolute_visual_mass": 0.20305601144406893
+      },
+      {
+        "layer": 13,
+        "mean_top1_temporal_bin_mass": 0.1203888732446888,
+        "mean_normalized_temporal_entropy": 0.9808614835654076,
+        "mean_bins_to_80pct_mass": 11.75,
+        "mean_absolute_visual_mass": 0.24770243927859603
+      },
+      {
+        "layer": 14,
+        "mean_top1_temporal_bin_mass": 0.129011495775327,
+        "mean_normalized_temporal_entropy": 0.9755516277556623,
+        "mean_bins_to_80pct_mass": 11.625,
+        "mean_absolute_visual_mass": 0.2619286525515001
+      },
+      {
+        "layer": 15,
+        "mean_top1_temporal_bin_mass": 0.09369160053529192,
+        "mean_normalized_temporal_entropy": 0.9881878951133549,
+        "mean_bins_to_80pct_mass": 12.0,
+        "mean_absolute_visual_mass": 0.21802220343659684
+      },
+      {
+        "layer": 16,
+        "mean_top1_temporal_bin_mass": 0.13643760421101106,
+        "mean_normalized_temporal_entropy": 0.962248581384224,
+        "mean_bins_to_80pct_mass": 11.375,
+        "mean_absolute_visual_mass": 0.25173855333890716
+      },
+      {
+        "layer": 17,
+        "mean_top1_temporal_bin_mass": 0.11736858383140046,
+        "mean_normalized_temporal_entropy": 0.9751295140407357,
+        "mean_bins_to_80pct_mass": 11.75,
+        "mean_absolute_visual_mass": 0.193311947267091
+      },
+      {
+        "layer": 18,
+        "mean_top1_temporal_bin_mass": 0.11476729084423165,
+        "mean_normalized_temporal_entropy": 0.9754298181309565,
+        "mean_bins_to_80pct_mass": 11.5,
+        "mean_absolute_visual_mass": 0.19745164071345123
+      },
+      {
+        "layer": 19,
+        "mean_top1_temporal_bin_mass": 0.1502925791200561,
+        "mean_normalized_temporal_entropy": 0.9545935129035842,
+        "mean_bins_to_80pct_mass": 11.0,
+        "mean_absolute_visual_mass": 0.2465384776760926
+      },
+      {
+        "layer": 20,
+        "mean_top1_temporal_bin_mass": 0.11722523615502559,
+        "mean_normalized_temporal_entropy": 0.9753696640532761,
+        "mean_bins_to_80pct_mass": 11.625,
+        "mean_absolute_visual_mass": 0.19366080892361914
+      },
+      {
+        "layer": 21,
+        "mean_top1_temporal_bin_mass": 0.13745008578945528,
+        "mean_normalized_temporal_entropy": 0.9687113922370458,
+        "mean_bins_to_80pct_mass": 11.5,
+        "mean_absolute_visual_mass": 0.1718895731340826
+      },
+      {
+        "layer": 22,
+        "mean_top1_temporal_bin_mass": 0.15145981906648137,
+        "mean_normalized_temporal_entropy": 0.9647382631619223,
+        "mean_bins_to_80pct_mass": 11.5,
+        "mean_absolute_visual_mass": 0.13437256939470066
+      },
+      {
+        "layer": 23,
+        "mean_top1_temporal_bin_mass": 0.13632735153991643,
+        "mean_normalized_temporal_entropy": 0.9726181845300831,
+        "mean_bins_to_80pct_mass": 11.625,
+        "mean_absolute_visual_mass": 0.13153018781825132
+      },
+      {
+        "layer": 24,
+        "mean_top1_temporal_bin_mass": 0.14300968771066508,
+        "mean_normalized_temporal_entropy": 0.9700806396601519,
+        "mean_bins_to_80pct_mass": 11.5,
+        "mean_absolute_visual_mass": 0.12151134317409484
+      },
+      {
+        "layer": 25,
+        "mean_top1_temporal_bin_mass": 0.15254648560531794,
+        "mean_normalized_temporal_entropy": 0.9667461859111135,
+        "mean_bins_to_80pct_mass": 11.625,
+        "mean_absolute_visual_mass": 0.1286517246500991
+      },
+      {
+        "layer": 26,
+        "mean_top1_temporal_bin_mass": 0.16089121505433937,
+        "mean_normalized_temporal_entropy": 0.9613364568599387,
+        "mean_bins_to_80pct_mass": 11.5,
+        "mean_absolute_visual_mass": 0.14448159274411443
+      },
+      {
+        "layer": 27,
+        "mean_top1_temporal_bin_mass": 0.2070736491686247,
+        "mean_normalized_temporal_entropy": 0.9373010989360926,
+        "mean_bins_to_80pct_mass": 11.125,
+        "mean_absolute_visual_mass": 0.17517934156154502
+      }
+    ],
+    "by_category": {
+      "fine_grained": [
+        {
+          "layer": 0,
+          "mean_top1_temporal_bin_mass": 0.07561253118737733,
+          "mean_normalized_temporal_entropy": 0.9977651421543268,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.36886338210990743
+        },
+        {
+          "layer": 1,
+          "mean_top1_temporal_bin_mass": 0.07786396025464451,
+          "mean_normalized_temporal_entropy": 0.9974048694377682,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.2921608417570951
+        },
+        {
+          "layer": 2,
+          "mean_top1_temporal_bin_mass": 0.09601047159152429,
+          "mean_normalized_temporal_entropy": 0.992511762890103,
+          "mean_bins_to_80pct_mass": 12.5,
+          "mean_absolute_visual_mass": 0.16448238739161525
+        },
+        {
+          "layer": 3,
+          "mean_top1_temporal_bin_mass": 0.11586335839670833,
+          "mean_normalized_temporal_entropy": 0.9858020654893307,
+          "mean_bins_to_80pct_mass": 12.5,
+          "mean_absolute_visual_mass": 0.1740012330712375
+        },
+        {
+          "layer": 4,
+          "mean_top1_temporal_bin_mass": 0.12511226859036018,
+          "mean_normalized_temporal_entropy": 0.9829710822938644,
+          "mean_bins_to_80pct_mass": 12.5,
+          "mean_absolute_visual_mass": 0.06802586447199133
+        },
+        {
+          "layer": 5,
+          "mean_top1_temporal_bin_mass": 0.12196800054056538,
+          "mean_normalized_temporal_entropy": 0.9807302499566114,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.07665288841629092
+        },
+        {
+          "layer": 6,
+          "mean_top1_temporal_bin_mass": 0.11422410081979018,
+          "mean_normalized_temporal_entropy": 0.9883057486583757,
+          "mean_bins_to_80pct_mass": 12.5,
+          "mean_absolute_visual_mass": 0.07031587486630997
+        },
+        {
+          "layer": 7,
+          "mean_top1_temporal_bin_mass": 0.1702344502513672,
+          "mean_normalized_temporal_entropy": 0.9654178452119435,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.06331932084452774
+        },
+        {
+          "layer": 8,
+          "mean_top1_temporal_bin_mass": 0.15448725952831066,
+          "mean_normalized_temporal_entropy": 0.9620248661087615,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.16150575332412132
+        },
+        {
+          "layer": 9,
+          "mean_top1_temporal_bin_mass": 0.15903290434142492,
+          "mean_normalized_temporal_entropy": 0.960199686252933,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.1907158582886268
+        },
+        {
+          "layer": 10,
+          "mean_top1_temporal_bin_mass": 0.17142456122842192,
+          "mean_normalized_temporal_entropy": 0.962102769731926,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.09928252590886189
+        },
+        {
+          "layer": 11,
+          "mean_top1_temporal_bin_mass": 0.1321038059064034,
+          "mean_normalized_temporal_entropy": 0.9726920208222539,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.17704057860268563
+        },
+        {
+          "layer": 12,
+          "mean_top1_temporal_bin_mass": 0.10765300769922077,
+          "mean_normalized_temporal_entropy": 0.9855380431961269,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.18506761559316942
+        },
+        {
+          "layer": 13,
+          "mean_top1_temporal_bin_mass": 0.12289232461044625,
+          "mean_normalized_temporal_entropy": 0.9815060290241944,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.23043174006917866
+        },
+        {
+          "layer": 14,
+          "mean_top1_temporal_bin_mass": 0.12981069664492756,
+          "mean_normalized_temporal_entropy": 0.9748525354385879,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.23684280662013535
+        },
+        {
+          "layer": 15,
+          "mean_top1_temporal_bin_mass": 0.0830208763111347,
+          "mean_normalized_temporal_entropy": 0.9953367627452708,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.2188617289006345
+        },
+        {
+          "layer": 16,
+          "mean_top1_temporal_bin_mass": 0.10574553967439762,
+          "mean_normalized_temporal_entropy": 0.984837631007142,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.23697975274042982
+        },
+        {
+          "layer": 17,
+          "mean_top1_temporal_bin_mass": 0.09105514684895401,
+          "mean_normalized_temporal_entropy": 0.9896212810344912,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.2001046922701022
+        },
+        {
+          "layer": 18,
+          "mean_top1_temporal_bin_mass": 0.09178018146425265,
+          "mean_normalized_temporal_entropy": 0.9907863088932547,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.20500420539383413
+        },
+        {
+          "layer": 19,
+          "mean_top1_temporal_bin_mass": 0.12001868198838694,
+          "mean_normalized_temporal_entropy": 0.9770565523587187,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.23827652761393026
+        },
+        {
+          "layer": 20,
+          "mean_top1_temporal_bin_mass": 0.10781834507800575,
+          "mean_normalized_temporal_entropy": 0.982359245659925,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.19140871635745782
+        },
+        {
+          "layer": 21,
+          "mean_top1_temporal_bin_mass": 0.13240766182525526,
+          "mean_normalized_temporal_entropy": 0.9697935812135572,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.15099828232537504
+        },
+        {
+          "layer": 22,
+          "mean_top1_temporal_bin_mass": 0.15858448663836877,
+          "mean_normalized_temporal_entropy": 0.9598190019990186,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.1280476180719159
+        },
+        {
+          "layer": 23,
+          "mean_top1_temporal_bin_mass": 0.14415102238835678,
+          "mean_normalized_temporal_entropy": 0.9686017926378949,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.1320518567572293
+        },
+        {
+          "layer": 24,
+          "mean_top1_temporal_bin_mass": 0.1589044037403083,
+          "mean_normalized_temporal_entropy": 0.9574629015323198,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.11157245055857956
+        },
+        {
+          "layer": 25,
+          "mean_top1_temporal_bin_mass": 0.15733412990994514,
+          "mean_normalized_temporal_entropy": 0.9553973849520716,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.12598020177231106
+        },
+        {
+          "layer": 26,
+          "mean_top1_temporal_bin_mass": 0.16156471486583207,
+          "mean_normalized_temporal_entropy": 0.9520476457218918,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.15617751500641797
+        },
+        {
+          "layer": 27,
+          "mean_top1_temporal_bin_mass": 0.19182681507711674,
+          "mean_normalized_temporal_entropy": 0.927431828018361,
+          "mean_bins_to_80pct_mass": 10.5,
+          "mean_absolute_visual_mass": 0.18449009651986792
+        }
+      ],
+      "gaze": [
+        {
+          "layer": 0,
+          "mean_top1_temporal_bin_mass": 0.07929462700371331,
+          "mean_normalized_temporal_entropy": 0.996502138905575,
+          "mean_bins_to_80pct_mass": 12.5,
+          "mean_absolute_visual_mass": 0.3839241792526309
+        },
+        {
+          "layer": 1,
+          "mean_top1_temporal_bin_mass": 0.07545090526548652,
+          "mean_normalized_temporal_entropy": 0.9973369813725442,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.33722464655818385
+        },
+        {
+          "layer": 2,
+          "mean_top1_temporal_bin_mass": 0.08726612009784661,
+          "mean_normalized_temporal_entropy": 0.9922153607918676,
+          "mean_bins_to_80pct_mass": 12.5,
+          "mean_absolute_visual_mass": 0.184130419752762
+        },
+        {
+          "layer": 3,
+          "mean_top1_temporal_bin_mass": 0.10711117431653554,
+          "mean_normalized_temporal_entropy": 0.9875438545699452,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.21208542363467586
+        },
+        {
+          "layer": 4,
+          "mean_top1_temporal_bin_mass": 0.11938428066005884,
+          "mean_normalized_temporal_entropy": 0.9859471968435665,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.08143847075743338
+        },
+        {
+          "layer": 5,
+          "mean_top1_temporal_bin_mass": 0.11619128243378626,
+          "mean_normalized_temporal_entropy": 0.9873460285027296,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.09274038766929493
+        },
+        {
+          "layer": 6,
+          "mean_top1_temporal_bin_mass": 0.11101115372512299,
+          "mean_normalized_temporal_entropy": 0.9923630287605111,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.07685409769896978
+        },
+        {
+          "layer": 7,
+          "mean_top1_temporal_bin_mass": 0.16018302976172305,
+          "mean_normalized_temporal_entropy": 0.9737485209069215,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.06906821642505179
+        },
+        {
+          "layer": 8,
+          "mean_top1_temporal_bin_mass": 0.1488251767233748,
+          "mean_normalized_temporal_entropy": 0.9794450412457119,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.16744316770052592
+        },
+        {
+          "layer": 9,
+          "mean_top1_temporal_bin_mass": 0.13903432906017588,
+          "mean_normalized_temporal_entropy": 0.9813104723483493,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.25122424812354893
+        },
+        {
+          "layer": 10,
+          "mean_top1_temporal_bin_mass": 0.14963142775682575,
+          "mean_normalized_temporal_entropy": 0.9773094149675918,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.12596556868209063
+        },
+        {
+          "layer": 11,
+          "mean_top1_temporal_bin_mass": 0.11806212093528778,
+          "mean_normalized_temporal_entropy": 0.9835336203484237,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.1910267257487419
+        },
+        {
+          "layer": 12,
+          "mean_top1_temporal_bin_mass": 0.12956115961283565,
+          "mean_normalized_temporal_entropy": 0.9800760677760763,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.23567264430167256
+        },
+        {
+          "layer": 13,
+          "mean_top1_temporal_bin_mass": 0.14286159567170875,
+          "mean_normalized_temporal_entropy": 0.9700485838884811,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.28718246075519716
+        },
+        {
+          "layer": 14,
+          "mean_top1_temporal_bin_mass": 0.13990032141483788,
+          "mean_normalized_temporal_entropy": 0.9719646998533713,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.2714857552925487
+        },
+        {
+          "layer": 15,
+          "mean_top1_temporal_bin_mass": 0.10329615582664013,
+          "mean_normalized_temporal_entropy": 0.9769940954032486,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.22924239547580783
+        },
+        {
+          "layer": 16,
+          "mean_top1_temporal_bin_mass": 0.11896757182700426,
+          "mean_normalized_temporal_entropy": 0.9628786850768665,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.2394228712975881
+        },
+        {
+          "layer": 17,
+          "mean_top1_temporal_bin_mass": 0.1171983046013137,
+          "mean_normalized_temporal_entropy": 0.9641181221010764,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.19640822036852512
+        },
+        {
+          "layer": 18,
+          "mean_top1_temporal_bin_mass": 0.14013841043698078,
+          "mean_normalized_temporal_entropy": 0.945736917832176,
+          "mean_bins_to_80pct_mass": 10.0,
+          "mean_absolute_visual_mass": 0.21988870951539496
+        },
+        {
+          "layer": 19,
+          "mean_top1_temporal_bin_mass": 0.14350613647202837,
+          "mean_normalized_temporal_entropy": 0.9375488668577374,
+          "mean_bins_to_80pct_mass": 10.0,
+          "mean_absolute_visual_mass": 0.2589724790798158
+        },
+        {
+          "layer": 20,
+          "mean_top1_temporal_bin_mass": 0.1229973056304133,
+          "mean_normalized_temporal_entropy": 0.9587817906919485,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.21352089721753487
+        },
+        {
+          "layer": 21,
+          "mean_top1_temporal_bin_mass": 0.14217523252506659,
+          "mean_normalized_temporal_entropy": 0.9585143270624241,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.21423596048286697
+        },
+        {
+          "layer": 22,
+          "mean_top1_temporal_bin_mass": 0.1481302793056758,
+          "mean_normalized_temporal_entropy": 0.9590094431400273,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.14842269783720852
+        },
+        {
+          "layer": 23,
+          "mean_top1_temporal_bin_mass": 0.13710110788759886,
+          "mean_normalized_temporal_entropy": 0.9660677937691278,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.1399137354295732
+        },
+        {
+          "layer": 24,
+          "mean_top1_temporal_bin_mass": 0.1264880255955928,
+          "mean_normalized_temporal_entropy": 0.9733282458623029,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.1414349663806469
+        },
+        {
+          "layer": 25,
+          "mean_top1_temporal_bin_mass": 0.13165318682556276,
+          "mean_normalized_temporal_entropy": 0.9758451818928222,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.15180031635458668
+        },
+        {
+          "layer": 26,
+          "mean_top1_temporal_bin_mass": 0.13829813289684584,
+          "mean_normalized_temporal_entropy": 0.9677846048607308,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.15740188494468832
+        },
+        {
+          "layer": 27,
+          "mean_top1_temporal_bin_mass": 0.18136532213702572,
+          "mean_normalized_temporal_entropy": 0.9559967571495017,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.18568476118180577
+        }
+      ],
+      "ingredient": [
+        {
+          "layer": 0,
+          "mean_top1_temporal_bin_mass": 0.07798156028436355,
+          "mean_normalized_temporal_entropy": 0.9968035653825923,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.3776558509058532
+        },
+        {
+          "layer": 1,
+          "mean_top1_temporal_bin_mass": 0.07813331546056154,
+          "mean_normalized_temporal_entropy": 0.9965151564592827,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.3181242515015583
+        },
+        {
+          "layer": 2,
+          "mean_top1_temporal_bin_mass": 0.1144945343296842,
+          "mean_normalized_temporal_entropy": 0.9870026487620409,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.20024186244819475
+        },
+        {
+          "layer": 3,
+          "mean_top1_temporal_bin_mass": 0.12282084116334611,
+          "mean_normalized_temporal_entropy": 0.9849979095785852,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.23302517856791383
+        },
+        {
+          "layer": 4,
+          "mean_top1_temporal_bin_mass": 0.1348542063888996,
+          "mean_normalized_temporal_entropy": 0.9779880676065421,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.0833805667837737
+        },
+        {
+          "layer": 5,
+          "mean_top1_temporal_bin_mass": 0.1385264154039602,
+          "mean_normalized_temporal_entropy": 0.9757727185436411,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.11493746374026159
+        },
+        {
+          "layer": 6,
+          "mean_top1_temporal_bin_mass": 0.13258229570885927,
+          "mean_normalized_temporal_entropy": 0.983951098453487,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.07688500592712444
+        },
+        {
+          "layer": 7,
+          "mean_top1_temporal_bin_mass": 0.18469236956802312,
+          "mean_normalized_temporal_entropy": 0.9567806201407281,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.08996043104950502
+        },
+        {
+          "layer": 8,
+          "mean_top1_temporal_bin_mass": 0.1623610256444899,
+          "mean_normalized_temporal_entropy": 0.9572645939073717,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.1984991536376981
+        },
+        {
+          "layer": 9,
+          "mean_top1_temporal_bin_mass": 0.1595142167488737,
+          "mean_normalized_temporal_entropy": 0.96363207749332,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.24432913388261568
+        },
+        {
+          "layer": 10,
+          "mean_top1_temporal_bin_mass": 0.16864487375149653,
+          "mean_normalized_temporal_entropy": 0.967130667012357,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.1440641541247203
+        },
+        {
+          "layer": 11,
+          "mean_top1_temporal_bin_mass": 0.11927810474880365,
+          "mean_normalized_temporal_entropy": 0.9824957823934138,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.20886830593329364
+        },
+        {
+          "layer": 12,
+          "mean_top1_temporal_bin_mass": 0.10220736996205122,
+          "mean_normalized_temporal_entropy": 0.9855755972212008,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.2290092171992626
+        },
+        {
+          "layer": 13,
+          "mean_top1_temporal_bin_mass": 0.10668932579362828,
+          "mean_normalized_temporal_entropy": 0.9853697415524885,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.27216921705912966
+        },
+        {
+          "layer": 14,
+          "mean_top1_temporal_bin_mass": 0.13472362878400063,
+          "mean_normalized_temporal_entropy": 0.9710940045500281,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.29681276141021584
+        },
+        {
+          "layer": 15,
+          "mean_top1_temporal_bin_mass": 0.0849300673172419,
+          "mean_normalized_temporal_entropy": 0.9912279283997574,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.24323815577071173
+        },
+        {
+          "layer": 16,
+          "mean_top1_temporal_bin_mass": 0.11592712241970943,
+          "mean_normalized_temporal_entropy": 0.9726379373493552,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.2905129113410183
+        },
+        {
+          "layer": 17,
+          "mean_top1_temporal_bin_mass": 0.0997089201744921,
+          "mean_normalized_temporal_entropy": 0.9861323690439531,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.19128734083982124
+        },
+        {
+          "layer": 18,
+          "mean_top1_temporal_bin_mass": 0.09777408937417739,
+          "mean_normalized_temporal_entropy": 0.9860237859201393,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.19340543430814705
+        },
+        {
+          "layer": 19,
+          "mean_top1_temporal_bin_mass": 0.10699875755777347,
+          "mean_normalized_temporal_entropy": 0.980569648727764,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.24837598739212297
+        },
+        {
+          "layer": 20,
+          "mean_top1_temporal_bin_mass": 0.09814487159185806,
+          "mean_normalized_temporal_entropy": 0.9883306056454599,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.20458141269596553
+        },
+        {
+          "layer": 21,
+          "mean_top1_temporal_bin_mass": 0.12931574835220125,
+          "mean_normalized_temporal_entropy": 0.9768951607275744,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.1768243545941388
+        },
+        {
+          "layer": 22,
+          "mean_top1_temporal_bin_mass": 0.14608156198327893,
+          "mean_normalized_temporal_entropy": 0.9700524521819233,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.14379639764925756
+        },
+        {
+          "layer": 23,
+          "mean_top1_temporal_bin_mass": 0.12163550779507379,
+          "mean_normalized_temporal_entropy": 0.9819250648918634,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.14199746677252278
+        },
+        {
+          "layer": 24,
+          "mean_top1_temporal_bin_mass": 0.13145202270641182,
+          "mean_normalized_temporal_entropy": 0.9752006249863905,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.14717890806228162
+        },
+        {
+          "layer": 25,
+          "mean_top1_temporal_bin_mass": 0.143395556135279,
+          "mean_normalized_temporal_entropy": 0.9703709360091584,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.1430714984912349
+        },
+        {
+          "layer": 26,
+          "mean_top1_temporal_bin_mass": 0.14501608891409978,
+          "mean_normalized_temporal_entropy": 0.9696452250274208,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.16875260653779378
+        },
+        {
+          "layer": 27,
+          "mean_top1_temporal_bin_mass": 0.19052557659159175,
+          "mean_normalized_temporal_entropy": 0.9488327270406893,
+          "mean_bins_to_80pct_mass": 11.5,
+          "mean_absolute_visual_mass": 0.19910038934054164
+        }
+      ],
+      "object_motion": [
+        {
+          "layer": 0,
+          "mean_top1_temporal_bin_mass": 0.08186982722134958,
+          "mean_normalized_temporal_entropy": 0.9976427554812706,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.2592083884512135
+        },
+        {
+          "layer": 1,
+          "mean_top1_temporal_bin_mass": 0.08106204187069369,
+          "mean_normalized_temporal_entropy": 0.9971201432691887,
+          "mean_bins_to_80pct_mass": 13.0,
+          "mean_absolute_visual_mass": 0.24225595813459222
+        },
+        {
+          "layer": 2,
+          "mean_top1_temporal_bin_mass": 0.1115751978275785,
+          "mean_normalized_temporal_entropy": 0.9884005112785166,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.14796525660716497
+        },
+        {
+          "layer": 3,
+          "mean_top1_temporal_bin_mass": 0.1231166637957972,
+          "mean_normalized_temporal_entropy": 0.9864045319233609,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.1524187711681293
+        },
+        {
+          "layer": 4,
+          "mean_top1_temporal_bin_mass": 0.1302540046625818,
+          "mean_normalized_temporal_entropy": 0.9843979193679138,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.06153551631336995
+        },
+        {
+          "layer": 5,
+          "mean_top1_temporal_bin_mass": 0.13797370521673633,
+          "mean_normalized_temporal_entropy": 0.982048388140055,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.08069243690451344
+        },
+        {
+          "layer": 6,
+          "mean_top1_temporal_bin_mass": 0.12435466851322916,
+          "mean_normalized_temporal_entropy": 0.9884266152958299,
+          "mean_bins_to_80pct_mass": 12.5,
+          "mean_absolute_visual_mass": 0.064154197649259
+        },
+        {
+          "layer": 7,
+          "mean_top1_temporal_bin_mass": 0.15886507984385412,
+          "mean_normalized_temporal_entropy": 0.9756627999225905,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.06137801005542087
+        },
+        {
+          "layer": 8,
+          "mean_top1_temporal_bin_mass": 0.15625995409522456,
+          "mean_normalized_temporal_entropy": 0.9740731082532261,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.14847620781722526
+        },
+        {
+          "layer": 9,
+          "mean_top1_temporal_bin_mass": 0.1828691903421863,
+          "mean_normalized_temporal_entropy": 0.9622464038014841,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.18499296404735333
+        },
+        {
+          "layer": 10,
+          "mean_top1_temporal_bin_mass": 0.1552687190574945,
+          "mean_normalized_temporal_entropy": 0.9765856209167374,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.08416030386545259
+        },
+        {
+          "layer": 11,
+          "mean_top1_temporal_bin_mass": 0.1251353614014227,
+          "mean_normalized_temporal_entropy": 0.9863485042619281,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.1728021159028117
+        },
+        {
+          "layer": 12,
+          "mean_top1_temporal_bin_mass": 0.1042266208440307,
+          "mean_normalized_temporal_entropy": 0.9915809312726298,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.16247456868217114
+        },
+        {
+          "layer": 13,
+          "mean_top1_temporal_bin_mass": 0.10911224690297194,
+          "mean_normalized_temporal_entropy": 0.9865215797964664,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.20102633923087865
+        },
+        {
+          "layer": 14,
+          "mean_top1_temporal_bin_mass": 0.11161133625754194,
+          "mean_normalized_temporal_entropy": 0.9842952711806617,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.24257328688310054
+        },
+        {
+          "layer": 15,
+          "mean_top1_temporal_bin_mass": 0.10351930268615098,
+          "mean_normalized_temporal_entropy": 0.989192793905143,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.18074653359923332
+        },
+        {
+          "layer": 16,
+          "mean_top1_temporal_bin_mass": 0.20511018292293293,
+          "mean_normalized_temporal_entropy": 0.9286400721035322,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.2400386779765924
+        },
+        {
+          "layer": 17,
+          "mean_top1_temporal_bin_mass": 0.16151196370084206,
+          "mean_normalized_temporal_entropy": 0.9606462839834222,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.18544753558991545
+        },
+        {
+          "layer": 18,
+          "mean_top1_temporal_bin_mass": 0.12937648210151578,
+          "mean_normalized_temporal_entropy": 0.9791722598782564,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.17150821363642876
+        },
+        {
+          "layer": 19,
+          "mean_top1_temporal_bin_mass": 0.23064674046203568,
+          "mean_normalized_temporal_entropy": 0.9231989836701169,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.2405289166185014
+        },
+        {
+          "layer": 20,
+          "mean_top1_temporal_bin_mass": 0.13994042231982523,
+          "mean_normalized_temporal_entropy": 0.9720070142157706,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.16513220942351836
+        },
+        {
+          "layer": 21,
+          "mean_top1_temporal_bin_mass": 0.14590170045529793,
+          "mean_normalized_temporal_entropy": 0.9696424999446276,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.14549969513394956
+        },
+        {
+          "layer": 22,
+          "mean_top1_temporal_bin_mass": 0.15304294833860205,
+          "mean_normalized_temporal_entropy": 0.97007215532672,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.11722356402042067
+        },
+        {
+          "layer": 23,
+          "mean_top1_temporal_bin_mass": 0.14242176808863624,
+          "mean_normalized_temporal_entropy": 0.9738780868214462,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.11215769231368
+        },
+        {
+          "layer": 24,
+          "mean_top1_temporal_bin_mass": 0.15519429880034738,
+          "mean_normalized_temporal_entropy": 0.9743307862595947,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.0858590476948713
+        },
+        {
+          "layer": 25,
+          "mean_top1_temporal_bin_mass": 0.17780306955048492,
+          "mean_normalized_temporal_entropy": 0.9653712407904018,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.09375488198226378
+        },
+        {
+          "layer": 26,
+          "mean_top1_temporal_bin_mass": 0.1986859235405798,
+          "mean_normalized_temporal_entropy": 0.9558683518297114,
+          "mean_bins_to_80pct_mass": 12.0,
+          "mean_absolute_visual_mass": 0.09559436448755765
+        },
+        {
+          "layer": 27,
+          "mean_top1_temporal_bin_mass": 0.2645768828687646,
+          "mean_normalized_temporal_entropy": 0.9169430835358181,
+          "mean_bins_to_80pct_mass": 11.0,
+          "mean_absolute_visual_mass": 0.13144211920396476
+        }
+      ]
+    },
+    "peak_overall_top1_layer": {
+      "layer": 27,
+      "mean_top1_temporal_bin_mass": 0.2070736491686247,
+      "mean_normalized_temporal_entropy": 0.9373010989360926,
+      "mean_bins_to_80pct_mass": 11.125,
+      "mean_absolute_visual_mass": 0.17517934156154502
+    },
+    "lowest_overall_entropy_layer": {
+      "layer": 27,
+      "mean_top1_temporal_bin_mass": 0.2070736491686247,
+      "mean_normalized_temporal_entropy": 0.9373010989360926,
+      "mean_bins_to_80pct_mass": 11.125,
+      "mean_absolute_visual_mass": 0.17517934156154502
+    }
+  }
+}

@@ -1,0 +1,151 @@
+{
+  "question_id": "fine_grained_action_localization_2669",
+  "question_type": "fine_grained_action_localization",
+  "category": "fine_grained",
+  "encoder_temporal": {
+    "video_grid_thw": [
+      [
+        16,
+        32,
+        32
+      ]
+    ],
+    "stages": {
+      "vision_block_early": {
+        "name": "vision_block_early",
+        "adjacent_bin_cosine_similarity": [
+          0.9973079644759825,
+          0.9991231206613096,
+          0.9954122803461959,
+          0.9975726661281503,
+          0.9992652421531781,
+          0.9866669403564263,
+          0.9985663167215958,
+          0.9994008504127206,
+          0.9997213777021184,
+          0.9997956903166102,
+          0.9917762524409897,
+          0.9969926205187984,
+          0.9838750972047384,
+          0.9810177751415339,
+          0.9984679725391991
+        ],
+        "mean_adjacent_bin_cosine_similarity": 0.9949974778079699,
+        "min_adjacent_bin_cosine_similarity": 0.9810177751415339,
+        "max_adjacent_bin_cosine_similarity": 0.9997956903166102,
+        "num_temporal_bins": 16,
+        "embedding_dim": 1280,
+        "canonical_order_recovered": true,
+        "source_order": "window"
+      },
+      "vision_block_middle": {
+        "name": "vision_block_middle",
+        "adjacent_bin_cosine_similarity": [
+          0.9142833022581248,
+          0.9467815876679369,
+          0.9505822772799022,
+          0.9568541160254017,
+          0.9606578861408855,
+          0.8836987912548179,
+          0.9695419249890264,
+          0.9793656545520593,
+          0.980280003831355,
+          0.9826695247986891,
+          0.9428944436735918,
+          0.9521312253370723,
+          0.9077412675543314,
+          0.9007789403812884,
+          0.963947040941266
+        ],
+        "mean_adjacent_bin_cosine_similarity": 0.9461471991123833,
+        "min_adjacent_bin_cosine_similarity": 0.8836987912548179,
+        "max_adjacent_bin_cosine_similarity": 0.9826695247986891,
+        "num_temporal_bins": 16,
+        "embedding_dim": 1280,
+        "canonical_order_recovered": true,
+        "source_order": "window"
+      },
+      "vision_block_late": {
+        "name": "vision_block_late",
+        "adjacent_bin_cosine_similarity": [
+          0.9998157694012351,
+          0.9998562728077376,
+          0.9999468020717139,
+          0.9999455028239225,
+          0.9999616016901011,
+          0.9999171791659562,
+          0.9999585724200454,
+          0.999960069671507,
+          0.99997483796037,
+          0.9999837322837648,
+          0.9999612772396562,
+          0.9999413315665172,
+          0.9999110834163218,
+          0.999898825206525,
+          0.9999665671221355
+        ],
+        "mean_adjacent_bin_cosine_similarity": 0.999933294989834,
+        "min_adjacent_bin_cosine_similarity": 0.9998157694012351,
+        "max_adjacent_bin_cosine_similarity": 0.9999837322837648,
+        "num_temporal_bins": 16,
+        "embedding_dim": 1280,
+        "canonical_order_recovered": true,
+        "source_order": "window"
+      },
+      "vision_merger_pre_reverse": {
+        "name": "vision_merger_pre_reverse",
+        "adjacent_bin_cosine_similarity": [
+          0.7891009827770531,
+          0.8302402944482407,
+          0.9064900894202192,
+          0.9100650350770378,
+          0.9410360004884821,
+          0.8822299856712776,
+          0.9438447133980222,
+          0.9520291744154811,
+          0.9653437712449322,
+          0.9749376402394747,
+          0.9331120181953512,
+          0.9066353355465696,
+          0.867285039698659,
+          0.8560600451330693,
+          0.9504224445103658
+        ],
+        "mean_adjacent_bin_cosine_similarity": 0.9072555046842824,
+        "min_adjacent_bin_cosine_similarity": 0.7891009827770531,
+        "max_adjacent_bin_cosine_similarity": 0.9749376402394747,
+        "num_temporal_bins": 16,
+        "embedding_dim": 3584,
+        "canonical_order_recovered": true,
+        "source_order": "window"
+      },
+      "vision_final": {
+        "name": "vision_final",
+        "adjacent_bin_cosine_similarity": [
+          0.7891009827770531,
+          0.8302402944482407,
+          0.9064900894202192,
+          0.9100650350770378,
+          0.9410360004884821,
+          0.8822299856712776,
+          0.9438447133980222,
+          0.9520291744154811,
+          0.9653437712449322,
+          0.9749376402394747,
+          0.9331120181953512,
+          0.9066353355465696,
+          0.867285039698659,
+          0.8560600451330693,
+          0.9504224445103658
+        ],
+        "mean_adjacent_bin_cosine_similarity": 0.9072555046842824,
+        "min_adjacent_bin_cosine_similarity": 0.7891009827770531,
+        "max_adjacent_bin_cosine_similarity": 0.9749376402394747,
+        "num_temporal_bins": 16,
+        "embedding_dim": 3584,
+        "canonical_order_recovered": false,
+        "source_order": "canonical"
+      }
+    }
+  }
+}
