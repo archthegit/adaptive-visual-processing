@@ -1,6 +1,7 @@
 import pytest
 
 from src.experiment1.qwen_execution import (
+    corrected_second_per_grid_ts,
     cuda_memory_metadata,
     effective_sample_fps,
     frame_indices_for_temporal_bins,
@@ -93,7 +94,18 @@ def test_represented_sampled_frames_labels_two_frames_per_temporal_bin():
     represented = represented_sampled_frames(_Batch(), temporal_index=2, grid_t=4)
     assert represented["sampled_frame_indices"] == [4, 5]
     assert represented["sampled_timestamps"] == [4.0, 5.0]
-    assert "two sampled frames" in represented["note"]
+    assert "with 8 sampled frames and 4 bins" in represented["note"]
+    assert "2 sampled frame(s)" in represented["note"]
+
+
+def test_corrected_second_per_grid_ts_uses_temporal_patch_over_effective_fps():
+    class Batch:
+        metadata = {"input_modality": "video"}
+        timestamps = (0.0, 0.3215, 0.643)
+
+    seconds = corrected_second_per_grid_ts([Batch()], temporal_patch_size=2)
+
+    assert seconds == [0.643]
 
 
 def test_pre_encoder_temporal_mask_maps_bins_to_sampled_frames():

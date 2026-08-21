@@ -7,7 +7,118 @@ Use this file to keep a concise record of research progress and make weekly upda
 Project: query-relevant adaptive visual processing for HD-EPIC VQA  
 Baseline VLM: Qwen2.5-VL-7B-Instruct  
 Dataset: HD-EPIC VQA  
-Current phase: Experiment 1 mini-pilot execution, query-to-visual relevance analysis, and memory-scaling work
+Current phase: Experiment 1 temporal engineering run analysis, encoder temporal representation analysis, and causal intervention preparation
+
+## Week of 2026-08-17
+
+### Completed
+
+- Pulled in the first 32-frame temporal engineering run for Experiment 1:
+  - output bundle: `results/experiment1_temporal_engineering_f32`
+  - manifest: `results/experiment1_temporal_engineering_f32/manifest.jsonl`
+  - run summary: `results/experiment1_temporal_engineering_f32/run_summary.json`
+  - decoder temporal summary: `results/experiment1_temporal_engineering_f32/analysis_summary.json`
+  - encoder temporal analysis: `results/experiment1_temporal_engineering_f32/encoder_analysis/encoder_analysis.json`
+- Ran the 8-example engineering set with Qwen2.5-VL-7B-Instruct:
+  - 2 examples per category: `fine_grained`, `gaze`, `ingredient`, `object_motion`
+  - 32 sampled frames per example
+  - low resolution
+  - `reduced_sdpa` attention extraction
+  - no visual-access cutoff and no temporal-bin masking
+  - 16 Qwen temporal bins and 4096 visual tokens per example
+- Generated decoder temporal plots:
+  - aggregate entropy by category
+  - aggregate top-1 temporal-bin mass by category
+  - aggregate bins-to-80%-mass by category
+  - per-example layer x temporal-bin heatmaps
+  - per-example temporal-bin rank trajectories
+- Added and ran encoder temporal representation analysis:
+  - script: `scripts/analyze_encoder_temporal.py`
+  - per-example metrics: `encoder_metrics_per_example.csv`
+  - temporal-lag profiles: `encoder_lag_profiles.csv`
+  - aggregate plots for pairwise cosine, lag cosine, local temporal advantage, and effective rank
+- Confirmed encoder canonicalization is being recorded in real artifacts:
+  - early/middle/late vision blocks report `canonical_order_recovered: true`
+  - pre-reverse merger reports `canonical_order_recovered: true`
+  - final canonical visual output reports `canonical_order_recovered: false`, as expected
+- Added follow-up correctness fixes before using these outputs for the pilot:
+  - Qwen vision reverse-index recovery now searches nested `*.visual` modules and fails loudly for video input if reverse indices cannot be recovered.
+  - Decoder direct-access masking test now uses non-visual query rows, preserving the rule that only non-visual query rows lose access to selected visual columns.
+  - Answer scoring now accepts mapping-like tokenizer outputs, matching Hugging Face `BatchEncoding` behavior.
+
+### Experiments / Results
+
+- Engineering run accuracy:
+  - completed: 8/8
+  - failed: 0
+  - correct: 2/8
+  - accuracy: 25%
+  - category accuracy: `fine_grained` 1/2, `gaze` 1/2, `ingredient` 0/2, `object_motion` 0/2
+- Decoder temporal relevance becomes more concentrated across depth:
+  - layer 0: top-1 temporal-bin mass 0.079, entropy 0.997, bins-to-80% mass 12.88, absolute visual mass 0.347
+  - layer 7: top-1 0.168, entropy 0.968, bins-to-80% 11.88, absolute visual mass 0.071
+  - layer 19: top-1 0.150, entropy 0.955, bins-to-80% 11.00, absolute visual mass 0.247
+  - layer 27: top-1 0.207, entropy 0.937, bins-to-80% 11.12, absolute visual mass 0.175
+  - peak top-1 temporal-bin mass and lowest entropy both occur at layer 27.
+- Final-layer category patterns are descriptive only because this is 2 examples/category:
+  - `fine_grained`: top-1 0.192, entropy 0.927, bins-to-80% 10.5
+  - `gaze`: top-1 0.181, entropy 0.956, bins-to-80% 11.5
+  - `ingredient`: top-1 0.191, entropy 0.949, bins-to-80% 11.5
+  - `object_motion`: top-1 0.265, entropy 0.917, bins-to-80% 11.0
+- Encoder temporal representation analysis:
+  - early vision block representations are highly similar in raw cosine space but still show local temporal structure after centering:
+    - raw adjacent cosine 0.9954 vs raw non-adjacent cosine 0.9919
+    - centered adjacent mean 0.3285 vs centered non-adjacent mean -0.1126
+    - centered adjacent advantage 0.4410
+    - effective rank 3.52
+  - middle vision block has the clearest distributed temporal structure:
+    - raw adjacent cosine 0.9649 vs raw non-adjacent cosine 0.9490
+    - centered adjacent advantage 0.3305
+    - nearest-neighbor-is-adjacent fraction 0.453
+    - effective rank 9.18
+  - late vision block collapses toward a dominant direction:
+    - raw adjacent/non-adjacent cosines are both ~1.0
+    - effective rank 1.14
+    - PC1 variance fraction 0.982
+  - merger/final representations recover broader temporal structure:
+    - raw adjacent cosine 0.9326 vs raw non-adjacent cosine 0.9060
+    - centered adjacent advantage 0.3115
+    - effective rank 9.28
+    - PC1 variance fraction 0.312
+- Interpretation from the engineering run:
+  - Decoder query-to-visual relevance does not strongly select one temporal bin early; it gradually concentrates and is most selective by the final decoder layer.
+  - Encoder temporal structure is not monotonic across vision depth: middle blocks and final/merged visual outputs preserve richer temporal variation, while late block outputs look highly collapsed before merger/final projection.
+  - The engineering results are enough to justify causal temporal-bin interventions, but not enough for task/category conclusions.
+
+### Code / Infrastructure
+
+- Added `scripts/analyze_encoder_temporal.py` for encoder-stage temporal analysis and bootstrap summaries.
+- Stored engineering results under `results/experiment1_temporal_engineering_f32` so the analysis is versioned separately from transient Colab `outputs`.
+- Generated plots:
+  - `results/experiment1_temporal_engineering_f32/temporal_plots/*.png`
+  - `results/experiment1_temporal_engineering_f32/encoder_analysis/plots/*.png`
+- Answer-score comparison semantics are now explicit:
+  - decoder direct-access masking uses same-artifact `intervention_answer_choice_scores`
+  - pre-encoder masking compares masked artifact `answer_choice_scores` against the matching baseline artifact
+
+### Blockers / Dependencies
+
+- This is an engineering set, not a confirmatory run.
+- The run is only 8 examples, so category-level differences are descriptive and should not be treated as evidence.
+- Accuracy remains low at 32 frames/low resolution, especially for `ingredient` and `object_motion`.
+- Pre-encoder masking zeros sampled frames and tests evidence necessity; it does not yet test computational savings from skipping encoding.
+- No 48-example pilot should be treated as final until decoder direct-access and pre-encoder temporal intervention comparisons are run against the engineering baseline.
+
+### Next Steps
+
+- Create intervention manifests from the engineering baseline:
+  - top final-layer temporal bins
+  - bottom final-layer temporal bins
+  - random temporal bins with fixed seed
+- Run decoder direct-access masking on the 8 engineering examples and compare same-artifact intervention answer scores.
+- Run pre-encoder temporal masking on the 8 engineering examples and compare masked artifacts to baseline artifacts.
+- Use the engineering intervention deltas to decide whether the 48-example, 128-frame pilot should use final-layer ranking, middle-layer ranking, or both.
+- Only after the intervention sanity checks, launch the 48-example non-confirmatory pilot.
 
 ## Week of 2026-08-09
 

@@ -11,6 +11,7 @@ from src.dataset import VQAExample
 from src.frame_sampling import FrameBatch
 from src.models.base import format_multiple_choice_prompt, parse_choice_response, parse_question_tags
 from src.models.qwen import Qwen25VLWrapper
+from src.models.qwen_temporal_rope import temporal_position_interval
 
 from .answer_scoring import score_answer_choices_from_outputs
 from .encoder_temporal import vision_temporal_capture_context
@@ -97,6 +98,28 @@ def validate_scalar_video_fps_compatibility(frame_batches: list[FrameBatch], tol
             f"`fps` as a scalar. Use a single-video debug manifest or a processor version with per-video FPS support. "
             f"effective_fps={video_fps}"
         )
+
+
+def corrected_second_per_grid_ts(frame_batches: list[FrameBatch], temporal_patch_size: int) -> list[float]:
+    return [
+        float(temporal_patch_size) / effective_sample_fps(batch)
+        for batch in frame_batches
+        if batch.metadata.get("input_modality") != "image"
+    ]
+
+
+def apply_corrected_second_per_grid_ts(inputs: Any, frame_batches: list[FrameBatch], model: Any, torch_module: Any) -> list[float]:
+    temporal_patch_size = int(model.config.vision_config.temporal_patch_size)
+    seconds = corrected_second_per_grid_ts(frame_batches, temporal_patch_size)
+    if not seconds:
+        return []
+    inputs["second_per_grid_ts"] = torch_module.as_tensor(seconds, dtype=torch_module.float32, device=model.device)
+    return seconds
+
+
+def temporal_position_intervals(model: Any, second_per_grid_ts: list[float]) -> list[int]:
+    tokens_per_second = model.config.vision_config.tokens_per_second
+    return [temporal_position_interval(tokens_per_second, seconds) for seconds in second_per_grid_ts]
 
 
 def cuda_memory_metadata(torch_module: Any) -> dict[str, int]:
@@ -210,6 +233,7 @@ def run_qwen_relevance_example(
         return_tensors="pt",
         **video_kwargs,
     ).to(model._model.device)
+    corrected_seconds = apply_corrected_second_per_grid_ts(inputs, frame_batches, model._model, torch)
 
     video_grid_tensor = inputs.get("video_grid_thw")
     video_grid_thw = video_grid_tensor.detach().cpu().tolist() if video_grid_tensor is not None else []
@@ -232,6 +256,7 @@ def run_qwen_relevance_example(
             return_tensors="pt",
             **video_kwargs,
         ).to(model._model.device)
+        corrected_seconds = apply_corrected_second_per_grid_ts(inputs, frame_batches, model._model, torch)
 
     temporal_patch_size = float(model._processor.video_processor.temporal_patch_size)
     actual_seconds = [temporal_patch_size / effective_sample_fps(batch) for batch in frame_batches if batch.metadata.get("input_modality") != "image"]
@@ -247,6 +272,7 @@ def run_qwen_relevance_example(
     image_grid_thw = image_grid_tensor.detach().cpu().tolist() if image_grid_tensor is not None else []
     second_per_grid_ts = inputs.get("second_per_grid_ts")
     seconds = second_per_grid_ts.detach().cpu().tolist() if second_per_grid_ts is not None else []
+    temporal_intervals = temporal_position_intervals(model._model, [float(item) for item in seconds])
     spatial_merge_size = int(model._model.config.vision_config.spatial_merge_size)
     visual_input_modalities = [
         "image" if batch.metadata.get("input_modality") == "image" else "video"
@@ -412,6 +438,11 @@ def run_qwen_relevance_example(
         clean_up_tokenization_spaces=False,
     )[0].strip()
     predicted_idx = parse_choice_response(raw_response, len(example.choices))
+    temporal_rope_metadata = (
+        model._temporal_rope_patch_info.to_metadata()
+        if getattr(model, "_temporal_rope_patch_info", None) is not None
+        else {"transformers_version": "unknown", "temporal_rope_patch_active": False}
+    )
 
     return {
         "question_id": example.question_id,
@@ -450,6 +481,7 @@ def run_qwen_relevance_example(
         "encoder_temporal": encoder_capture.to_json_dict(),
         "metadata": {
             "model_id": model.config.model_id,
+            **temporal_rope_metadata,
             "attn_implementation": model.config.attn_implementation,
             "attention_extraction": attention_extraction,
             "vision_access_through_layer": vision_access_through_layer or "none",
@@ -467,6 +499,8 @@ def run_qwen_relevance_example(
             "image_grid_thw": image_grid_thw,
             "visual_input_modalities": visual_input_modalities,
             "second_per_grid_ts": seconds,
+            "corrected_second_per_grid_ts": corrected_seconds,
+            "temporal_position_interval": temporal_intervals,
             "source_video_paths": [str(batch.video_path) if batch.video_path else None for batch in frame_batches],
             "effective_sample_fps": [effective_sample_fps(batch) for batch in frame_batches],
             "prefill_next_token_topk": prefill_next_token_topk,

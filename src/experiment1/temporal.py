@@ -83,7 +83,10 @@ def represented_sampled_frames(batch: FrameBatch, temporal_index: int, grid_t: i
     return {
         "sampled_frame_indices": list(batch.frame_indices[start:end]),
         "sampled_timestamps": list(batch.timestamps[start:end]),
-        "note": "Qwen temporal bins can represent multiple sampled frames; with 8 sampled frames and 4 bins, each bin represents two sampled frames.",
+        "note": (
+            "Qwen temporal bins can represent multiple sampled frames; "
+            f"with {count} sampled frames and {grid_t} bins, this bin represents {end - start} sampled frame(s)."
+        ),
     }
 
 

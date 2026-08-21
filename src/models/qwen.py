@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .base import ModelPrediction, format_multiple_choice_prompt, parse_choice_response
+from .qwen_temporal_rope import TemporalRopePatchInfo, install_qwen_temporal_rope_patch
 from ..dataset import VQAExample
 from ..frame_sampling import FrameBatch
 
@@ -25,6 +26,7 @@ class Qwen25VLWrapper:
         self.config = config or QwenConfig()
         self._model = None
         self._processor = None
+        self._temporal_rope_patch_info: TemporalRopePatchInfo | None = None
 
     def _load(self) -> None:
         if self._model is not None:
@@ -36,6 +38,8 @@ class Qwen25VLWrapper:
             raise RuntimeError(
                 "Qwen inference requires torch and transformers with Qwen2.5-VL support."
             ) from exc
+
+        self._temporal_rope_patch_info = install_qwen_temporal_rope_patch()
 
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available; refusing to run 7B Qwen inference.")
