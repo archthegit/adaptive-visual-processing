@@ -187,7 +187,7 @@ def run_qwen_relevance_example(
                     {
                         "type": "video",
                         "video": _pil_frames(batch),
-                        "sample_fps": effective_sample_fps(batch),
+                        "fps": effective_sample_fps(batch),
                         **resolution.to_processor_kwargs(),
                     }
                 )
@@ -195,6 +195,9 @@ def run_qwen_relevance_example(
         messages = [{"role": "user", "content": content}]
         rendered_prompt = model._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+        video_batches = [batch for batch in batches if batch.metadata.get("input_modality") != "image"]
+        if video_batches:
+            video_kwargs["fps"] = effective_sample_fps(video_batches[0])
         return messages, rendered_prompt, image_inputs, video_inputs, normalize_video_kwargs(video_kwargs)
 
     _messages, rendered, image_inputs, video_inputs, video_kwargs = build_messages(frame_batches)
@@ -230,6 +233,11 @@ def run_qwen_relevance_example(
             **video_kwargs,
         ).to(model._model.device)
 
+    temporal_patch_size = float(model._processor.video_processor.temporal_patch_size)
+    actual_seconds = [temporal_patch_size / effective_sample_fps(batch) for batch in frame_batches if batch.metadata.get("input_modality") != "image"]
+    if actual_seconds and inputs.get("second_per_grid_ts") is not None:
+        current_seconds = inputs["second_per_grid_ts"]
+        inputs["second_per_grid_ts"] = torch.tensor(actual_seconds, dtype=current_seconds.dtype, device=current_seconds.device)
     input_ids = inputs["input_ids"][0].detach().cpu().tolist()
     mm_token_type_ids = inputs.get("mm_token_type_ids")
     mm_ids = mm_token_type_ids[0].detach().cpu().tolist() if mm_token_type_ids is not None else None
