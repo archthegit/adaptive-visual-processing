@@ -11,6 +11,20 @@ from src.io import write_jsonl
 from .v2_metrics import rank_order
 
 
+def fusion_condition_layer(condition: str) -> int | None:
+    prefix = "fusion_block_"
+    marker = "_after_layer_"
+    if not condition.startswith(prefix):
+        return None
+    if marker not in condition:
+        raise ValueError(f"Fusion condition must include '{marker}': {condition}")
+    suffix = condition.rsplit(marker, 1)[1]
+    try:
+        return int(suffix)
+    except ValueError as exc:
+        raise ValueError(f"Fusion condition has non-integer layer suffix: {condition}") from exc
+
+
 def bin_budget(num_bins: int, fraction: float) -> int:
     if num_bins <= 0:
         raise ValueError("num_bins must be positive.")
@@ -90,6 +104,7 @@ def intervention_record(
         record["pre_encoder_mask_temporal_bins"] = list(selected_bins)
     if condition.startswith("fusion_block_"):
         record["decoder_direct_access_mask_temporal_bins"] = list(selected_bins)
+        record["decoder_direct_access_through_layer"] = fusion_condition_layer(condition)
     if condition.startswith("keep_"):
         record["keep_temporal_bins"] = list(selected_bins)
     return record

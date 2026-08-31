@@ -7,6 +7,7 @@ import pytest
 from scripts.run_experiment1 import (
     condition_for_record,
     completed_question_ids,
+    decoder_direct_access_through_layer,
     example_for_record,
     frame_batches_for_example,
     frames_per_video_input,
@@ -33,6 +34,8 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
             "reduced_sdpa",
             "--decoder-mask-temporal-bin",
             "2",
+            "--decoder-direct-access-through-layer",
+            "8",
             "--condition",
             "repeated_frame",
         ],
@@ -45,6 +48,7 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
     assert args.shard_index == 0
     assert args.num_shards == 1
     assert args.decoder_mask_temporal_bin == [2]
+    assert args.decoder_direct_access_through_layer == 8
     assert args.pre_encoder_mask_temporal_bin is None
     assert args.pre_encoder_keep_temporal_bin is None
     assert args.condition == "repeated_frame"
@@ -145,6 +149,14 @@ def test_intervention_bins_supports_keep_and_rejects_mixed_modes():
     )
     with pytest.raises(ValueError, match="separate interventions"):
         intervention_bins({}, args)
+
+
+def test_decoder_direct_access_through_layer_prefers_cli_then_manifest():
+    args = SimpleNamespace(decoder_direct_access_through_layer=None)
+    assert decoder_direct_access_through_layer({"decoder_direct_access_through_layer": 12}, args) == 12
+    args = SimpleNamespace(decoder_direct_access_through_layer=8)
+    assert decoder_direct_access_through_layer({"decoder_direct_access_through_layer": 12}, args) == 8
+    assert decoder_direct_access_through_layer({}, SimpleNamespace(decoder_direct_access_through_layer=None)) is None
 
 
 def test_example_for_record_applies_mismatched_query_override():

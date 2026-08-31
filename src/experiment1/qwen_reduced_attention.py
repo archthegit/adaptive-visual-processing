@@ -76,9 +76,15 @@ class VisualAccessIntervention:
 class DecoderDirectAccessMask:
     visual_token_indices: tuple[int, ...]
     prompt_seq_len: int
+    through_layer: int | None = None
 
     @classmethod
-    def from_layout(cls, layout: TokenLayout, temporal_bins: tuple[int, ...] | None) -> "DecoderDirectAccessMask | None":
+    def from_layout(
+        cls,
+        layout: TokenLayout,
+        temporal_bins: tuple[int, ...] | None,
+        through_layer: int | None = None,
+    ) -> "DecoderDirectAccessMask | None":
         if not temporal_bins:
             return None
         requested = set(int(item) for item in temporal_bins)
@@ -89,7 +95,11 @@ class DecoderDirectAccessMask:
         )
         if not visual_indices:
             raise ValueError(f"Requested temporal bins {sorted(requested)} do not map to any video visual tokens.")
-        return cls(visual_token_indices=visual_indices, prompt_seq_len=len(layout.prompt_token_indices))
+        return cls(
+            visual_token_indices=visual_indices,
+            prompt_seq_len=len(layout.prompt_token_indices),
+            through_layer=through_layer,
+        )
 
 
 TemporalBinRemoval = DecoderDirectAccessMask
@@ -139,6 +149,7 @@ def reduced_attention_context(
     layout: TokenLayout,
     vision_access_through_layer: str | int | None = None,
     decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
+    decoder_direct_access_through_layer: int | None = None,
 ) -> Iterator[ReducedAttentionCapture]:
     global _ACTIVE_CAPTURE, _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK
     register_reduced_attention()
@@ -150,7 +161,9 @@ def reduced_attention_context(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
     _ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask.from_layout(
-        layout, decoder_direct_access_mask_temporal_bins
+        layout,
+        decoder_direct_access_mask_temporal_bins,
+        through_layer=decoder_direct_access_through_layer,
     )
     previous_configs = _set_attention_implementation(model, ATTENTION_IMPLEMENTATION)
     _ACTIVE_CAPTURE = capture
@@ -170,6 +183,7 @@ def masked_eager_attention_context(
     layout: TokenLayout,
     vision_access_through_layer: str | int | None,
     decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
+    decoder_direct_access_through_layer: int | None = None,
 ) -> Iterator[None]:
     global _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK
     register_reduced_attention()
@@ -179,7 +193,9 @@ def masked_eager_attention_context(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
     _ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask.from_layout(
-        layout, decoder_direct_access_mask_temporal_bins
+        layout,
+        decoder_direct_access_mask_temporal_bins,
+        through_layer=decoder_direct_access_through_layer,
     )
     previous_configs = _set_attention_implementation(model, MASKED_EAGER_IMPLEMENTATION)
     try:
@@ -234,9 +250,11 @@ def _visual_access_block_mask(module: Any, query: Any, key_states: Any, position
     return mask
 
 
-def _decoder_direct_access_block_mask(query: Any, key_states: Any) -> Any | None:
+def _decoder_direct_access_block_mask(module: Any, query: Any, key_states: Any) -> Any | None:
     direct_access_mask = _ACTIVE_DECODER_DIRECT_ACCESS_MASK
     if direct_access_mask is None:
+        return None
+    if direct_access_mask.through_layer is not None and int(module.layer_idx) <= int(direct_access_mask.through_layer):
         return None
     key_len = int(key_states.shape[2])
     masked_indices = [idx for idx in direct_access_mask.visual_token_indices if idx < key_len]
@@ -261,7 +279,7 @@ def _decoder_direct_access_block_mask(query: Any, key_states: Any) -> Any | None
 
 def _apply_experiment1_blocks(attention_mask: Any, module: Any, query: Any, key_states: Any, position_ids: Any | None) -> Any:
     block = _visual_access_block_mask(module, query, key_states, position_ids)
-    temporal_block = _decoder_direct_access_block_mask(query, key_states)
+    temporal_block = _decoder_direct_access_block_mask(module, query, key_states)
     for candidate in (block, temporal_block):
         if candidate is not None:
             attention_mask = candidate if attention_mask is None else attention_mask + candidate

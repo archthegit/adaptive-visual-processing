@@ -5,6 +5,7 @@ import pytest
 from src.experiment1.v2_interventions import (
     build_v2_intervention_records,
     contiguous_high_attention_cluster,
+    fusion_condition_layer,
     select_temporal_bins,
 )
 
@@ -108,4 +109,14 @@ def test_fusion_depth_conditions_use_decoder_direct_access_field(tmp_path):
         removal_fraction=0.2,
     )
     assert records[0]["decoder_direct_access_mask_temporal_bins"] == [1]
+    assert records[0]["decoder_direct_access_through_layer"] == 8
     assert "pre_encoder_mask_temporal_bins" not in records[0]
+
+
+def test_fusion_condition_layer_parses_and_rejects_bad_names():
+    assert fusion_condition_layer("mask_top20") is None
+    assert fusion_condition_layer("fusion_block_top20_after_layer_24") == 24
+    with pytest.raises(ValueError, match="after_layer"):
+        fusion_condition_layer("fusion_block_top20")
+    with pytest.raises(ValueError, match="non-integer"):
+        fusion_condition_layer("fusion_block_top20_after_layer_late")

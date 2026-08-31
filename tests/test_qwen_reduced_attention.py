@@ -297,12 +297,15 @@ def test_decoder_direct_access_block_mask_values_exact_requested_columns():
     torch = pytest.importorskip("torch")
     from src.experiment1 import qwen_reduced_attention as reduced
 
+    class Module:
+        layer_idx = 0
+
     query = torch.zeros(1, 1, 2, 4)
     key_states = torch.zeros(1, 1, 5, 4)
     old_mask = reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK
     reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask(visual_token_indices=(0, 2), prompt_seq_len=5)
     try:
-        mask = _decoder_direct_access_block_mask(query, key_states)
+        mask = _decoder_direct_access_block_mask(Module(), query, key_states)
     finally:
         reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = old_mask
 
@@ -310,3 +313,36 @@ def test_decoder_direct_access_block_mask_values_exact_requested_columns():
     blocked_value = torch.finfo(query.dtype).min
     assert torch.all(mask[:, :, :, [0, 2]] == blocked_value)
     assert torch.all(mask[:, :, :, [1, 3, 4]] == 0)
+
+
+def test_decoder_direct_access_through_layer_blocks_only_later_layers():
+    import pytest
+
+    torch = pytest.importorskip("torch")
+    from src.experiment1 import qwen_reduced_attention as reduced
+
+    class EarlyModule:
+        layer_idx = 8
+
+    class LaterModule:
+        layer_idx = 9
+
+    query = torch.zeros(1, 1, 2, 4)
+    key_states = torch.zeros(1, 1, 7, 4)
+    old_mask = reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask(
+        visual_token_indices=(1, 3),
+        prompt_seq_len=7,
+        through_layer=8,
+    )
+    try:
+        early_mask = _decoder_direct_access_block_mask(EarlyModule(), query, key_states)
+        later_mask = _decoder_direct_access_block_mask(LaterModule(), query, key_states)
+    finally:
+        reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = old_mask
+
+    assert early_mask is None
+    assert later_mask is not None
+    blocked_value = torch.finfo(query.dtype).min
+    assert torch.all(later_mask[:, :, :, [1, 3]] == blocked_value)
+    assert torch.all(later_mask[:, :, :, [0, 2, 4, 5, 6]] == 0)

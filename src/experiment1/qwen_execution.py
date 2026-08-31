@@ -243,6 +243,7 @@ def run_qwen_relevance_example(
     attention_extraction: str = "full",
     vision_access_through_layer: str | int | None = None,
     decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
+    decoder_direct_access_through_layer: int | None = None,
     pre_encoder_remove_temporal_bins: tuple[int, ...] | None = None,
     pre_encoder_keep_temporal_bins: tuple[int, ...] | None = None,
     condition: str | None = None,
@@ -396,6 +397,7 @@ def run_qwen_relevance_example(
                 layout,
                 vision_access_through_layer,
                 decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+                decoder_direct_access_through_layer=decoder_direct_access_through_layer,
             )
             if vision_access_through_layer not in {None, "none"} or decoder_mask_bins
             else None
@@ -444,6 +446,7 @@ def run_qwen_relevance_example(
             layout,
             vision_access_through_layer,
             decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+            decoder_direct_access_through_layer=decoder_direct_access_through_layer,
         ) as capture:
             with vision_temporal_capture_context(
                 model._model,
@@ -482,6 +485,7 @@ def run_qwen_relevance_example(
             layout,
             vision_access_through_layer,
             decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+            decoder_direct_access_through_layer=decoder_direct_access_through_layer,
         ):
             with torch.inference_mode():
                 intervention_scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
@@ -506,6 +510,7 @@ def run_qwen_relevance_example(
                 layout,
                 vision_access_through_layer,
                 decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+                decoder_direct_access_through_layer=decoder_direct_access_through_layer,
             ):
                 with torch.inference_mode():
                     output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
@@ -518,6 +523,7 @@ def run_qwen_relevance_example(
             layout,
             vision_access_through_layer,
             decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+            decoder_direct_access_through_layer=decoder_direct_access_through_layer,
         ):
             with torch.inference_mode():
                 output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
@@ -587,6 +593,7 @@ def run_qwen_relevance_example(
             "attention_extraction": attention_extraction,
             "vision_access_through_layer": vision_access_through_layer or "none",
             "decoder_direct_access_mask_temporal_bins": list(decoder_mask_bins),
+            "decoder_direct_access_through_layer": decoder_direct_access_through_layer,
             "pre_encoder_removed_temporal_bins": list(pre_encoder_bins),
             "pre_encoder_kept_temporal_bins": list(keep_bins),
             "pre_encoder_masked_sample_positions": [

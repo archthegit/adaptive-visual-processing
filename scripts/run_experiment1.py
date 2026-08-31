@@ -41,6 +41,15 @@ def parse_args() -> argparse.Namespace:
         help="Block direct decoder attention from text/question rows to this Qwen temporal bin. Can be repeated.",
     )
     parser.add_argument(
+        "--decoder-direct-access-through-layer",
+        type=int,
+        default=None,
+        help=(
+            "For decoder direct-access masking, allow selected visual bins through this decoder layer "
+            "and block direct question access only in later layers."
+        ),
+    )
+    parser.add_argument(
         "--pre-encoder-mask-temporal-bin",
         action="append",
         type=int,
@@ -154,6 +163,13 @@ def intervention_bins(record: dict[str, Any], args: argparse.Namespace) -> tuple
             "run them in separate output directories."
         )
     return decoder_tuple, pre_encoder_tuple, keep_tuple
+
+
+def decoder_direct_access_through_layer(record: dict[str, Any], args: argparse.Namespace) -> int | None:
+    value = args.decoder_direct_access_through_layer
+    if value is None:
+        value = record.get("decoder_direct_access_through_layer")
+    return None if value is None else int(value)
 
 
 def records_filename(shard_index: int, num_shards: int) -> str:
@@ -275,6 +291,7 @@ def main() -> None:
 
     for record in records:
         decoder_mask_bins, pre_encoder_mask_bins, keep_bins = intervention_bins(record, args)
+        decoder_through_layer = decoder_direct_access_through_layer(record, args)
         condition = condition_for_record(record, args.condition)
         if record["question_id"] in complete_on_resume:
             append_jsonl(
@@ -302,6 +319,7 @@ def main() -> None:
                     "resolution": resolution.to_metadata(),
                     "vision_access_through_layer": args.vision_access_through_layer,
                     "decoder_direct_access_mask_temporal_bins": list(decoder_mask_bins),
+                    "decoder_direct_access_through_layer": decoder_through_layer,
                     "pre_encoder_mask_temporal_bins": list(pre_encoder_mask_bins),
                     "pre_encoder_keep_temporal_bins": list(keep_bins),
                     "condition": condition,
@@ -329,6 +347,7 @@ def main() -> None:
                 attention_extraction=args.attention_extraction,
                 vision_access_through_layer=args.vision_access_through_layer,
                 decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+                decoder_direct_access_through_layer=decoder_through_layer,
                 pre_encoder_remove_temporal_bins=pre_encoder_mask_bins,
                 pre_encoder_keep_temporal_bins=keep_bins,
                 condition=condition,
@@ -336,6 +355,7 @@ def main() -> None:
             artifact["category"] = record["category"]
             artifact["vision_access_through_layer"] = args.vision_access_through_layer
             artifact["condition"] = condition
+            artifact["decoder_direct_access_through_layer"] = decoder_through_layer
             if record.get("intervention"):
                 artifact["intervention"] = record["intervention"]
             artifact["run_config"] = {
@@ -345,6 +365,7 @@ def main() -> None:
                 "resolution_config": args.resolution_config,
                 "vision_access_through_layer": args.vision_access_through_layer,
                 "decoder_direct_access_mask_temporal_bins": list(decoder_mask_bins),
+                "decoder_direct_access_through_layer": decoder_through_layer,
                 "pre_encoder_mask_temporal_bins": list(pre_encoder_mask_bins),
                 "pre_encoder_keep_temporal_bins": list(keep_bins),
                 "intervention": record.get("intervention"),
@@ -398,6 +419,7 @@ def main() -> None:
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,
             "decoder_direct_access_mask_temporal_bin_cli": list(args.decoder_mask_temporal_bin or ()),
+            "decoder_direct_access_through_layer_cli": args.decoder_direct_access_through_layer,
             "pre_encoder_mask_temporal_bin_cli": list(args.pre_encoder_mask_temporal_bin or ()),
             "pre_encoder_keep_temporal_bin_cli": list(args.pre_encoder_keep_temporal_bin or ()),
             "condition": args.condition,

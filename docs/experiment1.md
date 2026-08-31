@@ -208,6 +208,28 @@ python scripts/create_experiment1_v2_intervention_manifest.py \
   --seed 20260830
 ```
 
+Fusion-depth manifests use the same baseline-derived bin selection, but encode
+the decoder boundary in the condition name. For example, this allows top-bin
+direct access through layer 8 and blocks direct question-to-selected-visual-bin
+attention only after layer 8:
+
+```bash
+python scripts/create_experiment1_v2_intervention_manifest.py \
+  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --baseline-output-dir outputs/experiment1_v2/runs/baseline \
+  --output-jsonl outputs/experiment1_v2/interventions/fusion_block_top20_after_layer_8.jsonl \
+  --condition fusion_block_top20_after_layer_8 \
+  --strategy top \
+  --removal-fraction 0.2 \
+  --ranking-layer -1 \
+  --seed 20260830
+```
+
+When running a fusion-depth manifest, `scripts/run_experiment1.py` reads the
+stored `decoder_direct_access_through_layer`. A CLI
+`--decoder-direct-access-through-layer` value overrides the manifest for
+engineering checks.
+
 Create control manifests:
 
 ```bash
