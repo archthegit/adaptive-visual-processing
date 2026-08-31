@@ -8,6 +8,7 @@ from scripts.run_experiment1 import (
     condition_for_record,
     completed_question_ids,
     decoder_direct_access_through_layer,
+    _development_durations_from_manifest,
     example_for_record,
     frame_batches_for_example,
     frames_per_video_input,
@@ -30,6 +31,8 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
             "manifest.jsonl",
             "--max-new-tokens",
             "24",
+            "--sampling-mode",
+            "fixed_budget",
             "--attention-extraction",
             "reduced_sdpa",
             "--decoder-mask-temporal-bin",
@@ -42,6 +45,7 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
     )
     args = parse_args()
     assert args.max_new_tokens == 24
+    assert args.sampling_mode == "fixed_budget"
     assert args.attention_extraction == "reduced_sdpa"
     assert args.frame_budget_mode == "total"
     assert args.resume is False
@@ -127,6 +131,26 @@ def test_frame_batches_for_example_samples_reference_images_as_one_frame(monkeyp
 
     assert calls == [(4, False), (1, True), (4, False)]
     assert [batch.metadata["input_modality"] for batch in batches] == ["video", "image", "video"]
+
+
+def test_realtime_sampling_uses_development_durations_from_manifest(tmp_path):
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(
+        "\n".join(
+            [
+                '{"question_id":"dev1","split":"dev","analyzed_duration_seconds":10}',
+                '{"question_id":"test1","split":"test","analyzed_duration_seconds":100}',
+            ]
+        )
+        + "\n"
+    )
+    assert _development_durations_from_manifest(manifest) == [10.0]
+
+
+def test_v2_sampling_mode_requires_manifest_record():
+    example = SimpleNamespace(inputs=(SimpleNamespace(is_image=False),))
+    with pytest.raises(ValueError, match="manifest record"):
+        frame_batches_for_example(example, "mp4s", 8, sampling_mode="fixed_budget")
 
 
 def test_condition_for_record_prefers_cli_then_manifest_then_baseline():

@@ -244,7 +244,7 @@ def choose_primary_per_video(candidates: list[PrimaryCandidate], seed: int) -> t
     by_video: dict[str, list[PrimaryCandidate]] = defaultdict(list)
     for candidate in candidates:
         by_video[candidate.source_video_id].append(candidate)
-    selected: list[PrimaryCandidate] = []
+    video_choices: dict[str, list[PrimaryCandidate]] = {}
     additional: list[dict[str, Any]] = []
     for video_id, items in sorted(by_video.items()):
         items.sort(
@@ -257,10 +257,45 @@ def choose_primary_per_video(candidates: list[PrimaryCandidate], seed: int) -> t
                 item.question_id,
             )
         )
-        selected.append(items[0])
-        for item in items[1:]:
+        video_choices[video_id] = items
+
+    selected: list[PrimaryCandidate] = []
+    used_videos: set[str] = set()
+    stratum_counts: Counter[tuple[str, str]] = Counter()
+    remaining = {video_id: list(items) for video_id, items in video_choices.items()}
+    while remaining:
+        best_video = None
+        best_item = None
+        best_key = None
+        for video_id, items in sorted(remaining.items()):
+            item = items[0]
+            stratum = (item.category, item.duration_group)
+            key = (
+                stratum_counts[stratum],
+                Counter(selected_item.category for selected_item in selected)[item.category],
+                Counter(selected_item.duration_group for selected_item in selected)[item.duration_group],
+                item.participant_id,
+                video_id,
+                rng.random(),
+            )
+            if best_key is None or key < best_key:
+                best_key = key
+                best_video = video_id
+                best_item = item
+        assert best_video is not None
+        assert best_item is not None
+        selected.append(best_item)
+        used_videos.add(best_video)
+        stratum_counts[(best_item.category, best_item.duration_group)] += 1
+        remaining.pop(best_video)
+
+    for video_id, items in sorted(video_choices.items()):
+        primary = next(item for item in selected if item.source_video_id == video_id)
+        for item in items:
+            if item.question_id == primary.question_id:
+                continue
             additional_record = primary_manifest_record(item)
-            additional_record["primary_question_id"] = items[0].question_id
+            additional_record["primary_question_id"] = primary.question_id
             additional.append(additional_record)
     return selected, additional
 
@@ -416,6 +451,21 @@ def build_split_summary(
             "by_participant": dict(sorted(Counter(record["participant_id"] for record in records).items())),
         }
 
+    strata = [(category, group) for category in sorted(EXPERIMENT1_CATEGORIES) for group in ("short", "medium", "long")]
+    achieved_balance = {
+        f"{category}:{group}": sum(
+            1 for record in primary_records if record["category"] == category and record["duration_group"] == group
+        )
+        for category, group in strata
+    }
+    positive_counts = [count for count in achieved_balance.values() if count > 0]
+    target = min(positive_counts) if positive_counts else 0
+    shortages = {
+        key: max(0, target - count)
+        for key, count in achieved_balance.items()
+        if count < target
+    }
+
     return {
         "experiment": "experiment1_v2_temporal_attention",
         "seed": config.seed,
@@ -425,6 +475,8 @@ def build_split_summary(
         "inventory_complete_mp4s": len(inventory),
         "eligible_question_count_before_primary_video_cap": len(candidates),
         "primary_manifest_count": len(primary_records),
+        "achieved_category_duration_balance": achieved_balance,
+        "unavoidable_category_duration_shortages": shortages,
         "additional_question_count": len(additional_questions),
         "exclusion_count": len(exclusions),
         "splits": {name: summarize(records) for name, records in sorted(by_split.items())},
@@ -442,13 +494,19 @@ def build_experiment1_v2_manifests(
     if not inventory:
         raise ValueError(f"No complete MP4 files were inventoried under {mp4_dir}.")
     inventory_map = {record.video_id: record for record in inventory}
-    preliminary_durations = []
+    preliminary_duration_by_video: dict[str, float] = {}
     for example in dataset.examples:
+        category = infer_experiment1_category(example.question_type)
+        if category not in EXPERIMENT1_CATEGORIES:
+            continue
         if len(example.inputs) == 1 and not example.inputs[0].is_image and example.inputs[0].video_id in inventory_map:
             start, end, duration, _unbounded = analyzed_bounds(example, inventory_map)
             if end > start:
-                preliminary_durations.append(duration)
-    thresholds = duration_tertiles(preliminary_durations)
+                video_id = example.inputs[0].video_id
+                previous = preliminary_duration_by_video.get(video_id)
+                if previous is None or duration < previous:
+                    preliminary_duration_by_video[video_id] = duration
+    thresholds = duration_tertiles(preliminary_duration_by_video.values())
     candidates, question_exclusions = eligible_primary_candidates(dataset.examples, inventory, thresholds)
     primaries, additional_questions = choose_primary_per_video(candidates, seed=config.seed)
     dev, test = split_primary_videos(primaries, config)

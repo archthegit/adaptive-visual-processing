@@ -7,6 +7,7 @@ from src.experiment1.v2_interventions import (
     contiguous_high_attention_cluster,
     fusion_condition_layer,
     select_temporal_bins,
+    write_v2_intervention_manifest,
 )
 
 
@@ -35,6 +36,19 @@ def _primary():
             "category": "gaze",
             "duration_group": "short",
             "split": "dev",
+        }
+    ]
+
+
+def _primary_with_test():
+    return _primary() + [
+        {
+            "question_id": "q2",
+            "source_video_id": "v2",
+            "participant_id": "p2",
+            "category": "gaze",
+            "duration_group": "short",
+            "split": "test",
         }
     ]
 
@@ -120,3 +134,41 @@ def test_fusion_condition_layer_parses_and_rejects_bad_names():
         fusion_condition_layer("fusion_block_top20")
     with pytest.raises(ValueError, match="non-integer"):
         fusion_condition_layer("fusion_block_top20_after_layer_late")
+
+
+def test_write_intervention_manifest_requires_frozen_layer_and_test_split(tmp_path):
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    _artifact(baseline / "q1.json", [0.05, 0.5, 0.1])
+    _artifact(baseline / "q2.json", [0.05, 0.5, 0.1])
+    primary = tmp_path / "primary.jsonl"
+    primary.write_text("\n".join(json.dumps(record) for record in _primary_with_test()) + "\n")
+    frozen = tmp_path / "frozen.json"
+    frozen.write_text(json.dumps({"selected_layer": 1}))
+
+    with pytest.raises(ValueError, match="frozen-reference-layer"):
+        write_v2_intervention_manifest(primary, baseline, tmp_path / "bad.jsonl", "mask_top20", "top")
+
+    output = tmp_path / "interventions.jsonl"
+    records = write_v2_intervention_manifest(
+        primary,
+        baseline,
+        output,
+        "mask_top20",
+        "top",
+        frozen_reference_layer_path=frozen,
+    )
+
+    assert [record["question_id"] for record in records] == ["q2"]
+    assert records[0]["ranking_layer"] == 1
+
+    with pytest.raises(ValueError, match="does not match frozen"):
+        write_v2_intervention_manifest(
+            primary,
+            baseline,
+            tmp_path / "bad_layer.jsonl",
+            "mask_top20",
+            "top",
+            ranking_layer=-1,
+            frozen_reference_layer_path=frozen,
+        )

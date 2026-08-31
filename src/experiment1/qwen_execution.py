@@ -575,6 +575,8 @@ def run_qwen_relevance_example(
         "intervention_answer_choice_scores": intervention_answer_choice_scores,
         "sampled_frame_indices": [batch.frame_indices for batch in frame_batches],
         "sampled_timestamps": [batch.timestamps for batch in frame_batches],
+        "frame_bin_mappings": [batch.metadata.get("frame_bin_mapping", []) for batch in frame_batches],
+        "sampling_metadata": [batch.metadata.get("sampling", {}) for batch in frame_batches],
         "token_layout": {
             "question_token_indices": layout.question_token_indices,
             "visual_token_indices": layout.visual_token_indices,

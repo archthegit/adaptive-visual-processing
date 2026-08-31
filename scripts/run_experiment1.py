@@ -23,6 +23,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--num-frames", type=int, default=8)
     parser.add_argument(
+        "--sampling-mode",
+        choices=["legacy", "realtime", "fixed_budget"],
+        default="legacy",
+        help=(
+            "legacy uses the historical uniform --num-frames sampler; realtime uses the Experiment 1 v2 "
+            "development-P95 real-time bin policy; fixed_budget uses 128 frames, 16 bins, 8 frames per bin."
+        ),
+    )
+    parser.add_argument(
         "--frame-budget-mode",
         default="total",
         choices=["total", "per-input"],
@@ -213,7 +222,156 @@ def frames_per_video_input(num_frames: int, num_video_inputs: int, mode: str = "
     return [base + (1 if input_idx < remainder else 0) for input_idx in range(num_video_inputs)]
 
 
-def frame_batches_for_example(example, mp4_dir: str | None, num_frames: int, frame_budget_mode: str = "total"):
+def _probe_video_for_sampling(path: str | Path) -> dict[str, Any]:
+    from src.frame_sampling import UniformFrameSampler
+
+    return UniformFrameSampler(num_frames=1)._probe_video(Path(path))
+
+
+def _sample_video_indices(path: str | Path, indices: list[int]) -> Any:
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("Install numpy to sample exact Experiment 1 v2 frames.") from exc
+
+    video_path = Path(path)
+    try:
+        import decord
+    except ImportError:
+        info = _probe_video_for_sampling(video_path)
+        frames = []
+        for index in indices:
+            timestamp = index / float(info["fps"])
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                f"{timestamp:.6f}",
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ]
+            result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE)
+            frame = np.frombuffer(result.stdout, dtype=np.uint8)
+            expected = int(info["height"]) * int(info["width"]) * 3
+            if frame.size != expected:
+                raise RuntimeError(f"ffmpeg returned {frame.size} bytes, expected {expected}.")
+            frames.append(frame.reshape((int(info["height"]), int(info["width"]), 3)))
+        return np.stack(frames, axis=0)
+
+    reader = decord.VideoReader(str(video_path), ctx=decord.cpu(0))
+    return reader.get_batch(indices).asnumpy()
+
+
+def _development_durations_from_manifest(path: str | Path) -> list[float]:
+    durations = []
+    for record in load_manifest(path):
+        if record.get("split") == "dev" and record.get("analyzed_duration_seconds") is not None:
+            durations.append(float(record["analyzed_duration_seconds"]))
+    if not durations:
+        raise ValueError("Realtime sampling requires dev records with analyzed_duration_seconds in the manifest.")
+    return durations
+
+
+def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sampling_mode: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    from src.experiment1.v2_sampling import (
+        fixed_budget_bin_plan,
+        primary_policy_from_development_durations,
+        real_time_bin_plan,
+        robustness_policy,
+    )
+
+    info = _probe_video_for_sampling(video_path)
+    start = float(record.get("analyzed_start_seconds", 0.0) or 0.0)
+    end = float(record.get("analyzed_end_seconds") or info["num_frames"] / float(info["fps"]))
+    if sampling_mode == "realtime":
+        policy = primary_policy_from_development_durations(record["_development_durations"])
+        plan = real_time_bin_plan(start, end, float(info["fps"]), policy)
+    elif sampling_mode == "fixed_budget":
+        policy = robustness_policy()
+        plan = fixed_budget_bin_plan(start, end, float(info["fps"]), policy)
+    else:
+        raise ValueError(f"Unsupported v2 sampling mode: {sampling_mode}")
+    return plan, {
+        "mode": sampling_mode,
+        "policy": policy.to_json(),
+        "source_fps": float(info["fps"]),
+        "source_num_frames": int(info["num_frames"]),
+        "start_seconds": start,
+        "end_seconds": end,
+    }
+
+
+def _frame_batch_from_sampling_plan(example, record: dict[str, Any], mp4_dir: str | None, sampling_mode: str):
+    if mp4_dir is None:
+        raise ValueError("--mp4-dir is required for non-dry-run Experiment 1 execution.")
+    from src.frame_sampling import FrameBatch
+
+    segment = example.inputs[0]
+    if segment.is_image:
+        raise ValueError(f"{sampling_mode} sampling requires a single video input, got image input.")
+    video_path = segment.path_under(mp4_dir)
+    plan, sampling_metadata = _sampling_plan_for_record(record, video_path, sampling_mode)
+    indices = [int(index) for item in plan for index in item["source_frame_indices"]]
+    frames = _sample_video_indices(video_path, indices)
+    timestamps = tuple(float(timestamp) for item in plan for timestamp in item["source_timestamps"])
+    frame_bin_mapping = []
+    position = 0
+    for item in plan:
+        for source_frame_index, timestamp in zip(item["source_frame_indices"], item["source_timestamps"]):
+            frame_bin_mapping.append(
+                {
+                    "sample_position": position,
+                    "analysis_bin": int(item["analysis_bin"]),
+                    "source_frame_index": int(source_frame_index),
+                    "timestamp_seconds": float(timestamp),
+                    "bin_start_seconds": float(item["bin_start_seconds"]),
+                    "bin_end_seconds": float(item["bin_end_seconds"]),
+                    "original_temporal_position": int(item["original_temporal_position"]),
+                    "presented_temporal_position": int(item["presented_temporal_position"]),
+                }
+            )
+            position += 1
+    return FrameBatch(
+        frames=frames,
+        frame_indices=tuple(indices),
+        timestamps=timestamps,
+        video_path=Path(video_path),
+        metadata={
+            "backend": f"experiment1_v2_{sampling_mode}",
+            "fps": sampling_metadata["source_fps"],
+            "source_num_frames": sampling_metadata["source_num_frames"],
+            "input_modality": "video",
+            "sampling": sampling_metadata,
+            "frame_bin_mapping": frame_bin_mapping,
+            "temporal_bin_plan": plan,
+        },
+    )
+
+
+def frame_batches_for_example(
+    example,
+    mp4_dir: str | None,
+    num_frames: int,
+    frame_budget_mode: str = "total",
+    sampling_mode: str = "legacy",
+    manifest_record: dict[str, Any] | None = None,
+):
+    if sampling_mode != "legacy":
+        if manifest_record is None:
+            raise ValueError("Experiment 1 v2 sampling requires the manifest record.")
+        if len(example.inputs) != 1 or example.inputs[0].is_image:
+            raise ValueError(f"{sampling_mode} sampling requires exactly one video input.")
+        return [_frame_batch_from_sampling_plan(example, manifest_record, mp4_dir, sampling_mode)]
+
     if mp4_dir is None:
         raise ValueError("--mp4-dir is required for non-dry-run Experiment 1 execution.")
     from src.frame_sampling import FrameBatch, UniformFrameSampler
@@ -272,6 +430,10 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     resolution = get_resolution_config(args.resolution_config)
     records = filter_records(load_manifest(args.manifest, args.limit), args.question_id)
+    if args.sampling_mode == "realtime":
+        development_durations = _development_durations_from_manifest(args.manifest)
+        for record in records:
+            record["_development_durations"] = development_durations
     records = shard_records(records, args.shard_index, args.num_shards)
     started = time.time()
     jsonl_path = output_dir / records_filename(args.shard_index, args.num_shards)
@@ -315,6 +477,7 @@ def main() -> None:
                     "question_type": record["question_type"],
                     "status": status,
                     "num_frames": args.num_frames,
+                    "sampling_mode": args.sampling_mode,
                     "frame_budget_mode": args.frame_budget_mode,
                     "resolution": resolution.to_metadata(),
                     "vision_access_through_layer": args.vision_access_through_layer,
@@ -337,7 +500,14 @@ def main() -> None:
         assert qwen_model is not None
         example = example_for_record(examples_by_id[record["question_id"]], record)
         try:
-            frame_batches = frame_batches_for_example(example, args.mp4_dir, args.num_frames, args.frame_budget_mode)
+            frame_batches = frame_batches_for_example(
+                example,
+                args.mp4_dir,
+                args.num_frames,
+                args.frame_budget_mode,
+                sampling_mode=args.sampling_mode,
+                manifest_record=record,
+            )
             artifact = run_qwen_relevance_example(
                 qwen_model,
                 example,
@@ -361,6 +531,7 @@ def main() -> None:
             artifact["run_config"] = {
                 "manifest": args.manifest,
                 "num_frames": args.num_frames,
+                "sampling_mode": args.sampling_mode,
                 "frame_budget_mode": args.frame_budget_mode,
                 "resolution_config": args.resolution_config,
                 "vision_access_through_layer": args.vision_access_through_layer,
@@ -415,6 +586,7 @@ def main() -> None:
         "config": {
             "manifest": args.manifest,
             "num_frames": args.num_frames,
+            "sampling_mode": args.sampling_mode,
             "frame_budget_mode": args.frame_budget_mode,
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,

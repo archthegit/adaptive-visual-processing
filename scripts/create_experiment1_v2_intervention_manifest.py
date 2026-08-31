@@ -23,7 +23,12 @@ def parse_args() -> argparse.Namespace:
         choices=["top", "bottom", "random", "mismatched_top", "contiguous_high_cluster"],
     )
     parser.add_argument("--removal-fraction", type=float, default=0.2)
-    parser.add_argument("--ranking-layer", type=int, default=-1)
+    parser.add_argument("--ranking-layer", type=int, default=None)
+    parser.add_argument(
+        "--frozen-reference-layer-json",
+        default="outputs/experiment1_v2/frozen_reference_layer.json",
+        help="Required frozen reference-layer file produced from development examples.",
+    )
     parser.add_argument("--seed", type=int, default=20260830)
     parser.add_argument("--mismatched-output-dir", default=None)
     return parser.parse_args()
@@ -41,6 +46,7 @@ def main() -> None:
         ranking_layer=args.ranking_layer,
         seed=args.seed,
         mismatched_output_dir=args.mismatched_output_dir,
+        frozen_reference_layer_path=args.frozen_reference_layer_json,
     )
     print(json.dumps({"output_jsonl": args.output_jsonl, "num_records": len(records)}, indent=2))
 

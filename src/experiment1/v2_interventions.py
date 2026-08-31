@@ -162,15 +162,30 @@ def write_v2_intervention_manifest(
     condition: str,
     strategy: str,
     removal_fraction: float = 0.2,
-    ranking_layer: int = -1,
+    ranking_layer: int | None = None,
     seed: int = 20260830,
     mismatched_output_dir: str | Path | None = None,
+    frozen_reference_layer_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
+    if frozen_reference_layer_path is None:
+        raise ValueError("Intervention manifests require --frozen-reference-layer-json.")
+    frozen = json.loads(Path(frozen_reference_layer_path).read_text())
+    frozen_layer = int(frozen.get("selected_layer", frozen.get("layer")))
+    if ranking_layer is None:
+        ranking_layer = frozen_layer
+    elif int(ranking_layer) != frozen_layer:
+        raise ValueError(
+            f"ranking_layer={ranking_layer} does not match frozen reference layer {frozen_layer}."
+        )
     primary = []
     with Path(primary_manifest_path).open("r") as handle:
         for line in handle:
             if line.strip():
-                primary.append(json.loads(line))
+                record = json.loads(line)
+                if record.get("split") == "test":
+                    primary.append(record)
+    if not primary:
+        raise ValueError("No split=test records are available for confirmatory interventions.")
     records = build_v2_intervention_records(
         primary,
         baseline_output_dir=baseline_output_dir,
