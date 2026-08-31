@@ -142,10 +142,10 @@ Implemented:
 - repeated-frame and reversed-video control manifests
 - mismatched-query manifests with runner-side question overrides
 - pre-encoder keep/pruning support distinct from pre-encoder masking
+- frozen decoder reference-layer selection from development artifacts
 
 Pending:
 
-- v2 inference runner conditions
 - causal intervention run matrix
 - full statistical analysis and final paper figures
 
@@ -213,4 +213,15 @@ python scripts/create_experiment1_v2_control_manifest.py \
   --mismatched-queries outputs/experiment1_v2/mismatched_queries.json \
   --output-jsonl outputs/experiment1_v2/controls/mismatched_query.jsonl \
   --control mismatched_query
+```
+
+Freeze the decoder reference layer after development baseline and mismatched
+control artifacts exist:
+
+```bash
+python scripts/select_experiment1_v2_reference_layer.py \
+  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --baseline-output-dir outputs/experiment1_v2/runs/baseline \
+  --mismatched-output-dir outputs/experiment1_v2/runs/mismatched_query \
+  --output-json outputs/experiment1_v2/frozen_reference_layer.json
 ```
