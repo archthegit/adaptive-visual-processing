@@ -37,15 +37,20 @@ def qwen_run_command(
     sampling_mode: str = "realtime",
     num_frames: int = 128,
     max_new_tokens: int = 16,
+    sampling_policy_json: str | None = None,
 ) -> str:
-    return " ".join(
-        [
+    parts = [
             "python scripts/run_experiment1.py",
             f"--questions-dir {questions_dir}",
             f"--mp4-dir {mp4_dir}",
             f"--manifest {manifest}",
             f"--num-frames {num_frames}",
             f"--sampling-mode {sampling_mode}",
+    ]
+    if sampling_policy_json is not None:
+        parts.append(f"--sampling-policy-json {sampling_policy_json}")
+    parts.extend(
+        [
             "--resolution-config low",
             "--vision-access-through-layer none",
             "--query-scope question",
@@ -57,6 +62,7 @@ def qwen_run_command(
             "--allow-7b-inference",
         ]
     )
+    return " ".join(parts)
 
 
 def main() -> None:
@@ -91,6 +97,7 @@ def main() -> None:
 
     commands: list[str] = []
     primary = str(output_root / "primary_manifest.jsonl")
+    sampling_policy = str(output_root / "split_summary.json")
     run_root = Path(args.run_root)
     commands.append(
         qwen_run_command(
@@ -100,6 +107,7 @@ def main() -> None:
             args.mp4_dir,
             "baseline",
             max_new_tokens=args.max_new_tokens,
+            sampling_policy_json=sampling_policy,
         )
     )
     commands.append(
@@ -124,6 +132,7 @@ def main() -> None:
                     args.mp4_dir,
                     control,
                     max_new_tokens=args.max_new_tokens,
+                    sampling_policy_json=sampling_policy,
                 )
             )
 
@@ -137,21 +146,24 @@ def main() -> None:
 
     interventions_dir = output_root / "interventions"
     intervention_specs = [
-        ("mask_top20", "top"),
-        ("mask_bottom20", "bottom"),
-        ("mask_random20", "random"),
-        ("mask_mismatched_top20", "mismatched_top"),
-        ("mask_contiguous_high_cluster", "contiguous_high_cluster"),
-        ("keep_top20", "top"),
-        ("keep_uniform20", "random"),
-        ("keep_random20", "random"),
-        ("keep_mismatched_top20", "mismatched_top"),
+        ("mask_top20", "top", "realtime"),
+        ("mask_bottom20", "bottom", "realtime"),
+        ("mask_random20", "random", "realtime"),
+        ("mask_mismatched_top20", "mismatched_top", "realtime"),
+        ("mask_contiguous_high_cluster", "contiguous_high_cluster", "realtime"),
+        ("keep_top20", "top", "realtime"),
+        ("keep_uniform20", "uniform", "realtime"),
+        ("keep_random20", "random", "realtime"),
+        ("keep_mismatched_top20", "mismatched_top", "realtime"),
+        ("mask_top20_fixed_budget", "top", "fixed_budget"),
+        ("mask_random20_fixed_budget", "random", "fixed_budget"),
     ]
-    for condition, strategy in intervention_specs:
+    for condition, strategy, sampling_mode in intervention_specs:
+        baseline_for_condition = run_root / ("baseline_fixed_budget" if sampling_mode == "fixed_budget" else "baseline")
         create = (
             "python scripts/create_experiment1_v2_intervention_manifest.py "
             f"--primary-manifest {primary} "
-            f"--baseline-output-dir {run_root / 'baseline'} "
+            f"--baseline-output-dir {baseline_for_condition} "
             f"--output-jsonl {interventions_dir / (condition + '.jsonl')} "
             f"--condition {condition} "
             f"--strategy {strategy} "
@@ -168,7 +180,9 @@ def main() -> None:
                 args.questions_dir,
                 args.mp4_dir,
                 condition,
+                sampling_mode=sampling_mode,
                 max_new_tokens=args.max_new_tokens,
+                sampling_policy_json=sampling_policy if sampling_mode == "realtime" else None,
             )
         )
     for layer in (0, 4, 8, 12, 16, 20, 24, 27):
@@ -192,6 +206,7 @@ def main() -> None:
                     args.mp4_dir,
                     condition,
                     max_new_tokens=args.max_new_tokens,
+                    sampling_policy_json=sampling_policy,
                 )
             )
 

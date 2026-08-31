@@ -47,6 +47,49 @@ def contiguous_high_attention_cluster(scores: Sequence[float], budget: int) -> l
     return list(range(best_start, best_start + budget))
 
 
+def uniform_temporal_bins(num_bins: int, budget: int) -> list[int]:
+    if budget <= 0 or budget > num_bins:
+        raise ValueError("budget must be in [1, num_bins].")
+    if budget == 1:
+        return [num_bins // 2]
+    return sorted({int(round(idx * (num_bins - 1) / float(budget - 1))) for idx in range(budget)})
+
+
+def _position_bucket(index: int, num_bins: int) -> int:
+    if num_bins <= 1:
+        return 0
+    return min(2, int((index / num_bins) * 3))
+
+
+def position_matched_random_bins(
+    scores: Sequence[float],
+    fraction: float = 0.2,
+    seed: int = 20260830,
+    question_id: str | None = None,
+) -> list[int]:
+    budget = bin_budget(len(scores), fraction)
+    top_bins = list(rank_order(scores)[:budget])
+    rng = random.Random(f"{seed}:{question_id or ''}:{len(scores)}:position_matched")
+    selected: list[int] = []
+    for top_bin in top_bins:
+        bucket = _position_bucket(top_bin, len(scores))
+        candidates = [
+            idx
+            for idx in range(len(scores))
+            if _position_bucket(idx, len(scores)) == bucket and idx not in selected and idx not in top_bins
+        ]
+        if not candidates:
+            candidates = [
+                idx
+                for idx in range(len(scores))
+                if _position_bucket(idx, len(scores)) == bucket and idx not in selected
+            ]
+        if not candidates:
+            candidates = [idx for idx in range(len(scores)) if idx not in selected]
+        selected.append(rng.choice(candidates))
+    return sorted(selected)
+
+
 def select_temporal_bins(
     scores: Sequence[float],
     strategy: str,
@@ -61,8 +104,9 @@ def select_temporal_bins(
     if strategy == "bottom":
         return sorted(order[-budget:])
     if strategy == "random":
-        rng = random.Random(f"{seed}:{question_id or ''}:{len(scores)}")
-        return sorted(rng.sample(range(len(scores)), budget))
+        return position_matched_random_bins(scores, fraction=fraction, seed=seed, question_id=question_id)
+    if strategy == "uniform":
+        return uniform_temporal_bins(len(scores), budget)
     if strategy == "contiguous_high_cluster":
         return contiguous_high_attention_cluster(scores, budget)
     raise ValueError(f"Unsupported intervention strategy: {strategy}")

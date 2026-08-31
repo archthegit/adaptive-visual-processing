@@ -32,6 +32,11 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--sampling-policy-json",
+        default=None,
+        help="Path to split_summary.json or a policy JSON containing realtime_sampling_policy for --sampling-mode realtime.",
+    )
+    parser.add_argument(
         "--frame-budget-mode",
         default="total",
         choices=["total", "per-input"],
@@ -271,20 +276,22 @@ def _sample_video_indices(path: str | Path, indices: list[int]) -> Any:
     return reader.get_batch(indices).asnumpy()
 
 
-def _development_durations_from_manifest(path: str | Path) -> list[float]:
-    durations = []
-    for record in load_manifest(path):
-        if record.get("split") == "dev" and record.get("analyzed_duration_seconds") is not None:
-            durations.append(float(record["analyzed_duration_seconds"]))
-    if not durations:
-        raise ValueError("Realtime sampling requires dev records with analyzed_duration_seconds in the manifest.")
-    return durations
+def _load_realtime_sampling_policy(path: str | Path | None) -> dict[str, Any]:
+    if path is None:
+        raise ValueError("--sampling-mode realtime requires --sampling-policy-json.")
+    payload = json.loads(Path(path).read_text())
+    policy = payload.get("realtime_sampling_policy", payload)
+    required = {"delta_t_seconds", "frames_per_bin", "max_bins", "max_frames"}
+    missing = sorted(required - set(policy))
+    if missing:
+        raise ValueError(f"Sampling policy JSON is missing required fields: {missing}")
+    return policy
 
 
 def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sampling_mode: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from src.experiment1.v2_sampling import (
+        TemporalSamplingPolicy,
         fixed_budget_bin_plan,
-        primary_policy_from_development_durations,
         real_time_bin_plan,
         robustness_policy,
     )
@@ -293,7 +300,17 @@ def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sa
     start = float(record.get("analyzed_start_seconds", 0.0) or 0.0)
     end = float(record.get("analyzed_end_seconds") or info["num_frames"] / float(info["fps"]))
     if sampling_mode == "realtime":
-        policy = primary_policy_from_development_durations(record["_development_durations"])
+        frozen = record.get("_realtime_sampling_policy")
+        if frozen is None:
+            raise ValueError("Realtime sampling requires a frozen policy from --sampling-policy-json.")
+        policy = TemporalSamplingPolicy(
+            name="real_time_p95_development",
+            delta_t_seconds=float(frozen["delta_t_seconds"]),
+            frames_per_bin=int(frozen["frames_per_bin"]),
+            max_bins=int(frozen["max_bins"]),
+            fixed_num_frames=None,
+            fixed_num_bins=None,
+        )
         plan = real_time_bin_plan(start, end, float(info["fps"]), policy)
     elif sampling_mode == "fixed_budget":
         policy = robustness_policy()
@@ -307,6 +324,7 @@ def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sa
         "source_num_frames": int(info["num_frames"]),
         "start_seconds": start,
         "end_seconds": end,
+        "frozen_policy_source": record.get("_sampling_policy_json"),
     }
 
 
@@ -431,9 +449,10 @@ def main() -> None:
     resolution = get_resolution_config(args.resolution_config)
     records = filter_records(load_manifest(args.manifest, args.limit), args.question_id)
     if args.sampling_mode == "realtime":
-        development_durations = _development_durations_from_manifest(args.manifest)
+        realtime_policy = _load_realtime_sampling_policy(args.sampling_policy_json)
         for record in records:
-            record["_development_durations"] = development_durations
+            record["_realtime_sampling_policy"] = realtime_policy
+            record["_sampling_policy_json"] = args.sampling_policy_json
     records = shard_records(records, args.shard_index, args.num_shards)
     started = time.time()
     jsonl_path = output_dir / records_filename(args.shard_index, args.num_shards)
@@ -478,6 +497,7 @@ def main() -> None:
                     "status": status,
                     "num_frames": args.num_frames,
                     "sampling_mode": args.sampling_mode,
+                    "sampling_policy_json": args.sampling_policy_json,
                     "frame_budget_mode": args.frame_budget_mode,
                     "resolution": resolution.to_metadata(),
                     "vision_access_through_layer": args.vision_access_through_layer,
@@ -532,6 +552,7 @@ def main() -> None:
                 "manifest": args.manifest,
                 "num_frames": args.num_frames,
                 "sampling_mode": args.sampling_mode,
+                "sampling_policy_json": args.sampling_policy_json,
                 "frame_budget_mode": args.frame_budget_mode,
                 "resolution_config": args.resolution_config,
                 "vision_access_through_layer": args.vision_access_through_layer,
@@ -587,6 +608,7 @@ def main() -> None:
             "manifest": args.manifest,
             "num_frames": args.num_frames,
             "sampling_mode": args.sampling_mode,
+            "sampling_policy_json": args.sampling_policy_json,
             "frame_budget_mode": args.frame_budget_mode,
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,

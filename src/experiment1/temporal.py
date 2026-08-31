@@ -17,6 +17,10 @@ class TemporalLayerStats:
     layer: int
     normalized_temporal_entropy: float
     top1_temporal_bin_mass: float
+    top20_temporal_bin_mass: float
+    temporal_gini: float
+    first_bin_mass: float
+    last_bin_mass: float
     bins_to_80pct_mass: int
     fraction_bins_to_80pct_mass: float
     temporal_bin_rank_order: tuple[int, ...]
@@ -72,6 +76,59 @@ def pool_token_scores_to_temporal_bins(
     return temporal
 
 
+def sample_position_to_analysis_bin(batch: FrameBatch) -> dict[int, int]:
+    mapping: dict[int, int] = {}
+    for item in batch.metadata.get("frame_bin_mapping", []) or []:
+        mapping[int(item["sample_position"])] = int(item["analysis_bin"])
+    return mapping
+
+
+def qwen_temporal_to_analysis_weights(batch: FrameBatch, temporal_index: int, grid_t: int) -> dict[int, float]:
+    position_mapping = sample_position_to_analysis_bin(batch)
+    if not position_mapping:
+        return {int(temporal_index): 1.0}
+    count = len(batch.frame_indices)
+    start = int(round(temporal_index * count / grid_t))
+    end = int(round((temporal_index + 1) * count / grid_t))
+    if end <= start:
+        end = min(count, start + 1)
+    bins = [position_mapping[pos] for pos in range(start, end) if pos in position_mapping]
+    if not bins:
+        return {int(temporal_index): 1.0}
+    weights: dict[int, float] = {}
+    for analysis_bin in bins:
+        weights[analysis_bin] = weights.get(analysis_bin, 0.0) + 1.0 / len(bins)
+    return weights
+
+
+def analysis_bin_count(batch: FrameBatch, fallback: int) -> int:
+    mapping = sample_position_to_analysis_bin(batch)
+    if not mapping:
+        return int(fallback)
+    return max(mapping.values()) + 1
+
+
+def pool_token_scores_to_analysis_bins(
+    token_scores: np.ndarray,
+    layout: TokenLayout,
+    frame_batches: Sequence[FrameBatch],
+    input_index: int = 0,
+) -> np.ndarray:
+    raw = np.asarray(token_scores, dtype=np.float64)
+    if raw.ndim != 2:
+        raise ValueError(f"token_scores must have shape [layers, visual_tokens], got {raw.shape}.")
+    qwen_bins = temporal_bin_count(layout, input_index=input_index)
+    batch = frame_batches[input_index]
+    temporal = np.zeros((raw.shape[0], analysis_bin_count(batch, qwen_bins)), dtype=np.float64)
+    for cell in layout.visual_cells:
+        if cell.modality != "video" or cell.input_index != input_index:
+            continue
+        weights = qwen_temporal_to_analysis_weights(batch, cell.temporal_index, cell.grid_t)
+        for analysis_bin, weight in weights.items():
+            temporal[:, analysis_bin] += raw[:, cell.visual_index] * weight
+    return temporal
+
+
 def represented_sampled_frames(batch: FrameBatch, temporal_index: int, grid_t: int) -> dict[str, Any]:
     if grid_t <= 0:
         return {"sampled_frame_indices": [], "sampled_timestamps": []}
@@ -91,29 +148,43 @@ def represented_sampled_frames(batch: FrameBatch, temporal_index: int, grid_t: i
 
 
 def temporal_bin_metadata(layout: TokenLayout, frame_batches: Sequence[FrameBatch], input_index: int = 0) -> tuple[dict[str, Any], ...]:
-    num_bins = temporal_bin_count(layout, input_index=input_index)
+    qwen_bins = temporal_bin_count(layout, input_index=input_index)
     batch = frame_batches[input_index]
+    num_bins = analysis_bin_count(batch, qwen_bins)
     metadata: list[dict[str, Any]] = []
     for temporal_index in range(num_bins):
         cells = [
             cell
             for cell in layout.visual_cells
-            if cell.modality == "video" and cell.input_index == input_index and cell.temporal_index == temporal_index
+            if cell.modality == "video"
+            and cell.input_index == input_index
+            and temporal_index in qwen_temporal_to_analysis_weights(batch, cell.temporal_index, cell.grid_t)
         ]
         if not cells:
-            raise ValueError(f"Temporal bin {temporal_index} has no visual tokens.")
+            raise ValueError(f"Analysis temporal bin {temporal_index} has no visual tokens.")
         first = cells[0]
+        frame_mapping = [
+            item for item in batch.metadata.get("frame_bin_mapping", []) or [] if int(item["analysis_bin"]) == temporal_index
+        ]
         metadata.append(
             {
                 "input_index": input_index,
                 "temporal_bin": temporal_index,
+                "analysis_bin": temporal_index,
+                "qwen_temporal_bins": sorted({int(cell.temporal_index) for cell in cells}),
                 "grid_t": first.grid_t,
                 "grid_h": first.grid_h,
                 "grid_w": first.grid_w,
                 "num_visual_tokens": len(cells),
                 "seconds_per_grid": first.seconds_per_grid,
                 "qwen_timestamp": first.timestamp,
-                **represented_sampled_frames(batch, temporal_index, first.grid_t),
+                "sampled_frame_indices": [int(item["source_frame_index"]) for item in frame_mapping]
+                if frame_mapping
+                else represented_sampled_frames(batch, temporal_index, first.grid_t)["sampled_frame_indices"],
+                "sampled_timestamps": [float(item["timestamp_seconds"]) for item in frame_mapping]
+                if frame_mapping
+                else represented_sampled_frames(batch, temporal_index, first.grid_t)["sampled_timestamps"],
+                "note": "Scores are aggregated into planned analysis bins from Qwen temporal-grid bins.",
             }
         )
     return tuple(metadata)
@@ -136,6 +207,24 @@ def normalized_temporal_entropy(scores: Sequence[float]) -> float:
 def top1_mass(scores: Sequence[float]) -> float:
     norm = normalize_distribution(np.asarray(scores, dtype=np.float64), axis=0)
     return float(norm.max()) if norm.size else 0.0
+
+
+def top_fraction_mass(scores: Sequence[float], fraction: float = 0.2) -> float:
+    values = normalize_distribution(np.asarray(scores, dtype=np.float64), axis=0)
+    if values.size == 0:
+        return 0.0
+    count = max(1, int(math.ceil(values.size * fraction)))
+    return float(np.sort(values)[::-1][:count].sum())
+
+
+def gini_coefficient(scores: Sequence[float]) -> float:
+    values = normalize_distribution(np.asarray(scores, dtype=np.float64), axis=0)
+    if values.size == 0 or float(values.sum()) <= 0:
+        return 0.0
+    sorted_values = np.sort(values)
+    n = sorted_values.size
+    weighted = float(np.sum(np.arange(1, n + 1) * sorted_values))
+    return float((2.0 * weighted) / (n * float(sorted_values.sum())) - (n + 1.0) / n)
 
 
 def bins_to_attention_mass(scores: Sequence[float], target_mass: float = 0.8) -> tuple[int, float]:
@@ -194,7 +283,7 @@ def build_temporal_relevance_from_token_scores(
     input_index: int = 0,
     topk: int = 3,
 ) -> TemporalRelevance:
-    raw_temporal = pool_token_scores_to_temporal_bins(token_scores, layout, input_index=input_index)
+    raw_temporal = pool_token_scores_to_analysis_bins(token_scores, layout, frame_batches, input_index=input_index)
     normalized_temporal = normalize_distribution(raw_temporal, axis=1)
     absolute_mass = np.asarray(token_scores, dtype=np.float64).sum(axis=1)
     final_order = temporal_rank_order(normalized_temporal[-1])
@@ -208,6 +297,10 @@ def build_temporal_relevance_from_token_scores(
                 layer=layer_index,
                 normalized_temporal_entropy=normalized_temporal_entropy(layer_scores),
                 top1_temporal_bin_mass=top1_mass(layer_scores),
+                top20_temporal_bin_mass=top_fraction_mass(layer_scores, 0.2),
+                temporal_gini=gini_coefficient(layer_scores),
+                first_bin_mass=float(layer_scores[0]) if len(layer_scores) else 0.0,
+                last_bin_mass=float(layer_scores[-1]) if len(layer_scores) else 0.0,
                 bins_to_80pct_mass=count80,
                 fraction_bins_to_80pct_mass=fraction80,
                 temporal_bin_rank_order=order,

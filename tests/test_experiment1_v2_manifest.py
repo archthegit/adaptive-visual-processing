@@ -6,9 +6,12 @@ import pytest
 from src.experiment1.v2_manifest import (
     Experiment1V2Config,
     build_experiment1_v2_manifests,
+    choose_primary_per_video,
     duration_tertiles,
     parse_ffprobe_stream,
+    PrimaryCandidate,
 )
+from src.dataset import parse_vqa_example
 
 
 QUESTION_TYPES = {
@@ -136,3 +139,43 @@ def test_build_experiment1_v2_manifests_are_source_disjoint_and_deranged(tmp_pat
         assert mismatch["duration_group"] == record["duration_group"]
     assert outputs_a["additional_questions"]
     assert outputs_a["split_summary"]["primary_manifest_count"] == len(primary)
+    assert "realtime_sampling_policy" in outputs_a["split_summary"]
+    assert outputs_a["split_summary"]["realtime_sampling_policy"]["frames_per_bin"] == 2
+
+
+def _candidate(video_id: str, question_id: str, question_type: str, category: str, duration_group: str):
+    example = parse_vqa_example(
+        question_id,
+        {
+            "inputs": {"video 1": {"id": video_id, "start_time": "00:00:00.000", "end_time": "00:00:10.000"}},
+            "question": f"{question_id}?",
+            "choices": ["A", "B", "C", "D", "E"],
+            "correct_idx": 0,
+        },
+        annotation_file=Path(f"{question_type}.json"),
+    )
+    return PrimaryCandidate(
+        example=example,
+        category=category,
+        source_video_id=video_id,
+        participant_id=video_id.split("-")[0],
+        analyzed_start_seconds=0.0,
+        analyzed_end_seconds=10.0,
+        analyzed_duration_seconds=10.0,
+        is_unbounded_full_video=False,
+        duration_group=duration_group,
+    )
+
+
+def test_primary_selection_considers_all_candidates_for_balancing_not_alphabetical_first():
+    candidates = [
+        _candidate("P01-v1", "q_a_fine", "fine_grained_action_localization", "fine_grained", "short"),
+        _candidate("P01-v1", "q_z_gaze", "gaze_interaction_anticipation", "gaze", "short"),
+        _candidate("P02-v2", "q_fine2", "fine_grained_action_localization", "fine_grained", "short"),
+    ]
+
+    selected, _additional = choose_primary_per_video(candidates, seed=1)
+
+    by_video = {item.source_video_id: item for item in selected}
+    assert by_video["P01-v1"].category == "gaze"
+    assert by_video["P02-v2"].category == "fine_grained"

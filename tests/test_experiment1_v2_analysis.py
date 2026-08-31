@@ -6,6 +6,7 @@ from src.experiment1.v2_analysis import (
     flatten_completed_artifacts,
     expected_conditions,
     expected_run_matrix,
+    reversed_distribution_to_original_bins,
     validate_completeness,
     write_v2_analysis_outputs,
 )
@@ -48,6 +49,12 @@ def test_expected_run_matrix_expands_conditions_per_source_video():
     assert {row["condition"] for row in matrix} == set(expected_conditions(include_fusion_depth=False))
     assert all(row["split"] == "test" for row in matrix if row["condition"].startswith("mask_"))
     assert [row for row in matrix if row["condition"] == "baseline_fixed_budget"][0]["sampling_mode"] == "fixed_budget"
+
+
+def test_expected_run_matrix_only_requires_existing_same_video_controls():
+    matrix = expected_run_matrix(_primary_records(), include_fusion_depth=False, same_video_question_ids={"q2"})
+    same_video = [row for row in matrix if row["condition"] == "same_video_different_query"]
+    assert [row["question_id"] for row in same_video] == ["q2"]
 
 
 def test_validate_completeness_counts_complete_missing_and_failed(tmp_path):
@@ -154,3 +161,13 @@ def test_decoder_intervention_rows_use_intervention_answer_scores(tmp_path):
     assert rows[0]["answer_score_source"] == "intervention_answer_choice_scores"
     assert rows[0]["correct_choice_log_probability"] == -3.0
     assert rows[0]["correct_vs_best_incorrect_margin"] == -1.0
+
+
+def test_reversed_distribution_remaps_presented_scores_to_original_bins():
+    distribution = [0.1, 0.2, 0.7]
+    mapping = [
+        {"presented_analysis_bin": 0, "original_analysis_bin": 2},
+        {"presented_analysis_bin": 1, "original_analysis_bin": 1},
+        {"presented_analysis_bin": 2, "original_analysis_bin": 0},
+    ]
+    assert reversed_distribution_to_original_bins(distribution, mapping) == [0.7, 0.2, 0.1]

@@ -5,10 +5,10 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.run_experiment1 import (
+    _load_realtime_sampling_policy,
     condition_for_record,
     completed_question_ids,
     decoder_direct_access_through_layer,
-    _development_durations_from_manifest,
     example_for_record,
     frame_batches_for_example,
     frames_per_video_input,
@@ -134,17 +134,15 @@ def test_frame_batches_for_example_samples_reference_images_as_one_frame(monkeyp
 
 
 def test_realtime_sampling_uses_development_durations_from_manifest(tmp_path):
-    manifest = tmp_path / "manifest.jsonl"
-    manifest.write_text(
-        "\n".join(
-            [
-                '{"question_id":"dev1","split":"dev","analyzed_duration_seconds":10}',
-                '{"question_id":"test1","split":"test","analyzed_duration_seconds":100}',
-            ]
-        )
-        + "\n"
+    policy = tmp_path / "split_summary.json"
+    policy.write_text(
+        '{"realtime_sampling_policy":{"development_duration_p95_seconds":640,"delta_t_seconds":10,'
+        '"frames_per_bin":2,"max_bins":64,"max_frames":128}}'
     )
-    assert _development_durations_from_manifest(manifest) == [10.0]
+    loaded = _load_realtime_sampling_policy(policy)
+    assert loaded["delta_t_seconds"] == 10
+    with pytest.raises(ValueError, match="sampling-policy-json"):
+        _load_realtime_sampling_policy(None)
 
 
 def test_v2_sampling_mode_requires_manifest_record():

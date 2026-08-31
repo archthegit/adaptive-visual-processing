@@ -196,8 +196,13 @@ python scripts/run_experiment1.py \
 
 The realtime policy freezes `delta_t = ceil(P95(dev analyzed durations) / 64)`,
 samples two chronological frames per bin, caps at 64 bins and therefore 128
-frames, and records exact frame/bin mappings in each artifact. The robustness
-policy is run separately with fixed-budget sampling:
+frames, and records exact frame/bin mappings in each artifact. The frozen
+policy is stored in `split_summary.json` under `realtime_sampling_policy`; every
+realtime run, including test-only intervention manifests, must pass that file
+with `--sampling-policy-json` because intervention manifests do not contain
+development records.
+
+The robustness policy is run separately with fixed-budget sampling:
 
 ```bash
 python scripts/run_experiment1.py \
@@ -213,6 +218,25 @@ python scripts/run_experiment1.py \
   --resume \
   --allow-7b-inference \
   --output-dir outputs/experiment1_v2/runs/baseline_fixed_budget
+```
+
+Realtime runs use the frozen policy:
+
+```bash
+python scripts/run_experiment1.py \
+  --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir /workspace/data/hd_epic_mp4 \
+  --manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --num-frames 128 \
+  --sampling-mode realtime \
+  --sampling-policy-json outputs/experiment1_v2/split_summary.json \
+  --condition baseline \
+  --resolution-config low \
+  --attention-extraction reduced_sdpa \
+  --query-scope question \
+  --resume \
+  --allow-7b-inference \
+  --output-dir outputs/experiment1_v2/runs/baseline
 ```
 
 To construct manifests and print the ordered GPU commands without starting
@@ -250,6 +274,12 @@ python scripts/create_experiment1_v2_intervention_manifest.py \
   --seed 20260830
 ```
 
+`random` intervention selection is position-matched: it first finds the
+same-budget top-relevance bins, groups those bins by coarse relative temporal
+tercile, and samples deterministic replacement bins from the same terciles where
+possible. `uniform` is a separate strategy using evenly spaced temporal bins, so
+`keep_uniform20` and `keep_random20` are intentionally different controls.
+
 Fusion-depth manifests use the same baseline-derived bin selection, but encode
 the decoder boundary in the condition name. For example, this allows top-bin
 direct access through layer 8 and blocks direct question-to-selected-visual-bin
@@ -271,6 +301,11 @@ When running a fusion-depth manifest, `scripts/run_experiment1.py` reads the
 stored `decoder_direct_access_through_layer`. A CLI
 `--decoder-direct-access-through-layer` value overrides the manifest for
 engineering checks.
+
+Fixed-budget causal masks are scheduled separately from realtime masks. Their
+intervention manifests must be built from `runs/baseline_fixed_budget`, and the
+corresponding run commands use `--sampling-mode fixed_budget`; fixed-budget
+attention artifacts are expected to contain exactly 16 analysis bins.
 
 Create control manifests:
 

@@ -4,6 +4,7 @@ from src.experiment1.temporal import (
     bins_to_attention_mass,
     build_temporal_relevance_from_token_scores,
     normalized_temporal_entropy,
+    pool_token_scores_to_analysis_bins,
     pool_token_scores_to_temporal_bins,
     spearman_rank_correlation,
     temporal_rank_order,
@@ -70,3 +71,67 @@ def test_build_temporal_relevance_records_bin_metadata_and_layer_metrics():
     assert relevance["temporal_bins"][0]["sampled_frame_indices"] == [10, 20]
     assert relevance["layer_metrics"][0]["temporal_bin_rank_order"] == (1, 0)
     assert relevance["layer_metrics"][1]["spearman_with_final_layer_ordering"] == 1.0
+
+
+def test_fixed_budget_mapping_aggregates_qwen_bins_to_16_analysis_bins():
+    cells = tuple(
+        VisualTokenCell(index + 2, index, "video", 0, index, 0, 0, 64, 1, 1)
+        for index in range(64)
+    )
+    layout = TokenLayout(
+        question_token_indices=(70,),
+        prompt_token_indices=tuple(range(71)),
+        visual_token_indices=tuple(range(2, 66)),
+        visual_cells=cells,
+        visual_grid_metadata={"video_grid_thw": [[64, 1, 1]], "spatial_merge_size": 1},
+        query_scope="question",
+    )
+    mapping = [
+        {"sample_position": pos, "analysis_bin": pos // 8, "source_frame_index": pos, "timestamp_seconds": float(pos)}
+        for pos in range(128)
+    ]
+    batch = FrameBatch(
+        frames=np.zeros((128, 1, 1, 3), dtype=np.uint8),
+        frame_indices=tuple(range(128)),
+        timestamps=tuple(float(pos) for pos in range(128)),
+        video_path=None,
+        metadata={"input_modality": "video", "frame_bin_mapping": mapping},
+    )
+
+    pooled = pool_token_scores_to_analysis_bins(np.ones((1, 64)), layout, [batch])
+    relevance = build_temporal_relevance_from_token_scores(np.ones((1, 64)), layout, [batch], "unit").to_json_dict()
+
+    assert pooled.shape == (1, 16)
+    assert relevance["metadata"]["num_temporal_bins"] == 16
+    assert len(relevance["normalized_temporal_bin_scores"][0]) == 16
+
+
+def test_realtime_mapping_uses_variable_planned_analysis_bins():
+    cells = tuple(
+        VisualTokenCell(index + 2, index, "video", 0, index, 0, 0, 4, 1, 1)
+        for index in range(4)
+    )
+    layout = TokenLayout(
+        question_token_indices=(10,),
+        prompt_token_indices=tuple(range(11)),
+        visual_token_indices=tuple(range(2, 6)),
+        visual_cells=cells,
+        visual_grid_metadata={"video_grid_thw": [[4, 1, 1]], "spatial_merge_size": 1},
+        query_scope="question",
+    )
+    mapping = [
+        {"sample_position": pos, "analysis_bin": pos // 2, "source_frame_index": pos, "timestamp_seconds": float(pos)}
+        for pos in range(8)
+    ]
+    batch = FrameBatch(
+        frames=np.zeros((8, 1, 1, 3), dtype=np.uint8),
+        frame_indices=tuple(range(8)),
+        timestamps=tuple(float(pos) for pos in range(8)),
+        video_path=None,
+        metadata={"input_modality": "video", "frame_bin_mapping": mapping},
+    )
+
+    relevance = build_temporal_relevance_from_token_scores(np.ones((1, 4)), layout, [batch], "unit").to_json_dict()
+
+    assert relevance["metadata"]["num_temporal_bins"] == 4
+    assert [item["analysis_bin"] for item in relevance["temporal_bins"]] == [0, 1, 2, 3]

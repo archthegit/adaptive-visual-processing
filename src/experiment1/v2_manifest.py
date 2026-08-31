@@ -13,6 +13,7 @@ from src.dataset import HDEpicVQADataset, VQAExample
 
 from .manifest import EXPERIMENT1_CATEGORIES, infer_experiment1_category
 from .temporal_splits import bounded_duration_seconds
+from .v2_sampling import percentile, primary_policy_from_development_durations
 
 
 FFProbeRunner = Callable[[list[str]], str]
@@ -268,20 +269,30 @@ def choose_primary_per_video(candidates: list[PrimaryCandidate], seed: int) -> t
         best_item = None
         best_key = None
         for video_id, items in sorted(remaining.items()):
-            item = items[0]
-            stratum = (item.category, item.duration_group)
-            key = (
-                stratum_counts[stratum],
-                Counter(selected_item.category for selected_item in selected)[item.category],
-                Counter(selected_item.duration_group for selected_item in selected)[item.duration_group],
-                item.participant_id,
-                video_id,
-                rng.random(),
-            )
-            if best_key is None or key < best_key:
-                best_key = key
-                best_video = video_id
-                best_item = item
+            for item in items:
+                stratum = (item.category, item.duration_group)
+                future_same_stratum = sum(
+                    1
+                    for other_video, other_items in remaining.items()
+                    if other_video != video_id
+                    and any((other.category, other.duration_group) == stratum for other in other_items)
+                )
+                key = (
+                    stratum_counts[stratum],
+                    future_same_stratum,
+                    Counter(selected_item.category for selected_item in selected)[item.category],
+                    Counter(selected_item.duration_group for selected_item in selected)[item.duration_group],
+                    abs(question_token_length(item.example) - 12),
+                    item.example.question_type,
+                    item.participant_id,
+                    video_id,
+                    rng.random(),
+                    item.question_id,
+                )
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_video = video_id
+                    best_item = item
         assert best_video is not None
         assert best_item is not None
         selected.append(best_item)
@@ -434,6 +445,7 @@ def build_split_summary(
     candidates: list[PrimaryCandidate],
     primary_records: list[dict[str, Any]],
     thresholds: dict[str, float],
+    sampling_policy: dict[str, Any],
     additional_questions: list[dict[str, Any]],
     exclusions: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -472,6 +484,7 @@ def build_split_summary(
         "dev_fraction": config.dev_fraction,
         "max_primary_per_source_video": config.max_primary_per_source_video,
         "duration_tertile_thresholds": thresholds,
+        "realtime_sampling_policy": sampling_policy,
         "inventory_complete_mp4s": len(inventory),
         "eligible_question_count_before_primary_video_cap": len(candidates),
         "primary_manifest_count": len(primary_records),
@@ -516,7 +529,27 @@ def build_experiment1_v2_manifests(
     mismatches = build_mismatched_queries(dev + test, seed=config.seed)
     exclusions = video_exclusions + question_exclusions
     assert_v2_manifest_invariants(records, mismatches, inventory)
-    summary = build_split_summary(config, inventory, candidates, records, thresholds, additional_questions, exclusions)
+    dev_durations = [item.analyzed_duration_seconds for item in dev]
+    dev_p95 = percentile(dev_durations, 0.95)
+    policy = primary_policy_from_development_durations(dev_durations)
+    sampling_policy = {
+        "development_duration_p95_seconds": dev_p95,
+        "delta_t_seconds": policy.delta_t_seconds,
+        "frames_per_bin": policy.frames_per_bin,
+        "max_bins": policy.max_bins,
+        "max_frames": policy.max_bins * policy.frames_per_bin,
+        "policy": policy.to_json(),
+    }
+    summary = build_split_summary(
+        config,
+        inventory,
+        candidates,
+        records,
+        thresholds,
+        sampling_policy,
+        additional_questions,
+        exclusions,
+    )
     if summary["primary_manifest_count"] != len(records):
         raise ValueError("Summary count disagrees with primary manifest length.")
     return {

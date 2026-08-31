@@ -177,7 +177,15 @@ def test_reversed_video_control_reverses_content_but_preserves_temporal_position
         frame_indices=(10, 11, 12, 13),
         timestamps=(0.0, 1.0, 2.0, 3.0),
         video_path=None,
-        metadata={"input_modality": "video"},
+        metadata={
+            "input_modality": "video",
+            "frame_bin_mapping": [
+                {"sample_position": 0, "analysis_bin": 0, "source_frame_index": 10},
+                {"sample_position": 1, "analysis_bin": 0, "source_frame_index": 11},
+                {"sample_position": 2, "analysis_bin": 1, "source_frame_index": 12},
+                {"sample_position": 3, "analysis_bin": 1, "source_frame_index": 13},
+            ],
+        },
     )
 
     reversed_batch = apply_frame_control([batch], "reversed_video")[0]
@@ -186,4 +194,6 @@ def test_reversed_video_control_reverses_content_but_preserves_temporal_position
     assert reversed_batch.timestamps == batch.timestamps
     assert reversed_batch.metadata["temporal_positions_preserved"] is True
     assert reversed_batch.metadata["presented_source_frame_indices"] == [13, 12, 11, 10]
+    assert reversed_batch.metadata["presented_to_original_frame_bin_mapping"][0]["original_analysis_bin"] == 1
+    assert reversed_batch.metadata["presented_to_original_frame_bin_mapping"][0]["presented_analysis_bin"] == 0
     assert reversed_batch.frames[:, 0, 0, 0].tolist() == [3, 2, 1, 0]

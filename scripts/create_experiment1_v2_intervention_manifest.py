@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=["top", "bottom", "random", "mismatched_top", "contiguous_high_cluster"],
+        choices=["top", "bottom", "random", "uniform", "mismatched_top", "contiguous_high_cluster"],
     )
     parser.add_argument("--removal-fraction", type=float, default=0.2)
     parser.add_argument("--ranking-layer", type=int, default=None)

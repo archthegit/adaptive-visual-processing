@@ -12,6 +12,7 @@ from src.io import write_json, write_jsonl
 from .v2_metrics import (
     benjamini_hochberg,
     bootstrap_ci_clustered_by_video,
+    jensen_shannon_divergence,
     paired_effect_size,
     paired_permutation_pvalue,
     spearman_from_scores,
@@ -33,6 +34,8 @@ NECESSITY_CONDITIONS = (
     "mask_random20",
     "mask_mismatched_top20",
     "mask_contiguous_high_cluster",
+    "mask_top20_fixed_budget",
+    "mask_random20_fixed_budget",
 )
 SUFFICIENCY_CONDITIONS = (
     "keep_top20",
@@ -76,11 +79,19 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
     return records
 
 
-def expected_run_matrix(primary_manifest: Iterable[dict[str, Any]], include_fusion_depth: bool = True) -> list[dict[str, Any]]:
+def expected_run_matrix(
+    primary_manifest: Iterable[dict[str, Any]],
+    include_fusion_depth: bool = True,
+    same_video_question_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
     matrix = []
     for record in primary_manifest:
         for condition in expected_conditions(include_fusion_depth=include_fusion_depth):
             if is_confirmatory_causal_condition(condition) and record.get("split") != "test":
+                continue
+            if condition == "same_video_different_query" and (
+                same_video_question_ids is not None and record["question_id"] not in same_video_question_ids
+            ):
                 continue
             matrix.append(
                 {
@@ -91,7 +102,7 @@ def expected_run_matrix(primary_manifest: Iterable[dict[str, Any]], include_fusi
                     "participant_id": record["participant_id"],
                     "category": record["category"],
                     "duration_group": record["duration_group"],
-                    "sampling_mode": "fixed_budget" if condition == "baseline_fixed_budget" else "realtime",
+                    "sampling_mode": "fixed_budget" if condition.endswith("_fixed_budget") else "realtime",
                 }
             )
     return matrix
@@ -105,8 +116,13 @@ def validate_completeness(
     primary_manifest: Iterable[dict[str, Any]],
     output_root: str | Path,
     include_fusion_depth: bool = True,
+    same_video_question_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    matrix = expected_run_matrix(primary_manifest, include_fusion_depth=include_fusion_depth)
+    matrix = expected_run_matrix(
+        primary_manifest,
+        include_fusion_depth=include_fusion_depth,
+        same_video_question_ids=same_video_question_ids,
+    )
     missing = []
     complete = []
     failed = []
@@ -286,6 +302,110 @@ def same_video_different_query_comparisons(rows: list[dict[str, Any]]) -> list[d
             }
         )
     return comparisons
+
+
+def reversed_distribution_to_original_bins(distribution: list[float], mapping: list[dict[str, Any]]) -> list[float]:
+    if not mapping:
+        return list(distribution)
+    output = np.zeros(len(distribution), dtype=np.float64)
+    counts = np.zeros(len(distribution), dtype=np.float64)
+    for item in mapping:
+        presented = int(item["presented_analysis_bin"])
+        original = int(item["original_analysis_bin"])
+        if presented < len(distribution) and original < len(distribution):
+            output[original] += float(distribution[presented])
+            counts[original] += 1.0
+    counts[counts == 0] = 1.0
+    return (output / counts).tolist()
+
+
+def reversed_video_correlations(output_root: str | Path) -> list[dict[str, Any]]:
+    baseline_dir = Path(output_root) / BASELINE_CONDITION
+    reversed_dir = Path(output_root) / "reversed_video"
+    rows = []
+    for path in sorted(reversed_dir.glob("*.json")):
+        base_path = baseline_dir / path.name
+        if not base_path.exists():
+            continue
+        reversed_artifact = json.loads(path.read_text())
+        baseline_artifact = json.loads(base_path.read_text())
+        base_layers = (baseline_artifact.get("temporal_relevance") or {}).get("normalized_temporal_bin_scores") or []
+        rev_layers = (reversed_artifact.get("temporal_relevance") or {}).get("normalized_temporal_bin_scores") or []
+        mappings = (reversed_artifact.get("presented_to_original_frame_bin_mappings") or [[]])[0]
+        for layer, (base_dist, rev_dist) in enumerate(zip(base_layers, rev_layers)):
+            if len(base_dist) != len(rev_dist):
+                continue
+            content = reversed_distribution_to_original_bins(rev_dist, mappings)
+            rows.append(
+                {
+                    "question_id": reversed_artifact.get("question_id"),
+                    "source_video_id": (reversed_artifact.get("video_clip") or [{}])[0].get("video_id"),
+                    "participant_id": (reversed_artifact.get("video_clip") or [{}])[0].get("participant_id"),
+                    "category": reversed_artifact.get("category"),
+                    "duration_group": reversed_artifact.get("duration_group"),
+                    "layer": layer,
+                    "position_following_spearman": spearman_from_scores(base_dist, rev_dist),
+                    "content_following_spearman": spearman_from_scores(base_dist, content),
+                }
+            )
+    return rows
+
+
+def temporal_control_layer_statistics(output_root: str | Path, bootstrap_replicates: int, seed: int) -> dict[str, Any]:
+    root = Path(output_root)
+    baseline_dir = root / BASELINE_CONDITION
+    output: dict[str, Any] = {}
+    for condition in ("repeated_frame", "mismatched_query", "same_video_different_query"):
+        condition_dir = root / condition
+        per_layer: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for path in sorted(condition_dir.glob("*.json")):
+            base_path = baseline_dir / path.name
+            if not base_path.exists():
+                continue
+            base = json.loads(base_path.read_text())
+            other = json.loads(path.read_text())
+            base_layers = (base.get("temporal_relevance") or {}).get("normalized_temporal_bin_scores") or []
+            other_layers = (other.get("temporal_relevance") or {}).get("normalized_temporal_bin_scores") or []
+            base_metrics = (base.get("temporal_relevance") or {}).get("layer_metrics") or []
+            other_metrics = (other.get("temporal_relevance") or {}).get("layer_metrics") or []
+            for layer, (base_dist, other_dist) in enumerate(zip(base_layers, other_layers)):
+                if len(base_dist) != len(other_dist):
+                    continue
+                row = {
+                    "source_video_id": (base.get("video_clip") or [{}])[0].get("video_id"),
+                    "participant_id": (base.get("video_clip") or [{}])[0].get("participant_id"),
+                    "category": base.get("category"),
+                    "duration_group": base.get("duration_group"),
+                    "temporal_jsd": jensen_shannon_divergence(base_dist, other_dist),
+                }
+                if condition == "repeated_frame" and layer < len(base_metrics) and layer < len(other_metrics):
+                    for key in (
+                        "normalized_temporal_entropy",
+                        "top20_temporal_bin_mass",
+                        "temporal_gini",
+                        "first_bin_mass",
+                        "last_bin_mass",
+                        "top1_temporal_bin_mass",
+                    ):
+                        row[f"{key}_delta"] = float(other_metrics[layer].get(key, 0.0)) - float(base_metrics[layer].get(key, 0.0))
+                per_layer[layer].append(row)
+        output[condition] = {
+            str(layer): {
+                "num_pairs": len(rows),
+                "mean_temporal_jsd": float(np.mean([row["temporal_jsd"] for row in rows])) if rows else None,
+                "temporal_jsd_ci": bootstrap_ci_clustered_by_video(
+                    [dict(row, value=row["temporal_jsd"]) for row in rows],
+                    "value",
+                    replicates=bootstrap_replicates,
+                    seed=seed + layer,
+                )
+                if rows
+                else None,
+            }
+            for layer, rows in sorted(per_layer.items())
+        }
+    output["reversed_video"] = reversed_video_correlations(output_root)
+    return output
 
 
 def encoder_decoder_alignment(data: dict[str, Any]) -> dict[str, Any]:
@@ -538,14 +658,28 @@ def write_v2_analysis_outputs(
     final_dir: str | Path,
     bootstrap_replicates: int = 10000,
     include_fusion_depth: bool = True,
+    additional_questions_path: str | Path | None = None,
     seed: int = 20260830,
 ) -> dict[str, Any]:
     primary = load_jsonl(primary_manifest_path)
+    same_video_question_ids = None
+    if additional_questions_path is not None:
+        additional = load_jsonl(additional_questions_path)
+        same_video_question_ids = {str(item["primary_question_id"]) for item in additional if item.get("primary_question_id")}
     final = Path(final_dir)
     (final / "figures").mkdir(parents=True, exist_ok=True)
     (final / "tables").mkdir(parents=True, exist_ok=True)
-    matrix = expected_run_matrix(primary, include_fusion_depth=include_fusion_depth)
-    completeness = validate_completeness(primary, output_root, include_fusion_depth=include_fusion_depth)
+    matrix = expected_run_matrix(
+        primary,
+        include_fusion_depth=include_fusion_depth,
+        same_video_question_ids=same_video_question_ids,
+    )
+    completeness = validate_completeness(
+        primary,
+        output_root,
+        include_fusion_depth=include_fusion_depth,
+        same_video_question_ids=same_video_question_ids,
+    )
     rows = flatten_completed_artifacts(output_root, expected_conditions(include_fusion_depth=include_fusion_depth))
     paper_artifacts = write_paper_artifacts(output_root, final, rows)
     stats = {
@@ -575,6 +709,7 @@ def write_v2_analysis_outputs(
             else {},
         },
         "same_video_different_query": same_video_different_query_comparisons(rows) if rows else [],
+        "temporal_control_statistics": temporal_control_layer_statistics(output_root, bootstrap_replicates, seed),
         "encoder_decoder_alignment": aggregate_encoder_decoder_alignment(output_root),
     }
     write_jsonl(final / "tables" / "expected_run_matrix.jsonl", matrix)

@@ -6,7 +6,9 @@ from src.experiment1.v2_interventions import (
     build_v2_intervention_records,
     contiguous_high_attention_cluster,
     fusion_condition_layer,
+    position_matched_random_bins,
     select_temporal_bins,
+    uniform_temporal_bins,
     write_v2_intervention_manifest,
 )
 
@@ -60,9 +62,22 @@ def test_select_temporal_bins_top_bottom_random_and_contiguous():
     assert select_temporal_bins(scores, "random", 0.4, seed=1, question_id="q") == select_temporal_bins(
         scores, "random", 0.4, seed=1, question_id="q"
     )
+    assert select_temporal_bins(scores, "uniform", 0.4) == [0, 4]
     assert contiguous_high_attention_cluster(scores, 2) == [1, 2]
     with pytest.raises(ValueError, match="Unsupported"):
         select_temporal_bins(scores, "middle", 0.2)
+
+
+def test_uniform_and_position_matched_random_are_distinct_and_equal_budget():
+    scores = [0.9, 0.01, 0.01, 0.01, 0.8, 0.01, 0.01, 0.7, 0.01, 0.01]
+    uniform = uniform_temporal_bins(len(scores), 3)
+    random_a = position_matched_random_bins(scores, fraction=0.3, seed=11, question_id="q1")
+    random_b = position_matched_random_bins(scores, fraction=0.3, seed=11, question_id="q1")
+
+    assert uniform == [0, 4, 9]
+    assert random_a == random_b
+    assert len(random_a) == len(uniform) == 3
+    assert random_a != uniform
 
 
 def test_build_intervention_records_from_baseline_artifacts(tmp_path):
