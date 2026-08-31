@@ -1,11 +1,15 @@
 import numpy as np
+import pytest
 import sys
 from types import SimpleNamespace
 
 from src.experiment1.encoder_temporal import (
     VisionTemporalCapture,
     adjacent_cosine_similarity,
+    aggregate_encoder_attention_to_temporal_bins,
+    canonicalize_window_ordered_attention,
     canonicalize_window_ordered_groups,
+    expanded_reverse_indices,
     pool_temporal_representations,
     qwen_vision_window_indices,
     temporal_representation_summary,
@@ -53,6 +57,35 @@ def test_window_reordered_groups_recover_canonical_temporal_bins():
     np.testing.assert_allclose(temporal[:, 0], [1.5, 15.0])
 
 
+def test_expanded_reverse_indices_expand_qwen_window_groups_to_patch_tokens():
+    np.testing.assert_array_equal(expanded_reverse_indices([1, 2, 0], group_size=2), [2, 3, 4, 5, 0, 1])
+
+
+def test_canonicalize_window_ordered_attention_recovers_temporal_columns():
+    attention = np.zeros((1, 6, 6), dtype=np.float64)
+    attention[:, :, 0:2] = 0.7
+    attention[:, :, 2:4] = 0.2
+    attention[:, :, 4:6] = 0.1
+    canonical = canonicalize_window_ordered_attention(attention, reverse_indices=[1, 2, 0], group_size=2)
+    key_mass = canonical.mean(axis=(0, 1))
+    np.testing.assert_allclose(key_mass, [0.2, 0.2, 0.1, 0.1, 0.7, 0.7])
+
+
+def test_aggregate_encoder_attention_to_temporal_bins_after_window_reversal():
+    attention = np.zeros((1, 6, 6), dtype=np.float64)
+    attention[:, :, 0:2] = 0.7
+    attention[:, :, 2:4] = 0.2
+    attention[:, :, 4:6] = 0.1
+    temporal = aggregate_encoder_attention_to_temporal_bins(
+        attention,
+        grid_thw=[3, 1, 2],
+        spatial_merge_size=1,
+        reverse_indices=[2, 3, 4, 5, 0, 1],
+    )
+    assert temporal.shape == (1, 3)
+    np.testing.assert_allclose(temporal[0], [0.2, 0.1, 0.7])
+
+
 def test_qwen_vision_window_indices_finds_nested_visual_module(monkeypatch):
     captured = {}
 
@@ -93,8 +126,6 @@ def test_qwen_vision_window_indices_fails_loudly_for_video_without_reverse_indic
     class Model:
         def named_modules(self):
             return iter((("", self),))
-
-    import pytest
 
     with pytest.raises(RuntimeError, match="reverse indices"):
         qwen_vision_window_indices(Model(), [[2, 2, 2]])

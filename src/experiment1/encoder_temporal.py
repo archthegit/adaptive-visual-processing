@@ -58,6 +58,71 @@ def canonicalize_window_ordered_groups(token_representations: Any, reverse_indic
     return grouped[indices].reshape(reps.shape[0], reps.shape[-1])
 
 
+def expanded_reverse_indices(reverse_indices: Any, group_size: int) -> np.ndarray:
+    if group_size <= 0:
+        raise ValueError("group_size must be positive.")
+    indices = np.asarray(reverse_indices.detach().cpu().numpy() if hasattr(reverse_indices, "detach") else reverse_indices, dtype=np.int64)
+    expanded = []
+    for group_index in indices:
+        start = int(group_index) * group_size
+        expanded.extend(range(start, start + group_size))
+    return np.asarray(expanded, dtype=np.int64)
+
+
+def canonicalize_window_ordered_attention(
+    attention: Any,
+    reverse_indices: Any | None,
+    group_size: int,
+) -> np.ndarray:
+    attn = np.asarray(attention.detach().float().cpu().numpy() if hasattr(attention, "detach") else attention, dtype=np.float64)
+    if attn.ndim == 4 and attn.shape[0] == 1:
+        attn = attn[0]
+    if attn.ndim != 3:
+        raise ValueError(f"Expected attention with shape [heads, query_tokens, key_tokens], got {attn.shape}.")
+    if attn.shape[1] != attn.shape[2]:
+        raise ValueError("Vision self-attention must be square.")
+    if reverse_indices is None:
+        return attn
+    expanded = expanded_reverse_indices(reverse_indices, group_size)
+    if expanded.shape[0] != attn.shape[1]:
+        raise ValueError(
+            f"Expanded reverse indices length {expanded.shape[0]} does not match attention size {attn.shape[1]}."
+        )
+    return attn[:, expanded, :][:, :, expanded]
+
+
+def temporal_indices_for_patch_grid(grid_thw: list[int] | tuple[int, int, int]) -> np.ndarray:
+    t, h, w = [int(item) for item in grid_thw]
+    if min(t, h, w) <= 0:
+        raise ValueError(f"Invalid grid_thw={grid_thw}.")
+    return np.repeat(np.arange(t, dtype=np.int64), h * w)
+
+
+def aggregate_encoder_attention_to_temporal_bins(
+    attention: Any,
+    grid_thw: list[int] | tuple[int, int, int],
+    spatial_merge_size: int,
+    reverse_indices: Any | None = None,
+) -> np.ndarray:
+    if spatial_merge_size <= 0:
+        raise ValueError("spatial_merge_size must be positive.")
+    group_size = spatial_merge_size * spatial_merge_size
+    canonical = canonicalize_window_ordered_attention(attention, reverse_indices, group_size)
+    temporal_indices = temporal_indices_for_patch_grid(grid_thw)
+    if canonical.shape[1] != temporal_indices.shape[0]:
+        raise ValueError(
+            f"Attention size {canonical.shape[1]} does not match patch grid token count {temporal_indices.shape[0]}."
+        )
+    num_bins = int(temporal_indices.max()) + 1
+    scores = np.zeros((canonical.shape[0], num_bins), dtype=np.float64)
+    # Incoming mass to a temporal bin: average all visual query rows, then sum key columns for that bin.
+    per_head_key_mass = canonical.mean(axis=1)
+    for temporal_bin in range(num_bins):
+        scores[:, temporal_bin] = per_head_key_mass[:, temporal_indices == temporal_bin].sum(axis=1)
+    totals = scores.sum(axis=1, keepdims=True)
+    return np.divide(scores, totals, out=np.zeros_like(scores), where=totals > 0)
+
+
 def adjacent_cosine_similarity(temporal_representations: Any) -> list[float]:
     reps = np.asarray(temporal_representations, dtype=np.float64)
     if reps.ndim != 2:
