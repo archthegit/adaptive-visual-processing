@@ -136,6 +136,7 @@ Implemented:
 - expected run matrix generation
 - completeness checker and initial final-report artifact writer
 - shared temporal metrics and clustered bootstrap helpers
+- deterministic intervention manifest creation from baseline artifacts
 
 Pending:
 
@@ -184,4 +185,18 @@ python scripts/analyze_experiment1_v2.py \
   --output-root outputs/experiment1_v2/runs \
   --final-dir outputs/experiment1_v2/final \
   --bootstrap-replicates 10000
+```
+
+Create held-out intervention manifests from completed baseline artifacts:
+
+```bash
+python scripts/create_experiment1_v2_intervention_manifest.py \
+  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --baseline-output-dir outputs/experiment1_v2/runs/baseline \
+  --output-jsonl outputs/experiment1_v2/interventions/mask_top20.jsonl \
+  --condition mask_top20 \
+  --strategy top \
+  --removal-fraction 0.2 \
+  --ranking-layer -1 \
+  --seed 20260830
 ```
