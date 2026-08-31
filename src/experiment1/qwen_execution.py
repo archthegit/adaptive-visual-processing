@@ -62,6 +62,69 @@ def mask_frame_batch_temporal_bins(
     return replace(batch, frames=frames, metadata=metadata)
 
 
+def keep_frame_batch_temporal_bins(
+    batch: FrameBatch,
+    num_temporal_bins: int,
+    temporal_bins: tuple[int, ...],
+) -> FrameBatch:
+    if not temporal_bins:
+        raise ValueError("At least one temporal bin must be selected for keep/pruning.")
+    positions = frame_indices_for_temporal_bins(len(batch.frames), num_temporal_bins, temporal_bins)
+    if not positions:
+        raise ValueError("Selected temporal bins did not map to any sampled frame positions.")
+    metadata = dict(batch.metadata)
+    metadata["pre_encoder_kept_temporal_bins"] = list(temporal_bins)
+    metadata["pre_encoder_kept_sample_positions"] = positions
+    return replace(
+        batch,
+        frames=batch.frames[positions],
+        frame_indices=tuple(batch.frame_indices[position] for position in positions),
+        timestamps=tuple(batch.timestamps[position] for position in positions),
+        metadata=metadata,
+    )
+
+
+def repeat_frame_batch(batch: FrameBatch, sample_position: int = 0) -> FrameBatch:
+    if len(batch.frames) == 0:
+        raise ValueError("Cannot repeat a frame from an empty FrameBatch.")
+    if sample_position < 0 or sample_position >= len(batch.frames):
+        raise ValueError(f"sample_position {sample_position} is outside sampled frame range.")
+    frames = batch.frames.copy()
+    frames[:] = frames[sample_position]
+    metadata = dict(batch.metadata)
+    metadata["control"] = "repeated_frame"
+    metadata["repeated_sample_position"] = int(sample_position)
+    metadata["repeated_source_frame_index"] = int(batch.frame_indices[sample_position])
+    return replace(batch, frames=frames, metadata=metadata)
+
+
+def reverse_frame_batch(batch: FrameBatch) -> FrameBatch:
+    metadata = dict(batch.metadata)
+    metadata["control"] = "reversed_video"
+    metadata["temporal_positions_preserved"] = True
+    metadata["presented_source_frame_indices"] = list(reversed(batch.frame_indices))
+    metadata["presented_source_timestamps"] = list(reversed(batch.timestamps))
+    return replace(
+        batch,
+        frames=batch.frames[::-1].copy(),
+        metadata=metadata,
+    )
+
+
+def apply_frame_control(frame_batches: list[FrameBatch], condition: str | None) -> list[FrameBatch]:
+    if condition == "repeated_frame":
+        return [
+            repeat_frame_batch(batch) if batch.metadata.get("input_modality") != "image" else batch
+            for batch in frame_batches
+        ]
+    if condition == "reversed_video":
+        return [
+            reverse_frame_batch(batch) if batch.metadata.get("input_modality") != "image" else batch
+            for batch in frame_batches
+        ]
+    return frame_batches
+
+
 def normalize_video_kwargs(video_kwargs: dict[str, Any]) -> dict[str, Any]:
     """Keep qwen-vl-utils kwargs compatible with strict processor validators."""
     normalized = dict(video_kwargs)
@@ -181,6 +244,8 @@ def run_qwen_relevance_example(
     vision_access_through_layer: str | int | None = None,
     decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
     pre_encoder_remove_temporal_bins: tuple[int, ...] | None = None,
+    pre_encoder_keep_temporal_bins: tuple[int, ...] | None = None,
+    condition: str | None = None,
 ) -> dict[str, Any]:
     try:
         import torch
@@ -191,6 +256,7 @@ def run_qwen_relevance_example(
     model._load()
     assert model._model is not None
     assert model._processor is not None
+    frame_batches = apply_frame_control(frame_batches, condition)
     validate_scalar_video_fps_compatibility(frame_batches)
 
     prompt = format_multiple_choice_prompt(example)
@@ -239,15 +305,22 @@ def run_qwen_relevance_example(
 
     video_grid_tensor = inputs.get("video_grid_thw")
     video_grid_thw = video_grid_tensor.detach().cpu().tolist() if video_grid_tensor is not None else []
-    if pre_encoder_remove_temporal_bins:
+    if pre_encoder_remove_temporal_bins or pre_encoder_keep_temporal_bins:
         if not video_grid_thw:
-            raise ValueError("Pre-encoder temporal masking requires video_grid_thw.")
+            raise ValueError("Pre-encoder temporal intervention requires video_grid_thw.")
         masked_batches = list(frame_batches)
-        masked_batches[0] = mask_frame_batch_temporal_bins(
-            masked_batches[0],
-            int(video_grid_thw[0][0]),
-            tuple(pre_encoder_remove_temporal_bins),
-        )
+        if pre_encoder_remove_temporal_bins:
+            masked_batches[0] = mask_frame_batch_temporal_bins(
+                masked_batches[0],
+                int(video_grid_thw[0][0]),
+                tuple(pre_encoder_remove_temporal_bins),
+            )
+        if pre_encoder_keep_temporal_bins:
+            masked_batches[0] = keep_frame_batch_temporal_bins(
+                masked_batches[0],
+                int(video_grid_thw[0][0]),
+                tuple(pre_encoder_keep_temporal_bins),
+            )
         frame_batches = masked_batches
         _messages, rendered, image_inputs, video_inputs, video_kwargs = build_messages(frame_batches)
         inputs = model._processor(
@@ -314,6 +387,7 @@ def run_qwen_relevance_example(
     intervention_answer_choice_scores: dict[str, Any] = {}
     decoder_mask_bins = tuple(decoder_direct_access_mask_temporal_bins or ())
     pre_encoder_bins = tuple(pre_encoder_remove_temporal_bins or ())
+    keep_bins = tuple(pre_encoder_keep_temporal_bins or ())
     decoder_intervention_active = bool(decoder_mask_bins) or vision_access_through_layer not in {None, "none"}
     if attention_extraction == "full":
         context = (
@@ -514,9 +588,14 @@ def run_qwen_relevance_example(
             "vision_access_through_layer": vision_access_through_layer or "none",
             "decoder_direct_access_mask_temporal_bins": list(decoder_mask_bins),
             "pre_encoder_removed_temporal_bins": list(pre_encoder_bins),
+            "pre_encoder_kept_temporal_bins": list(keep_bins),
             "pre_encoder_masked_sample_positions": [
                 batch.metadata.get("pre_encoder_masked_sample_positions", []) for batch in frame_batches
             ],
+            "pre_encoder_kept_sample_positions": [
+                batch.metadata.get("pre_encoder_kept_sample_positions", []) for batch in frame_batches
+            ],
+            "condition": condition or "baseline",
             "resolution": resolution.to_metadata(),
             "prefill_runtime_seconds": prefill_runtime,
             "answer_scoring_runtime_seconds": answer_scoring_runtime,
@@ -534,8 +613,8 @@ def run_qwen_relevance_example(
             "unmodified_prefill_next_token_topk": unmodified_prefill_next_token_topk,
             "answer_choice_score_source": (
                 "separate_unmodified_prefill_forward"
-                if not pre_encoder_bins
-                else "separate_prefill_forward_on_pre_encoder_masked_inputs"
+                if not pre_encoder_bins and not keep_bins
+                else "separate_prefill_forward_on_pre_encoder_modified_inputs"
             ),
             "intervention_answer_choice_score_source": (
                 "separate_masked_eager_prefill_forward"
@@ -544,7 +623,7 @@ def run_qwen_relevance_example(
             ),
             "answer_choice_comparison_scope": (
                 "compare_answer_choice_scores_with_matching_unmasked_baseline_artifact"
-                if pre_encoder_bins
+                if pre_encoder_bins or keep_bins
                 else "same_artifact_intervention_answer_choice_scores"
                 if decoder_intervention_active
                 else "baseline_only"

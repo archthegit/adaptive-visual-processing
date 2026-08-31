@@ -139,6 +139,9 @@ Implemented:
 - deterministic intervention manifest creation from baseline artifacts
 - actual Qwen vision-block attention capture path for eager attention backends
 - canonical temporal pooling for captured vision attention chunks
+- repeated-frame and reversed-video control manifests
+- mismatched-query manifests with runner-side question overrides
+- pre-encoder keep/pruning support distinct from pre-encoder masking
 
 Pending:
 
@@ -200,4 +203,14 @@ python scripts/create_experiment1_v2_intervention_manifest.py \
   --removal-fraction 0.2 \
   --ranking-layer -1 \
   --seed 20260830
+```
+
+Create control manifests:
+
+```bash
+python scripts/create_experiment1_v2_control_manifest.py \
+  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --mismatched-queries outputs/experiment1_v2/mismatched_queries.json \
+  --output-jsonl outputs/experiment1_v2/controls/mismatched_query.jsonl \
+  --control mismatched_query
 ```
