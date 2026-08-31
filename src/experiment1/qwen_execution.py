@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from src.models.qwen_temporal_rope import temporal_position_interval
 
 from .answer_scoring import score_answer_choices_from_outputs
 from .encoder_temporal import vision_temporal_capture_context
+from .qwen_vision_attention import qwen_vision_attention_capture_context
 from .qwen_reduced_attention import masked_eager_attention_context, reduced_attention_context
 from .relevance import aggregate_question_to_visual_attention
 from .resolution import ResolutionConfig
@@ -295,6 +297,16 @@ def run_qwen_relevance_example(
         user_prompt_text=prompt,
     )
 
+    def vision_attention_context(encoder_capture: Any):
+        if not video_grid_thw:
+            return nullcontext(None)
+        return qwen_vision_attention_capture_context(
+            model._model,
+            video_grid_thw[0],
+            spatial_merge_size,
+            encoder_capture.reverse_indices,
+        )
+
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
     started = time.time()
@@ -321,8 +333,9 @@ def run_qwen_relevance_example(
                 spatial_merge_size,
                 video_grid_tensor=video_grid_tensor,
             ) as encoder_capture:
-                with torch.inference_mode():
-                    outputs = model._model(**inputs, output_attentions=True, use_cache=False)
+                with vision_attention_context(encoder_capture) as vision_attention_capture:
+                    with torch.inference_mode():
+                        outputs = model._model(**inputs, output_attentions=True, use_cache=False)
         else:
             with context:
                 with vision_temporal_capture_context(
@@ -331,8 +344,9 @@ def run_qwen_relevance_example(
                     spatial_merge_size,
                     video_grid_tensor=video_grid_tensor,
                 ) as encoder_capture:
-                    with torch.inference_mode():
-                        outputs = model._model(**inputs, output_attentions=True, use_cache=False)
+                    with vision_attention_context(encoder_capture) as vision_attention_capture:
+                        with torch.inference_mode():
+                            outputs = model._model(**inputs, output_attentions=True, use_cache=False)
         attentions = getattr(outputs, "attentions", None)
         if attentions is None:
             raise RuntimeError(
@@ -363,8 +377,9 @@ def run_qwen_relevance_example(
                 spatial_merge_size,
                 video_grid_tensor=video_grid_tensor,
             ) as encoder_capture:
-                with torch.inference_mode():
-                    outputs = model._model(**inputs, output_attentions=False, use_cache=False)
+                with vision_attention_context(encoder_capture) as vision_attention_capture:
+                    with torch.inference_mode():
+                        outputs = model._model(**inputs, output_attentions=False, use_cache=False)
         prefill_next_token_topk = next_token_topk_from_outputs(outputs)
         del outputs
         token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
@@ -443,6 +458,17 @@ def run_qwen_relevance_example(
         if getattr(model, "_temporal_rope_patch_info", None) is not None
         else {"transformers_version": "unknown", "temporal_rope_patch_active": False}
     )
+    if vision_attention_capture is None:
+        encoder_attention_temporal = {"available": False, "reason": "no video_grid_thw"}
+    else:
+        try:
+            expected_vision_layers = int(model._model.config.vision_config.depth)
+        except Exception:
+            expected_vision_layers = None
+        try:
+            encoder_attention_temporal = vision_attention_capture.to_json_dict(expected_layers=expected_vision_layers)
+        except Exception as exc:
+            encoder_attention_temporal = {"available": False, "error": str(exc)}
 
     return {
         "question_id": example.question_id,
@@ -479,6 +505,7 @@ def run_qwen_relevance_example(
         },
         "temporal_relevance": temporal_relevance.to_json_dict(),
         "encoder_temporal": encoder_capture.to_json_dict(),
+        "encoder_attention_temporal": encoder_attention_temporal,
         "metadata": {
             "model_id": model.config.model_id,
             **temporal_rope_metadata,

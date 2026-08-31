@@ -137,10 +137,11 @@ Implemented:
 - completeness checker and initial final-report artifact writer
 - shared temporal metrics and clustered bootstrap helpers
 - deterministic intervention manifest creation from baseline artifacts
+- actual Qwen vision-block attention capture path for eager attention backends
+- canonical temporal pooling for captured vision attention chunks
 
 Pending:
 
-- actual vision-block attention capture at every encoder block
 - v2 inference runner conditions
 - causal intervention run matrix
 - full statistical analysis and final paper figures
