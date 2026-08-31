@@ -126,12 +126,15 @@ Implemented:
 - source-video-level v2 manifest builder
 - complete local MP4 inventory through `ffprobe`
 - duration tertiles from eligible local analyzed durations
-- primary source-video manifest with one primary question per video
+- duration tertiles computed once per eligible source video, not weighted by question count
+- primary source-video manifest with one primary question per video and deterministic global category-duration balancing
 - deterministic source-level development/test split
 - deterministic same-category/same-duration mismatched query derangement
 - additional same-video question manifest
 - explicit exclusions
 - primary and robustness sampling policy helpers
+- runner-connected `--sampling-mode legacy|realtime|fixed_budget`
+- artifact-level sampled frame indices, timestamps, sampling metadata and frame/bin mappings
 - reversal and repeated-frame sampling metadata controls
 - expected run matrix generation
 - completeness checker and initial final-report artifact writer
@@ -141,16 +144,24 @@ Implemented:
 - canonical temporal pooling for captured vision attention chunks
 - repeated-frame and reversed-video control manifests
 - mismatched-query manifests with runner-side question overrides
+- same-video/different-query manifests with runner-side question overrides
 - pre-encoder keep/pruning support distinct from pre-encoder masking
 - frozen decoder reference-layer selection from development artifacts
+- confirmatory intervention manifest generation restricted to `split=test` and to the frozen reference layer
 - final condition-summary tables, average encoder/decoder heatmap generation,
   and figure manifest generation when plotting dependencies are installed
+- paired per-video deltas, hierarchical participant/video bootstrap CIs,
+  paired permutation tests, paired effect sizes, Benjamini-Hochberg correction,
+  duration/category stratification, same-video comparison summaries, and
+  aggregate encoder-decoder alignment summaries when artifacts contain the
+  required fields
 
 Pending:
 
-- causal intervention run matrix
-- full statistical analysis beyond condition summaries and bootstrap CIs
-- representative-frame extraction for paper figures
+- real GPU execution of the complete condition matrix
+- visual inspection/validation of generated paper figures
+- representative-frame extraction currently remains summary-level; final
+  publication panels still require choosing concrete completed examples
 
 ## Engineering Commands
 
@@ -173,7 +184,8 @@ python scripts/run_experiment1.py \
   --mp4-dir /workspace/data/hd_epic_mp4 \
   --manifest outputs/experiment1_v2/primary_manifest.jsonl \
   --limit 3 \
-  --num-frames 32 \
+  --num-frames 128 \
+  --sampling-mode realtime \
   --resolution-config low \
   --attention-extraction reduced_sdpa \
   --query-scope question \
@@ -182,7 +194,37 @@ python scripts/run_experiment1.py \
   --output-dir outputs/experiment1_v2/engineering_low_f32_baseline
 ```
 
-Do not run the full pilot until v2 encoder attention capture, controls, interventions, and completeness checks are implemented.
+The realtime policy freezes `delta_t = ceil(P95(dev analyzed durations) / 64)`,
+samples two chronological frames per bin, caps at 64 bins and therefore 128
+frames, and records exact frame/bin mappings in each artifact. The robustness
+policy is run separately with fixed-budget sampling:
+
+```bash
+python scripts/run_experiment1.py \
+  --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir /workspace/data/hd_epic_mp4 \
+  --manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --num-frames 128 \
+  --sampling-mode fixed_budget \
+  --condition baseline_fixed_budget \
+  --resolution-config low \
+  --attention-extraction reduced_sdpa \
+  --query-scope question \
+  --resume \
+  --allow-7b-inference \
+  --output-dir outputs/experiment1_v2/runs/baseline_fixed_budget
+```
+
+To construct manifests and print the ordered GPU commands without starting
+expensive inference:
+
+```bash
+python scripts/prepare_experiment1_v2.py \
+  --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir /workspace/data/hd_epic_mp4 \
+  --output-root outputs/experiment1_v2 \
+  --run-root outputs/experiment1_v2/runs
+```
 
 Generate the expected matrix and completeness report:
 
@@ -204,7 +246,7 @@ python scripts/create_experiment1_v2_intervention_manifest.py \
   --condition mask_top20 \
   --strategy top \
   --removal-fraction 0.2 \
-  --ranking-layer -1 \
+  --frozen-reference-layer-json outputs/experiment1_v2/frozen_reference_layer.json \
   --seed 20260830
 ```
 
@@ -221,7 +263,7 @@ python scripts/create_experiment1_v2_intervention_manifest.py \
   --condition fusion_block_top20_after_layer_8 \
   --strategy top \
   --removal-fraction 0.2 \
-  --ranking-layer -1 \
+  --frozen-reference-layer-json outputs/experiment1_v2/frozen_reference_layer.json \
   --seed 20260830
 ```
 
@@ -238,6 +280,17 @@ python scripts/create_experiment1_v2_control_manifest.py \
   --mismatched-queries outputs/experiment1_v2/mismatched_queries.json \
   --output-jsonl outputs/experiment1_v2/controls/mismatched_query.jsonl \
   --control mismatched_query
+```
+
+Same-video/different-query controls use `additional_questions.jsonl`:
+
+```bash
+python scripts/create_experiment1_v2_control_manifest.py \
+  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --mismatched-queries outputs/experiment1_v2/mismatched_queries.json \
+  --additional-questions outputs/experiment1_v2/additional_questions.jsonl \
+  --output-jsonl outputs/experiment1_v2/controls/same_video_different_query.jsonl \
+  --control same_video_different_query
 ```
 
 Freeze the decoder reference layer after development baseline and mismatched
