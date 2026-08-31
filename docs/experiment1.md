@@ -133,6 +133,9 @@ Implemented:
 - explicit exclusions
 - primary and robustness sampling policy helpers
 - reversal and repeated-frame sampling metadata controls
+- expected run matrix generation
+- completeness checker and initial final-report artifact writer
+- shared temporal metrics and clustered bootstrap helpers
 
 Pending:
 
@@ -172,3 +175,13 @@ python scripts/run_experiment1.py \
 ```
 
 Do not run the full pilot until v2 encoder attention capture, controls, interventions, and completeness checks are implemented.
+
+Generate the expected matrix and completeness report:
+
+```bash
+python scripts/analyze_experiment1_v2.py \
+  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --output-root outputs/experiment1_v2/runs \
+  --final-dir outputs/experiment1_v2/final \
+  --bootstrap-replicates 10000
+```
