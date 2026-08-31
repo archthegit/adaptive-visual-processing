@@ -1,6 +1,8 @@
 import json
 
 from src.experiment1.v2_analysis import (
+    average_decoder_heatmap,
+    condition_table,
     expected_conditions,
     expected_run_matrix,
     validate_completeness,
@@ -71,3 +73,47 @@ def test_write_v2_analysis_outputs_creates_final_artifacts(tmp_path):
     assert (final_dir / "statistical_results.json").exists()
     assert (final_dir / "completeness_report.json").exists()
     assert (final_dir / "experiment_report.md").exists()
+    assert (final_dir / "paper_artifacts_manifest.json").exists()
+
+
+def test_condition_table_and_average_decoder_heatmap_from_completed_artifacts(tmp_path):
+    output_root = tmp_path / "runs"
+    condition_dir = output_root / "baseline"
+    condition_dir.mkdir(parents=True)
+    (condition_dir / "q1.json").write_text(
+        json.dumps(
+            {
+                "question_id": "q1",
+                "correct": True,
+                "video_clip": [{"video_id": "v1", "participant_id": "p1"}],
+                "answer_choice_scores": {
+                    "correct_choice_log_probability": -0.1,
+                    "correct_vs_best_incorrect_margin": 0.4,
+                },
+                "token_layout": {"num_visual_tokens": 100},
+                "metadata": {"generation_runtime_seconds": 2.0},
+                "temporal_relevance": {
+                    "normalized_temporal_bin_scores": [[0.2, 0.8], [0.7, 0.3]],
+                    "layer_metrics": [
+                        {"normalized_temporal_entropy": 0.5, "top1_temporal_bin_mass": 0.8, "bins_to_80pct_mass": 1},
+                        {"normalized_temporal_entropy": 0.6, "top1_temporal_bin_mass": 0.7, "bins_to_80pct_mass": 2},
+                    ],
+                },
+            }
+        )
+    )
+    rows = [
+        {
+            "condition": "baseline",
+            "correct": True,
+            "correct_choice_log_probability": -0.1,
+            "correct_vs_best_incorrect_margin": 0.4,
+            "latency_seconds": 2.0,
+            "visual_token_count": 100,
+        }
+    ]
+    table = condition_table(rows)
+    assert table[0]["accuracy"] == 1.0
+    assert table[0]["mean_correct_choice_log_probability"] == -0.1
+    heatmap = average_decoder_heatmap(output_root, bins=4)
+    assert heatmap.shape == (2, 4)

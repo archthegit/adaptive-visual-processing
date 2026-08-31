@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Iterable
 import json
 
+import numpy as np
+
 from src.io import write_json, write_jsonl
 
 from .v2_metrics import bootstrap_ci_clustered_by_video
@@ -178,6 +180,170 @@ def summarize_completed_rows(rows: list[dict[str, Any]], bootstrap_replicates: i
     return summary
 
 
+def condition_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_condition: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_condition[str(row["condition"])].append(row)
+    table = []
+    for condition, items in sorted(by_condition.items()):
+        log_probs = [float(item["correct_choice_log_probability"]) for item in items if item.get("correct_choice_log_probability") is not None]
+        margins = [float(item["correct_vs_best_incorrect_margin"]) for item in items if item.get("correct_vs_best_incorrect_margin") is not None]
+        latencies = [float(item["latency_seconds"]) for item in items if item.get("latency_seconds") is not None]
+        tokens = [float(item["visual_token_count"]) for item in items if item.get("visual_token_count") is not None]
+        table.append(
+            {
+                "condition": condition,
+                "num_records": len(items),
+                "accuracy": sum(1 for item in items if item.get("correct")) / len(items) if items else 0.0,
+                "mean_correct_choice_log_probability": float(np.mean(log_probs)) if log_probs else None,
+                "mean_correct_vs_best_incorrect_margin": float(np.mean(margins)) if margins else None,
+                "mean_latency_seconds": float(np.mean(latencies)) if latencies else None,
+                "mean_visual_token_count": float(np.mean(tokens)) if tokens else None,
+            }
+        )
+    return table
+
+
+def write_markdown_table(path: str | Path, rows: list[dict[str, Any]]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        path.write_text("No completed rows available.\n")
+        return
+    columns = list(rows[0])
+    lines = ["| " + " | ".join(columns) + " |", "| " + " | ".join("---" for _ in columns) + " |"]
+    for row in rows:
+        lines.append("| " + " | ".join("" if row.get(column) is None else str(row.get(column)) for column in columns) + " |")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def _pyplot():
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return None
+    return plt
+
+
+def _resample_distribution(values: list[float], bins: int = 32) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0:
+        return np.zeros(bins, dtype=np.float64)
+    if arr.size == bins:
+        return arr
+    source_x = np.linspace(0.0, 1.0, arr.size)
+    target_x = np.linspace(0.0, 1.0, bins)
+    return np.interp(target_x, source_x, arr)
+
+
+def average_decoder_heatmap(output_root: str | Path, condition: str = BASELINE_CONDITION, bins: int = 32) -> np.ndarray | None:
+    arrays = []
+    for path in sorted((Path(output_root) / condition).glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        layers = (data.get("temporal_relevance") or {}).get("normalized_temporal_bin_scores") or []
+        if not layers:
+            continue
+        arrays.append(np.stack([_resample_distribution(layer, bins=bins) for layer in layers], axis=0))
+    if not arrays:
+        return None
+    min_layers = min(array.shape[0] for array in arrays)
+    return np.mean([array[:min_layers] for array in arrays], axis=0)
+
+
+def average_encoder_heatmap(output_root: str | Path, condition: str = BASELINE_CONDITION, bins: int = 32) -> np.ndarray | None:
+    arrays = []
+    for path in sorted((Path(output_root) / condition).glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        encoder = data.get("encoder_attention_temporal") or {}
+        layers = encoder.get("normalized_incoming_temporal_attention") or []
+        if not layers:
+            continue
+        per_layer = []
+        for layer in layers:
+            head_mean = np.asarray(layer, dtype=np.float64).mean(axis=0)
+            per_layer.append(_resample_distribution(head_mean.tolist(), bins=bins))
+        arrays.append(np.stack(per_layer, axis=0))
+    if not arrays:
+        return None
+    min_layers = min(array.shape[0] for array in arrays)
+    return np.mean([array[:min_layers] for array in arrays], axis=0)
+
+
+def write_heatmap(path: str | Path, matrix: np.ndarray, title: str) -> bool:
+    plt = _pyplot()
+    if plt is None:
+        return False
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    im = ax.imshow(matrix, aspect="auto", interpolation="nearest")
+    ax.set_title(title)
+    ax.set_xlabel("Normalized temporal position")
+    ax.set_ylabel("Layer")
+    fig.colorbar(im, ax=ax)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+    return True
+
+
+def write_condition_barplot(path: str | Path, table: list[dict[str, Any]], metric: str, title: str) -> bool:
+    plt = _pyplot()
+    if plt is None or not table:
+        return False
+    labels = [row["condition"] for row in table]
+    values = [row.get(metric) for row in table]
+    if any(value is None for value in values):
+        return False
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(max(8, len(labels) * 0.5), 4))
+    ax.bar(range(len(labels)), values)
+    ax.set_title(title)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+    return True
+
+
+def write_paper_artifacts(output_root: str | Path, final_dir: str | Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    final = Path(final_dir)
+    figures = final / "figures"
+    tables = final / "tables"
+    figures.mkdir(parents=True, exist_ok=True)
+    tables.mkdir(parents=True, exist_ok=True)
+    table = condition_table(rows)
+    write_jsonl(tables / "condition_summary.jsonl", table)
+    write_markdown_table(tables / "condition_summary.md", table)
+    generated: dict[str, Any] = {"tables": ["condition_summary.jsonl", "condition_summary.md"], "figures": {}, "matplotlib_available": _pyplot() is not None}
+    decoder = average_decoder_heatmap(output_root)
+    if decoder is not None:
+        generated["figures"]["decoder_layer_temporal_heatmap"] = {
+            "path": "decoder_layer_temporal_heatmap.png",
+            "generated": write_heatmap(figures / "decoder_layer_temporal_heatmap.png", decoder, "Decoder temporal attention"),
+        }
+    encoder = average_encoder_heatmap(output_root)
+    if encoder is not None:
+        generated["figures"]["encoder_layer_temporal_heatmap"] = {
+            "path": "encoder_layer_temporal_heatmap.png",
+            "generated": write_heatmap(figures / "encoder_layer_temporal_heatmap.png", encoder, "Encoder temporal attention"),
+        }
+    generated["figures"]["condition_accuracy"] = {
+        "path": "condition_accuracy.png",
+        "generated": write_condition_barplot(figures / "condition_accuracy.png", table, "accuracy", "Accuracy by condition"),
+    }
+    write_json(final / "paper_artifacts_manifest.json", generated)
+    return generated
+
+
 def write_v2_analysis_outputs(
     primary_manifest_path: str | Path,
     output_root: str | Path,
@@ -193,6 +359,7 @@ def write_v2_analysis_outputs(
     matrix = expected_run_matrix(primary, include_fusion_depth=include_fusion_depth)
     completeness = validate_completeness(primary, output_root, include_fusion_depth=include_fusion_depth)
     rows = flatten_completed_artifacts(output_root, expected_conditions(include_fusion_depth=include_fusion_depth))
+    paper_artifacts = write_paper_artifacts(output_root, final, rows)
     stats = {
         "bootstrap_replicates": bootstrap_replicates,
         "seed": seed,
@@ -212,6 +379,7 @@ def write_v2_analysis_outputs(
         "expected": completeness["expected"],
         "missing": completeness["missing"],
         "failed": completeness["failed"],
+        "paper_artifacts": paper_artifacts,
         "interpretation_note": (
             "High temporal attention is descriptive unless separated from positional controls, "
             "mismatched-query controls, and causal interventions."

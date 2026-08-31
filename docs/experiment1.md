@@ -143,11 +143,14 @@ Implemented:
 - mismatched-query manifests with runner-side question overrides
 - pre-encoder keep/pruning support distinct from pre-encoder masking
 - frozen decoder reference-layer selection from development artifacts
+- final condition-summary tables, average encoder/decoder heatmap generation,
+  and figure manifest generation when plotting dependencies are installed
 
 Pending:
 
 - causal intervention run matrix
-- full statistical analysis and final paper figures
+- full statistical analysis beyond condition summaries and bootstrap CIs
+- representative-frame extraction for paper figures
 
 ## Engineering Commands
 
