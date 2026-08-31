@@ -2,6 +2,7 @@ import pytest
 
 from src.experiment1.v2_metrics import (
     adjacent_nonadjacent_far_similarity,
+    benjamini_hochberg,
     bins_to_mass,
     bootstrap_ci_clustered_by_video,
     effective_rank,
@@ -10,6 +11,8 @@ from src.experiment1.v2_metrics import (
     lag_similarity_profile,
     normalized_entropy,
     paired_differences,
+    paired_effect_size,
+    paired_permutation_pvalue,
     spearman_from_scores,
     temporal_distribution_metrics,
     top_fraction_jaccard,
@@ -80,3 +83,12 @@ def test_paired_differences_and_clustered_bootstrap():
     ci = bootstrap_ci_clustered_by_video(records, "score", replicates=100, seed=1)
     assert ci["replicates"] == 100
     assert ci["ci95"][0] <= ci["mean"] <= ci["ci95"][1]
+
+
+def test_permutation_effect_size_and_bh_correction():
+    diffs = [1.0, 2.0, 3.0]
+    assert 0.0 < paired_permutation_pvalue(diffs, replicates=100, seed=1) <= 1.0
+    assert paired_effect_size(diffs) > 0
+    adjusted = benjamini_hochberg([0.01, 0.04, 0.03])
+    assert adjusted[0] <= adjusted[2] <= adjusted[1]
+    assert all(0.0 <= value <= 1.0 for value in adjusted)

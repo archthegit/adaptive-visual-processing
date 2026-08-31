@@ -220,6 +220,42 @@ def paired_differences(records: Sequence[dict[str, Any]], value_key: str, pair_k
     }
 
 
+def paired_permutation_pvalue(differences: Sequence[float], replicates: int = 10000, seed: int = 20260830) -> float:
+    diffs = [float(value) for value in differences if math.isfinite(float(value))]
+    if not diffs:
+        raise ValueError("No differences available for permutation test.")
+    observed = abs(float(np.mean(diffs)))
+    rng = random.Random(seed)
+    extreme = 0
+    for _rep in range(replicates):
+        signed = [value if rng.random() < 0.5 else -value for value in diffs]
+        if abs(float(np.mean(signed))) >= observed:
+            extreme += 1
+    return float((extreme + 1) / (replicates + 1))
+
+
+def paired_effect_size(differences: Sequence[float]) -> float:
+    diffs = np.asarray([float(value) for value in differences if math.isfinite(float(value))], dtype=np.float64)
+    if diffs.size == 0:
+        raise ValueError("No differences available for effect size.")
+    std = float(diffs.std(ddof=1)) if diffs.size > 1 else 0.0
+    return float(diffs.mean() / std) if std > 0 else 0.0
+
+
+def benjamini_hochberg(pvalues: Sequence[float]) -> list[float]:
+    values = [float(value) for value in pvalues]
+    n = len(values)
+    if n == 0:
+        return []
+    order = sorted(range(n), key=lambda idx: values[idx])
+    adjusted = [1.0] * n
+    running = 1.0
+    for rank, idx in reversed(list(enumerate(order, start=1))):
+        running = min(running, values[idx] * n / rank)
+        adjusted[idx] = min(1.0, running)
+    return adjusted
+
+
 def bootstrap_ci_clustered_by_video(
     records: Sequence[dict[str, Any]],
     value_key: str,

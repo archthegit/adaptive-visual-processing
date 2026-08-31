@@ -9,7 +9,14 @@ import numpy as np
 
 from src.io import write_json, write_jsonl
 
-from .v2_metrics import bootstrap_ci_clustered_by_video
+from .v2_metrics import (
+    benjamini_hochberg,
+    bootstrap_ci_clustered_by_video,
+    paired_effect_size,
+    paired_permutation_pvalue,
+    spearman_from_scores,
+    top_fraction_jaccard,
+)
 
 
 BASELINE_CONDITION = "baseline"
@@ -17,7 +24,9 @@ CONTROL_CONDITIONS = (
     "repeated_frame",
     "reversed_video",
     "mismatched_query",
+    "same_video_different_query",
 )
+ROBUSTNESS_CONDITIONS = ("baseline_fixed_budget",)
 NECESSITY_CONDITIONS = (
     "mask_top20",
     "mask_bottom20",
@@ -37,6 +46,7 @@ FUSION_DEPTH_LAYERS = (0, 4, 8, 12, 16, 20, 24, 27)
 def expected_conditions(include_fusion_depth: bool = True) -> list[str]:
     conditions = [BASELINE_CONDITION]
     conditions.extend(CONTROL_CONDITIONS)
+    conditions.extend(ROBUSTNESS_CONDITIONS)
     conditions.extend(NECESSITY_CONDITIONS)
     conditions.extend(SUFFICIENCY_CONDITIONS)
     if include_fusion_depth:
@@ -44,6 +54,14 @@ def expected_conditions(include_fusion_depth: bool = True) -> list[str]:
             conditions.append(f"fusion_block_top20_after_layer_{layer}")
             conditions.append(f"fusion_block_random20_after_layer_{layer}")
     return conditions
+
+
+def is_confirmatory_causal_condition(condition: str) -> bool:
+    return (
+        condition in NECESSITY_CONDITIONS
+        or condition in SUFFICIENCY_CONDITIONS
+        or condition.startswith("fusion_block_")
+    )
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -62,6 +80,8 @@ def expected_run_matrix(primary_manifest: Iterable[dict[str, Any]], include_fusi
     matrix = []
     for record in primary_manifest:
         for condition in expected_conditions(include_fusion_depth=include_fusion_depth):
+            if is_confirmatory_causal_condition(condition) and record.get("split") != "test":
+                continue
             matrix.append(
                 {
                     "split": record["split"],
@@ -71,6 +91,7 @@ def expected_run_matrix(primary_manifest: Iterable[dict[str, Any]], include_fusi
                     "participant_id": record["participant_id"],
                     "category": record["category"],
                     "duration_group": record["duration_group"],
+                    "sampling_mode": "fixed_budget" if condition == "baseline_fixed_budget" else "realtime",
                 }
             )
     return matrix
@@ -129,16 +150,25 @@ def flatten_completed_artifacts(output_root: str | Path, conditions: Iterable[st
                 continue
             metadata = data.get("metadata", {})
             temporal = data.get("temporal_relevance", {})
-            answer_scores = data.get("answer_choice_scores", {})
+            default_scores = data.get("answer_choice_scores", {})
+            intervention_scores = data.get("intervention_answer_choice_scores") or {}
+            use_intervention_scores = condition.startswith("fusion_block_") or (
+                condition.startswith("mask_")
+                and (data.get("metadata") or {}).get("answer_choice_comparison_scope")
+                == "same_artifact_intervention_answer_choice_scores"
+            )
+            answer_scores = intervention_scores if use_intervention_scores and intervention_scores else default_scores
             row = {
                 "condition": condition,
                 "question_id": data.get("question_id"),
                 "source_video_id": (data.get("video_clip") or [{}])[0].get("video_id"),
                 "participant_id": (data.get("video_clip") or [{}])[0].get("participant_id"),
                 "category": data.get("category") or data.get("question_type", "").split("_", 1)[0],
+                "duration_group": data.get("duration_group") or metadata.get("duration_group"),
                 "correct": bool(data.get("correct", False)),
                 "correct_choice_log_probability": answer_scores.get("correct_choice_log_probability"),
                 "correct_vs_best_incorrect_margin": answer_scores.get("correct_vs_best_incorrect_margin"),
+                "answer_score_source": "intervention_answer_choice_scores" if answer_scores is intervention_scores else "answer_choice_scores",
                 "visual_token_count": (data.get("token_layout") or {}).get("num_visual_tokens"),
                 "latency_seconds": metadata.get("generation_runtime_seconds"),
             }
@@ -150,6 +180,141 @@ def flatten_completed_artifacts(output_root: str | Path, conditions: Iterable[st
                 row["final_layer_bins_to_80pct_mass"] = final_layer.get("bins_to_80pct_mass")
             rows.append(row)
     return rows
+
+
+def _paired_rows(rows: list[dict[str, Any]], condition: str, metric: str) -> list[dict[str, Any]]:
+    baseline = {
+        row["source_video_id"]: row
+        for row in rows
+        if row.get("condition") == BASELINE_CONDITION and row.get("source_video_id") and row.get(metric) is not None
+    }
+    paired = []
+    for row in rows:
+        if row.get("condition") != condition or row.get(metric) is None:
+            continue
+        base = baseline.get(row.get("source_video_id"))
+        if base is None:
+            continue
+        paired.append(
+            {
+                "source_video_id": row["source_video_id"],
+                "participant_id": row.get("participant_id"),
+                "category": row.get("category"),
+                "duration_group": row.get("duration_group"),
+                "baseline": float(base[metric]),
+                "condition_value": float(row[metric]),
+                "delta": float(row[metric]) - float(base[metric]),
+            }
+        )
+    return paired
+
+
+def paired_condition_statistics(
+    rows: list[dict[str, Any]],
+    metric: str,
+    bootstrap_replicates: int = 10000,
+    permutation_replicates: int = 10000,
+    seed: int = 20260830,
+) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    pvalue_items: list[tuple[str, float]] = []
+    for condition in sorted({row["condition"] for row in rows if row.get("condition") != BASELINE_CONDITION}):
+        paired = _paired_rows(rows, condition, metric)
+        if not paired:
+            continue
+        deltas = [row["delta"] for row in paired]
+        pvalue = paired_permutation_pvalue(deltas, replicates=permutation_replicates, seed=seed)
+        output[condition] = {
+            "metric": metric,
+            "num_pairs": len(paired),
+            "mean_baseline": float(np.mean([row["baseline"] for row in paired])),
+            "mean_condition": float(np.mean([row["condition_value"] for row in paired])),
+            "mean_delta": float(np.mean(deltas)),
+            "effect_size_paired_cohens_dz": paired_effect_size(deltas),
+            "paired_permutation_p": pvalue,
+            "delta_bootstrap_ci": bootstrap_ci_clustered_by_video(
+                [dict(row, value=row["delta"]) for row in paired],
+                "value",
+                replicates=bootstrap_replicates,
+                seed=seed,
+            ),
+            "by_category": _stratified_delta_summary(paired, "category"),
+            "by_duration_group": _stratified_delta_summary(paired, "duration_group"),
+        }
+        pvalue_items.append((condition, pvalue))
+    adjusted = benjamini_hochberg([item[1] for item in pvalue_items])
+    for (condition, _pvalue), adjusted_p in zip(pvalue_items, adjusted):
+        output[condition]["benjamini_hochberg_q"] = adjusted_p
+    return output
+
+
+def _stratified_delta_summary(paired: list[dict[str, Any]], key: str) -> dict[str, Any]:
+    by_key: dict[str, list[float]] = defaultdict(list)
+    for row in paired:
+        if row.get(key) is not None:
+            by_key[str(row[key])].append(float(row["delta"]))
+    return {
+        name: {"num_pairs": len(values), "mean_delta": float(np.mean(values))}
+        for name, values in sorted(by_key.items())
+    }
+
+
+def same_video_different_query_comparisons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    baseline = {row["source_video_id"]: row for row in rows if row.get("condition") == BASELINE_CONDITION}
+    comparisons = []
+    for row in rows:
+        if row.get("condition") != "same_video_different_query":
+            continue
+        base = baseline.get(row.get("source_video_id"))
+        if base is None:
+            continue
+        comparisons.append(
+            {
+                "source_video_id": row.get("source_video_id"),
+                "primary_question_id": base.get("question_id"),
+                "additional_question_id": row.get("question_id"),
+                "correct_choice_log_probability_delta": (
+                    None
+                    if row.get("correct_choice_log_probability") is None or base.get("correct_choice_log_probability") is None
+                    else float(row["correct_choice_log_probability"]) - float(base["correct_choice_log_probability"])
+                ),
+                "margin_delta": (
+                    None
+                    if row.get("correct_vs_best_incorrect_margin") is None or base.get("correct_vs_best_incorrect_margin") is None
+                    else float(row["correct_vs_best_incorrect_margin"]) - float(base["correct_vs_best_incorrect_margin"])
+                ),
+            }
+        )
+    return comparisons
+
+
+def encoder_decoder_alignment(data: dict[str, Any]) -> dict[str, Any]:
+    encoder_layers = (data.get("encoder_attention_temporal") or {}).get("normalized_incoming_temporal_attention") or []
+    decoder_layers = (data.get("temporal_relevance") or {}).get("normalized_temporal_bin_scores") or []
+    if not encoder_layers or not decoder_layers:
+        return {"available": False}
+    matrix = []
+    jaccard = []
+    for encoder_layer in encoder_layers:
+        encoder_distribution = np.asarray(encoder_layer, dtype=np.float64)
+        if encoder_distribution.ndim == 2:
+            encoder_distribution = encoder_distribution.mean(axis=0)
+        row = []
+        jrow = []
+        for decoder_distribution in decoder_layers:
+            if len(encoder_distribution) != len(decoder_distribution):
+                row.append(None)
+                jrow.append(None)
+            else:
+                row.append(spearman_from_scores(encoder_distribution, decoder_distribution))
+                jrow.append(top_fraction_jaccard(encoder_distribution, decoder_distribution, 0.2))
+        matrix.append(row)
+        jaccard.append(jrow)
+    return {
+        "available": True,
+        "spearman_matrix": matrix,
+        "top20_jaccard_matrix": jaccard,
+    }
 
 
 def summarize_completed_rows(rows: list[dict[str, Any]], bootstrap_replicates: int = 10000, seed: int = 20260830) -> dict[str, Any]:
@@ -344,6 +509,29 @@ def write_paper_artifacts(output_root: str | Path, final_dir: str | Path, rows: 
     return generated
 
 
+def aggregate_encoder_decoder_alignment(output_root: str | Path, condition: str = BASELINE_CONDITION) -> dict[str, Any]:
+    matrices = []
+    for path in sorted((Path(output_root) / condition).glob("*.json")):
+        try:
+            alignment = encoder_decoder_alignment(json.loads(path.read_text()))
+        except Exception:
+            continue
+        if alignment.get("available") and alignment.get("spearman_matrix"):
+            matrix = np.asarray(alignment["spearman_matrix"], dtype=np.float64)
+            if np.isfinite(matrix).any():
+                matrices.append(matrix)
+    if not matrices:
+        return {"available": False}
+    min_encoder = min(matrix.shape[0] for matrix in matrices)
+    min_decoder = min(matrix.shape[1] for matrix in matrices)
+    trimmed = [matrix[:min_encoder, :min_decoder] for matrix in matrices]
+    return {
+        "available": True,
+        "num_artifacts": len(trimmed),
+        "mean_spearman_matrix": np.nanmean(np.stack(trimmed, axis=0), axis=0).tolist(),
+    }
+
+
 def write_v2_analysis_outputs(
     primary_manifest_path: str | Path,
     output_root: str | Path,
@@ -366,6 +554,28 @@ def write_v2_analysis_outputs(
         "condition_summaries": summarize_completed_rows(rows, bootstrap_replicates=bootstrap_replicates, seed=seed)
         if rows
         else {},
+        "paired_deltas": {
+            "correct_choice_log_probability": paired_condition_statistics(
+                rows,
+                "correct_choice_log_probability",
+                bootstrap_replicates=bootstrap_replicates,
+                permutation_replicates=bootstrap_replicates,
+                seed=seed,
+            )
+            if rows
+            else {},
+            "correct_vs_best_incorrect_margin": paired_condition_statistics(
+                rows,
+                "correct_vs_best_incorrect_margin",
+                bootstrap_replicates=bootstrap_replicates,
+                permutation_replicates=bootstrap_replicates,
+                seed=seed + 1,
+            )
+            if rows
+            else {},
+        },
+        "same_video_different_query": same_video_different_query_comparisons(rows) if rows else [],
+        "encoder_decoder_alignment": aggregate_encoder_decoder_alignment(output_root),
     }
     write_jsonl(final / "tables" / "expected_run_matrix.jsonl", matrix)
     write_jsonl(final / "tables" / "completed_rows.jsonl", rows)

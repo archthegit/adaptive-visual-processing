@@ -3,6 +3,7 @@ import pytest
 from src.experiment1.v2_controls import (
     build_v2_control_records,
     mismatched_query_control_record,
+    same_video_different_query_record,
 )
 
 
@@ -60,3 +61,38 @@ def test_mismatched_query_rejects_same_video_category_or_duration_mismatch():
     mismatch = dict(_mismatch(), duration_group="long")
     with pytest.raises(ValueError, match="changes duration"):
         mismatched_query_control_record(_primary(), mismatch)
+
+
+def test_same_video_different_query_control_overrides_question_from_additional_record():
+    additional = dict(
+        _primary(),
+        question_id="q3",
+        primary_question_id="q1",
+        question="another question?",
+        choices=["V", "W", "X", "Y", "Z"],
+        correct_idx=4,
+    )
+    record = same_video_different_query_record(_primary(), additional)
+    assert record["condition"] == "same_video_different_query"
+    assert record["source_video_id"] == "v1"
+    assert record["override_question_id"] == "q3"
+    assert record["override_question"] == "another question?"
+    assert record["override_correct_idx"] == 4
+
+
+def test_same_video_different_query_builder_skips_missing_additional_records():
+    additional = [
+        dict(
+            _primary(),
+            question_id="q3",
+            primary_question_id="q1",
+            question="another question?",
+            choices=["V", "W", "X", "Y", "Z"],
+            correct_idx=4,
+        )
+    ]
+    records = build_v2_control_records([_primary()], {}, "same_video_different_query", additional_questions=additional)
+    assert len(records) == 1
+    assert records[0]["override_question_id"] == "q3"
+    with pytest.raises(ValueError, match="No same-video"):
+        build_v2_control_records([_primary()], {}, "same_video_different_query", additional_questions=[])
