@@ -58,6 +58,12 @@ is an unbounded/full-video input.
 
 The primary manifest enforces at most one primary question per source video. The development/test split is source-video-level and approximately 20/80, stratified by category and duration group where possible. Mismatched queries are deterministic derangements within category and duration group, using a different source video and closest available token length.
 
+For v3, the frozen question/video cohort is preserved exactly, but the
+development/test split and `mismatched_queries.json` are recomputed after
+assigning the corrected analyzed-duration groups. The adaptive realtime
+`target_delta_t` is computed only after that corrected development split is
+frozen.
+
 ## Sampling Policies
 
 Primary policy:

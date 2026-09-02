@@ -1,7 +1,15 @@
 from pathlib import Path
+import statistics
 from types import SimpleNamespace
 
-from scripts.prepare_experiment1_v3_sampling import audit_sampling, rewrite_records_for_v3, summarize_records
+from scripts.prepare_experiment1_v3_sampling import (
+    assert_v3_protocol_invariants,
+    audit_sampling,
+    recompute_v3_mismatched_queries,
+    recompute_v3_split,
+    rewrite_records_for_v3,
+    summarize_records,
+)
 from src.experiment1.v2_manifest import duration_tertiles
 from src.experiment1.v2_sampling import primary_policy_from_development_durations
 
@@ -77,3 +85,73 @@ def test_v3_audit_reports_full_coverage_and_no_category_collapses_to_one_bin(tmp
     assert audit["min_median_max_frames"]["max"] <= 128
     assert audit["shortest_gaze_sampling_summary"]["question_id"] == "gaze_short"
     assert summarize_records(records)["num_examples"] == 3
+
+
+def test_v3_split_preserves_exact_77_ids_and_recomputes_stratified_dev_test():
+    records = []
+    categories = ["fine_grained", "gaze", "ingredient", "object_motion"]
+    groups = ["short", "medium", "long"]
+    for idx in range(77):
+        category = categories[idx % len(categories)]
+        group = groups[idx % len(groups)]
+        duration = {"short": 5.0, "medium": 50.0, "long": 500.0}[group]
+        records.append(_record(f"q_{idx:03d}", category, duration, group))
+    frozen_question_ids = {record["question_id"] for record in records}
+    frozen_video_ids = {record["source_video_id"] for record in records}
+
+    split_records, split_strata = recompute_v3_split(records, seed=20260830, dev_fraction=0.2)
+
+    assert {record["question_id"] for record in split_records} == frozen_question_ids
+    assert {record["source_video_id"] for record in split_records} == frozen_video_ids
+    assert sum(1 for record in split_records if record["split"] == "dev") > 0
+    assert sum(1 for record in split_records if record["split"] == "test") > 0
+    assert all(
+        not item["dev_test_coverage_feasible"] or item["has_dev_and_test_when_feasible"]
+        for item in split_strata.values()
+    )
+    split_by_video = {}
+    for record in split_records:
+        previous = split_by_video.setdefault(record["source_video_id"], record["split"])
+        assert previous == record["split"]
+
+
+def test_v3_mismatches_are_recomputed_for_new_category_duration_groups():
+    records = []
+    for idx, duration in enumerate([5.0, 6.0, 50.0, 55.0]):
+        group = "short" if idx < 2 else "medium"
+        record = _record(f"q_{idx}", "gaze", duration, group)
+        record["question"] = " ".join(["word"] * (idx + 3))
+        records.append(record)
+    split_records, split_strata = recompute_v3_split(records, seed=20260830, dev_fraction=0.5)
+
+    mismatches = recompute_v3_mismatched_queries(split_records, seed=20260830)
+    summary = {"primary_summary": summarize_records(split_records)}
+    assert_v3_protocol_invariants(records, split_records, mismatches, split_strata, summary)
+
+    by_question = {record["question_id"]: record for record in split_records}
+    donor_ids = [mismatch["mismatched_question_id"] for mismatch in mismatches["mismatches"].values()]
+    assert sorted(donor_ids) == sorted(by_question)
+    for question_id, mismatch in mismatches["mismatches"].items():
+        record = by_question[question_id]
+        donor = by_question[mismatch["mismatched_question_id"]]
+        assert mismatch["category"] == record["category"] == donor["category"]
+        assert mismatch["duration_group"] == record["duration_group"] == donor["duration_group"]
+        assert mismatch["mismatched_source_video_id"] != record["source_video_id"]
+
+
+def test_v3_target_delta_t_uses_corrected_dev_split_after_regrouping():
+    records = []
+    for idx, duration in enumerate([5.0, 6.0, 50.0, 55.0, 500.0, 550.0]):
+        group = "short" if idx < 2 else "medium" if idx < 4 else "long"
+        records.append(_record(f"q_{idx}", "ingredient", duration, group))
+
+    split_records, _split_strata = recompute_v3_split(records, seed=20260830, dev_fraction=0.5)
+    corrected_dev_durations = [
+        record["analyzed_duration_seconds"]
+        for record in split_records
+        if record["split"] == "dev"
+    ]
+    policy = primary_policy_from_development_durations(corrected_dev_durations)
+
+    assert corrected_dev_durations
+    assert policy.delta_t_seconds == statistics.median(corrected_dev_durations) / 16.0

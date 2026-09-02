@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 import json
+import random
 import statistics
 import sys
 from pathlib import Path
@@ -115,6 +116,158 @@ def rewrite_records_for_v3(records: list[dict[str, Any]], thresholds: dict[str, 
         )
         rewritten.append(updated)
     return rewritten
+
+
+def question_length(record: dict[str, Any]) -> int:
+    return len(str(record.get("question", "")).split())
+
+
+def recompute_v3_split(
+    records: list[dict[str, Any]],
+    seed: int = 20260830,
+    dev_fraction: float = 0.2,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not 0.0 < dev_fraction < 1.0:
+        raise ValueError("dev_fraction must be between 0 and 1.")
+    rng = random.Random(seed)
+    by_stratum: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        by_stratum[(str(record["category"]), str(record["duration_group"]))].append(record)
+
+    rewritten: list[dict[str, Any]] = []
+    stratum_summary: dict[str, dict[str, int | bool]] = {}
+    for (category, duration_group), items in sorted(by_stratum.items()):
+        ordered = sorted(
+            items,
+            key=lambda item: (
+                str(item.get("participant_id", "")),
+                str(item["source_video_id"]),
+                str(item["question_id"]),
+                rng.random(),
+            ),
+        )
+        if len(ordered) == 1:
+            dev_count = 0
+        else:
+            dev_count = max(1, int(round(len(ordered) * dev_fraction)))
+            dev_count = min(dev_count, len(ordered) - 1)
+        for index, record in enumerate(ordered):
+            updated = dict(record)
+            updated["split"] = "dev" if index < dev_count else "test"
+            rewritten.append(updated)
+        key = f"{category}:{duration_group}"
+        stratum_summary[key] = {
+            "total": len(ordered),
+            "dev": dev_count,
+            "test": len(ordered) - dev_count,
+            "dev_test_coverage_feasible": len(ordered) >= 2,
+            "has_dev_and_test_when_feasible": (dev_count > 0 and len(ordered) - dev_count > 0) if len(ordered) >= 2 else True,
+        }
+    return (
+        sorted(rewritten, key=lambda item: (item["split"], item["category"], item["duration_group"], item["question_id"])),
+        stratum_summary,
+    )
+
+
+def recompute_v3_mismatched_queries(records: list[dict[str, Any]], seed: int = 20260830) -> dict[str, Any]:
+    by_stratum: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        by_stratum[(str(record["category"]), str(record["duration_group"]))].append(record)
+
+    mismatches: dict[str, dict[str, Any]] = {}
+    stratum_failures = []
+    for key, items in sorted(by_stratum.items()):
+        if len(items) < 2:
+            stratum_failures.append({"stratum": f"{key[0]}:{key[1]}", "count": len(items)})
+            continue
+        ordered = sorted(
+            items,
+            key=lambda item: (question_length(item), str(item["source_video_id"]), str(item["question_id"])),
+        )
+        donor_by_question: dict[str, dict[str, Any]] = {}
+        if len(ordered) % 2 == 0:
+            pair_limit = len(ordered)
+        else:
+            pair_limit = len(ordered) - 3
+        for index in range(0, pair_limit, 2):
+            left = ordered[index]
+            right = ordered[index + 1]
+            donor_by_question[str(left["question_id"])] = right
+            donor_by_question[str(right["question_id"])] = left
+        if len(ordered) % 2 == 1:
+            tail = ordered[-3:]
+            donor_by_question[str(tail[0]["question_id"])] = tail[1]
+            donor_by_question[str(tail[1]["question_id"])] = tail[2]
+            donor_by_question[str(tail[2]["question_id"])] = tail[0]
+        if set(donor_by_question) != {str(item["question_id"]) for item in ordered}:
+            raise ValueError(f"Could not construct complete v3 mismatch derangement for stratum {key}.")
+        for item in ordered:
+            donor = donor_by_question[str(item["question_id"])]
+            if donor["source_video_id"] == item["source_video_id"]:
+                raise ValueError(f"No different-video v3 mismatch derangement exists for stratum {key}.")
+            mismatches[str(item["question_id"])] = {
+                "mismatched_question_id": donor["question_id"],
+                "mismatched_source_video_id": donor["source_video_id"],
+                "category": item["category"],
+                "duration_group": item["duration_group"],
+                "question": donor["question"],
+                "choices": list(donor["choices"]),
+                "correct_idx": int(donor["correct_idx"]),
+                "token_length_difference": abs(question_length(donor) - question_length(item)),
+                "derangement_source": "adjacent_question_length_derangement_with_odd_tail_cycle",
+            }
+    if stratum_failures:
+        raise ValueError(f"Cannot derange v3 mismatched queries for singleton strata: {stratum_failures}")
+    return {
+        "seed": seed,
+        "source": "recomputed_from_v3_primary_manifest_after_analyzed_duration_grouping",
+        "mismatches": mismatches,
+    }
+
+
+def assert_v3_protocol_invariants(
+    frozen_records: list[dict[str, Any]],
+    v3_records: list[dict[str, Any]],
+    mismatches: dict[str, Any],
+    split_strata: dict[str, dict[str, Any]],
+    summary: dict[str, Any] | None = None,
+) -> None:
+    frozen_question_ids = {str(record["question_id"]) for record in frozen_records}
+    v3_question_ids = {str(record["question_id"]) for record in v3_records}
+    if frozen_question_ids != v3_question_ids:
+        raise ValueError("v3 primary manifest does not preserve the exact frozen question IDs.")
+    frozen_video_ids = {str(record["source_video_id"]) for record in frozen_records}
+    v3_video_ids = {str(record["source_video_id"]) for record in v3_records}
+    if frozen_video_ids != v3_video_ids:
+        raise ValueError("v3 primary manifest does not preserve the exact frozen source-video IDs.")
+    split_by_video: dict[str, str] = {}
+    for record in v3_records:
+        previous = split_by_video.setdefault(str(record["source_video_id"]), str(record["split"]))
+        if previous != record["split"]:
+            raise ValueError(f"Source video crosses dev/test split: {record['source_video_id']}")
+    bad_strata = [
+        key
+        for key, item in split_strata.items()
+        if item["dev_test_coverage_feasible"] and not item["has_dev_and_test_when_feasible"]
+    ]
+    if bad_strata:
+        raise ValueError(f"Feasible v3 strata lack both dev and test coverage: {bad_strata}")
+    mismatch_map = mismatches.get("mismatches", {})
+    by_question = {str(record["question_id"]): record for record in v3_records}
+    if set(mismatch_map) != set(by_question):
+        raise ValueError("v3 mismatched_queries keys do not exactly match primary_manifest question IDs.")
+    for question_id, mismatch in mismatch_map.items():
+        record = by_question[question_id]
+        if mismatch["category"] != record["category"]:
+            raise ValueError(f"Mismatch category changed for {question_id}.")
+        if mismatch["duration_group"] != record["duration_group"]:
+            raise ValueError(f"Mismatch duration group changed for {question_id}.")
+        if mismatch["mismatched_source_video_id"] == record["source_video_id"]:
+            raise ValueError(f"Mismatch uses same source video for {question_id}.")
+    if summary is not None:
+        expected = summarize_records(v3_records)
+        if summary.get("primary_summary") != expected:
+            raise ValueError("split_summary primary_summary does not exactly match primary_manifest.")
 
 
 def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -262,10 +415,12 @@ def _min_median_max(values: list[float | int]) -> dict[str, float | int | None]:
 
 def main() -> None:
     args = parse_args()
-    primary, additional, mismatches, cohort_exclusions = load_or_build_frozen_records(args)
+    primary, additional, _old_mismatches, cohort_exclusions = load_or_build_frozen_records(args)
     thresholds = duration_tertiles(float(record["analyzed_duration_seconds"]) for record in primary)
     primary_v3 = rewrite_records_for_v3(primary, thresholds)
     additional_v3 = rewrite_records_for_v3(additional, thresholds) if additional else []
+    primary_v3, split_strata = recompute_v3_split(primary_v3, seed=args.seed, dev_fraction=args.dev_fraction)
+    mismatches = recompute_v3_mismatched_queries(primary_v3, seed=args.seed)
     dev_durations = [
         float(record["analyzed_duration_seconds"])
         for record in primary_v3
@@ -295,11 +450,16 @@ def main() -> None:
         "duration_tertile_thresholds": thresholds,
         "duration_tertile_basis": "analyzed_duration_seconds",
         "realtime_sampling_policy": sampling_policy,
+        "split_recomputed_after_analyzed_duration_grouping": True,
+        "mismatches_recomputed_after_analyzed_duration_grouping": True,
+        "target_delta_t_computed_after_corrected_split": True,
         "primary_manifest_count": len(primary_v3),
         "additional_question_count": len(additional_v3),
         "inventory_complete_mp4s": len(inventory),
         "primary_summary": summarize_records(primary_v3),
+        "split_strata": split_strata,
     }
+    assert_v3_protocol_invariants(primary, primary_v3, mismatches, split_strata, summary)
     audit = audit_sampling(primary_v3, inventory_by_video, args.mp4_dir, policy)
     summary["sampling_audit"] = {key: value for key, value in audit.items() if key != "per_example"}
     if audit["failures"]:
