@@ -142,7 +142,8 @@ Implemented:
 - shared temporal metrics and clustered bootstrap helpers
 - deterministic intervention manifest creation from baseline artifacts
 - actual Qwen vision-block attention capture path for eager attention backends
-- canonical temporal pooling for captured vision attention chunks
+- online canonical temporal pooling for captured vision attention chunks without retaining full all-layer token x token attention on CPU
+- one-example stage profiler with elapsed time, peak CPU RSS, CUDA memory counters, and reduced tensor shapes
 - repeated-frame and reversed-video control manifests
 - mismatched-query manifests with runner-side question overrides
 - same-video/different-query manifests with runner-side question overrides
@@ -340,4 +341,25 @@ python scripts/select_experiment1_v2_reference_layer.py \
   --baseline-output-dir outputs/experiment1_v2/runs/baseline \
   --mismatched-output-dir outputs/experiment1_v2/runs/mismatched_query \
   --output-json outputs/experiment1_v2/frozen_reference_layer.json
+```
+
+Medium-resolution profiling gate for one realtime example:
+
+```bash
+python scripts/run_experiment1.py \
+  --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir /workspace/data/hd_epic_mp4 \
+  --manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --num-frames 128 \
+  --sampling-mode realtime \
+  --sampling-policy-json outputs/experiment1_v2/split_summary.json \
+  --resolution-config medium \
+  --attention-extraction reduced_sdpa \
+  --query-scope question \
+  --condition baseline \
+  --resume \
+  --allow-7b-inference \
+  --profile-one-example \
+  --profile-output-json outputs/experiment1_v2/profiles/medium_one_example.json \
+  --output-dir outputs/experiment1_v2/profile_medium_one_example
 ```

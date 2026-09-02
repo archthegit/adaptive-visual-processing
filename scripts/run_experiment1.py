@@ -94,6 +94,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--seed", type=int, default=20260818)
+    parser.add_argument(
+        "--profile-one-example",
+        action="store_true",
+        help="Run only one selected example and write detailed stage-level memory/timing profiling.",
+    )
+    parser.add_argument(
+        "--profile-output-json",
+        default=None,
+        help="Optional path for the one-example profiling JSON. Defaults to <output-dir>/profile.json.",
+    )
+    parser.add_argument(
+        "--no-progress-log",
+        action="store_true",
+        help="Disable stage-level stderr progress logs during real inference.",
+    )
     return parser.parse_args()
 
 
@@ -448,6 +463,8 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     resolution = get_resolution_config(args.resolution_config)
     records = filter_records(load_manifest(args.manifest, args.limit), args.question_id)
+    if args.profile_one_example:
+        records = records[:1]
     if args.sampling_mode == "realtime":
         realtime_policy = _load_realtime_sampling_policy(args.sampling_policy_json)
         for record in records:
@@ -519,15 +536,19 @@ def main() -> None:
         assert examples_by_id is not None
         assert qwen_model is not None
         example = example_for_record(examples_by_id[record["question_id"]], record)
+        from src.experiment1.profiling import StageProfiler
+
+        profiler = StageProfiler(enabled=True, log_progress=not args.no_progress_log)
         try:
-            frame_batches = frame_batches_for_example(
-                example,
-                args.mp4_dir,
-                args.num_frames,
-                args.frame_budget_mode,
-                sampling_mode=args.sampling_mode,
-                manifest_record=record,
-            )
+            with profiler.stage("video_decoding_sampling"):
+                frame_batches = frame_batches_for_example(
+                    example,
+                    args.mp4_dir,
+                    args.num_frames,
+                    args.frame_budget_mode,
+                    sampling_mode=args.sampling_mode,
+                    manifest_record=record,
+                )
             artifact = run_qwen_relevance_example(
                 qwen_model,
                 example,
@@ -541,6 +562,7 @@ def main() -> None:
                 pre_encoder_remove_temporal_bins=pre_encoder_mask_bins,
                 pre_encoder_keep_temporal_bins=keep_bins,
                 condition=condition,
+                profiler=profiler,
             )
             artifact["category"] = record["category"]
             artifact["vision_access_through_layer"] = args.vision_access_through_layer
@@ -571,7 +593,12 @@ def main() -> None:
                 "git_commit": git_commit,
             }
             artifact_path = output_dir / f"{record['question_id']}.json"
-            write_json_atomic(artifact_path, artifact)
+            artifact["metadata"]["profiling"] = profiler.to_json_dict()
+            with profiler.stage("artifact_serialization"):
+                write_json_atomic(artifact_path, artifact)
+            profile_path = Path(args.profile_output_json) if args.profile_output_json else output_dir / "profile.json"
+            if args.profile_one_example:
+                profiler.write_json(profile_path)
             append_jsonl(
                 jsonl_path,
                 {

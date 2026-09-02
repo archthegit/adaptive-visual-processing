@@ -106,6 +106,13 @@ def test_reduced_attention_matches_full_attention_for_question_visual_rows():
     full = torch.softmax(torch.matmul(query, key.transpose(2, 3)), dim=-1)
     expected = full[:, :, [1, 2], :][:, :, :, [0, 2]].mean(dim=(0, 1, 2)).numpy()
     np.testing.assert_allclose(capture.ordered_token_scores(), [expected], rtol=1e-6, atol=1e-6)
+    shapes = capture.tensor_shapes_by_layer[0]
+    assert [item["stage"] for item in shapes] == [
+        "decoder_question_rows",
+        "decoder_question_by_key_logits",
+        "decoder_question_by_visual_probs",
+    ]
+    assert shapes[1]["shape"] == [1, 1, 2, 3]
 
 
 def test_reduced_attention_respects_additive_causal_mask():

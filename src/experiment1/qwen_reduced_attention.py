@@ -30,6 +30,7 @@ class ReducedAttentionCapture:
     question_token_indices: tuple[int, ...]
     visual_token_indices: tuple[int, ...]
     reduced_by_layer: dict[int, np.ndarray] = field(default_factory=dict)
+    tensor_shapes_by_layer: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
 
     @classmethod
     def from_layout(cls, layout: TokenLayout) -> "ReducedAttentionCapture":
@@ -45,6 +46,11 @@ class ReducedAttentionCapture:
         if expected_layers is not None and layer_ids != list(range(expected_layers)):
             raise RuntimeError(f"Captured layers {layer_ids}, expected {list(range(expected_layers))}.")
         return np.stack([self.reduced_by_layer[layer_idx] for layer_idx in layer_ids], axis=0)
+
+    def record_shape(self, layer: int, stage: str, shape: tuple[int, ...] | list[int]) -> None:
+        self.tensor_shapes_by_layer.setdefault(int(layer), []).append(
+            {"stage": stage, "shape": [int(item) for item in shape]}
+        )
 
 
 @dataclass(frozen=True)
@@ -347,12 +353,19 @@ def qwen_relevance_reduced_sdpa_forward(
         question_indices = torch.as_tensor(capture.question_token_indices, device=device, dtype=torch.long)
         visual_indices = torch.as_tensor(capture.visual_token_indices, device=device, dtype=torch.long)
         query_rows = query.index_select(2, question_indices)
+        capture.record_shape(int(module.layer_idx), "decoder_question_rows", tuple(query_rows.shape))
+        capture.record_shape(
+            int(module.layer_idx),
+            "decoder_question_by_key_logits",
+            (int(query_rows.shape[0]), int(query_rows.shape[1]), int(query_rows.shape[2]), int(key_states.shape[2])),
+        )
         logits = torch.matmul(query_rows, key_states.transpose(2, 3)) * scaling
         reduced_mask = _slice_attention_mask(attention_mask, question_indices)
         if reduced_mask is not None:
             logits = logits + reduced_mask
         probs = F.softmax(logits, dim=-1, dtype=torch.float32)
         qv = probs.index_select(-1, visual_indices)
+        capture.record_shape(int(module.layer_idx), "decoder_question_by_visual_probs", tuple(qv.shape))
         capture.reduced_by_layer[int(module.layer_idx)] = qv.mean(dim=(0, 1, 2)).detach().cpu().numpy()
 
     return attn_output, None

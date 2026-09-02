@@ -6,7 +6,10 @@ from typing import Any, Iterator
 
 import numpy as np
 
-from .encoder_temporal import aggregate_encoder_attention_to_temporal_bins
+from .encoder_temporal import (
+    aggregate_encoder_attention_to_temporal_bins,
+    expanded_reverse_indices,
+)
 
 
 VISION_ATTENTION_IMPLEMENTATION = "qwen_experiment1_vision_attention_capture"
@@ -28,27 +31,101 @@ class VisionAttentionCapture:
     spatial_merge_size: int
     reverse_indices: Any | None
     chunks_by_layer: dict[int, list[np.ndarray]] = field(default_factory=dict)
+    reduced_by_layer: dict[int, np.ndarray] = field(default_factory=dict)
+    tokens_seen_by_layer: dict[int, int] = field(default_factory=dict)
+    tensor_shapes_by_layer: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+
+    @property
+    def num_temporal_bins(self) -> int:
+        return int(self.grid_thw[0])
+
+    @property
+    def num_tokens(self) -> int:
+        t, h, w = [int(item) for item in self.grid_thw]
+        return t * h * w
+
+    def _window_to_temporal_bins_numpy(self) -> np.ndarray:
+        t, h, w = [int(item) for item in self.grid_thw]
+        canonical_temporal = np.repeat(np.arange(t, dtype=np.int64), h * w)
+        if self.reverse_indices is None:
+            return canonical_temporal
+        expanded = expanded_reverse_indices(self.reverse_indices, self.spatial_merge_size * self.spatial_merge_size)
+        if expanded.shape[0] != canonical_temporal.shape[0]:
+            raise ValueError(
+                f"Reverse indices length {expanded.shape[0]} does not match canonical visual token count {canonical_temporal.shape[0]}."
+            )
+        window_to_temporal = np.zeros_like(canonical_temporal)
+        window_to_temporal[expanded] = canonical_temporal
+        return window_to_temporal
 
     def record(self, module: Any, attention_weights: Any) -> None:
         layer = self.module_to_layer.get(id(module))
         if layer is None:
             return
-        arr = attention_weights.detach().float().cpu().numpy()
+        cursor = self.tokens_seen_by_layer.get(layer, 0)
+        shape = tuple(int(item) for item in attention_weights.shape)
+        self.tensor_shapes_by_layer.setdefault(layer, []).append(
+            {"stage": "vision_encoder_attention_chunk", "shape": list(shape), "cursor": cursor}
+        )
+        if hasattr(attention_weights, "detach"):
+            reduced = self._reduce_torch_chunk(attention_weights, cursor)
+        else:
+            reduced = self._reduce_numpy_chunk(attention_weights, cursor)
+        current = self.reduced_by_layer.get(layer)
+        self.reduced_by_layer[layer] = reduced if current is None else current + reduced
+        self.tokens_seen_by_layer[layer] = cursor + int(shape[-1])
+
+    def _reduce_numpy_chunk(self, attention_weights: Any, cursor: int) -> np.ndarray:
+        arr = np.asarray(attention_weights, dtype=np.float64)
         if arr.ndim == 4 and arr.shape[0] == 1:
             arr = arr[0]
         if arr.ndim != 3:
-            return
-        self.chunks_by_layer.setdefault(layer, []).append(arr)
+            raise ValueError(f"Expected vision attention chunk [heads, q, k], got {arr.shape}.")
+        if arr.shape[1] != arr.shape[2]:
+            raise ValueError("Vision attention chunks must be square.")
+        key_mass = arr.sum(axis=1) / max(1, self.num_tokens)
+        key_bins = self._window_to_temporal_bins_numpy()[cursor : cursor + arr.shape[2]]
+        reduced = np.zeros((arr.shape[0], self.num_temporal_bins), dtype=np.float64)
+        for local_key, temporal_bin in enumerate(key_bins):
+            reduced[:, int(temporal_bin)] += key_mass[:, local_key]
+        return reduced
+
+    def _reduce_torch_chunk(self, attention_weights: Any, cursor: int) -> np.ndarray:
+        import torch
+
+        weights = attention_weights
+        if weights.ndim == 4 and int(weights.shape[0]) == 1:
+            weights = weights[0]
+        if weights.ndim != 3:
+            raise ValueError(f"Expected vision attention chunk [heads, q, k], got {tuple(weights.shape)}.")
+        if int(weights.shape[1]) != int(weights.shape[2]):
+            raise ValueError("Vision attention chunks must be square.")
+        key_mass = weights.float().sum(dim=1) / max(1, self.num_tokens)
+        key_bins_np = self._window_to_temporal_bins_numpy()[cursor : cursor + int(weights.shape[2])]
+        if key_bins_np.shape[0] != int(weights.shape[2]):
+            raise ValueError("Vision attention chunk cursor exceeded the visual token count.")
+        key_bins = torch.as_tensor(key_bins_np, dtype=torch.long, device=weights.device)
+        reduced = torch.zeros(
+            (int(weights.shape[0]), self.num_temporal_bins),
+            dtype=torch.float32,
+            device=weights.device,
+        )
+        reduced.scatter_add_(1, key_bins.unsqueeze(0).expand(int(weights.shape[0]), -1), key_mass)
+        return reduced.detach().cpu().numpy()
 
     def ordered_temporal_attention(self, expected_layers: int | None = None) -> np.ndarray:
-        if not self.chunks_by_layer:
+        if not self.reduced_by_layer and not self.chunks_by_layer:
             raise RuntimeError("No Qwen vision attention chunks were captured.")
-        layer_ids = sorted(self.chunks_by_layer)
+        layer_ids = sorted(self.reduced_by_layer or self.chunks_by_layer)
         if expected_layers is not None and layer_ids != list(range(expected_layers)):
             raise RuntimeError(f"Captured vision layers {layer_ids}, expected {list(range(expected_layers))}.")
         return np.stack([self.temporal_attention_for_layer(layer) for layer in layer_ids], axis=0)
 
     def temporal_attention_for_layer(self, layer: int) -> np.ndarray:
+        reduced = self.reduced_by_layer.get(layer)
+        if reduced is not None:
+            totals = reduced.sum(axis=1, keepdims=True)
+            return np.divide(reduced, totals, out=np.zeros_like(reduced), where=totals > 0)
         chunks = self.chunks_by_layer.get(layer)
         if not chunks:
             raise ValueError(f"No attention chunks captured for vision layer {layer}.")
@@ -70,6 +147,9 @@ class VisionAttentionCapture:
             "num_layers": int(temporal.shape[0]),
             "num_heads": int(temporal.shape[1]),
             "num_temporal_bins": int(temporal.shape[2]),
+            "tensor_shapes_reduced": {
+                str(layer): shapes for layer, shapes in sorted(self.tensor_shapes_by_layer.items())
+            },
             "normalized_incoming_temporal_attention": temporal.tolist(),
         }
 

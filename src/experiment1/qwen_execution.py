@@ -383,6 +383,7 @@ def run_qwen_relevance_example(
     pre_encoder_remove_temporal_bins: tuple[int, ...] | None = None,
     pre_encoder_keep_temporal_bins: tuple[int, ...] | None = None,
     condition: str | None = None,
+    profiler: Any | None = None,
 ) -> dict[str, Any]:
     try:
         import torch
@@ -390,11 +391,16 @@ def run_qwen_relevance_example(
     except ImportError as exc:
         raise RuntimeError("Real Qwen execution requires torch and qwen-vl-utils.") from exc
 
-    model._load()
+    def stage(name: str):
+        return profiler.stage(name) if profiler is not None else nullcontext()
+
+    with stage("model_load"):
+        model._load()
     assert model._model is not None
     assert model._processor is not None
-    frame_batches = apply_frame_control(frame_batches, condition)
-    validate_scalar_video_fps_compatibility(frame_batches)
+    with stage("frame_control"):
+        frame_batches = apply_frame_control(frame_batches, condition)
+        validate_scalar_video_fps_compatibility(frame_batches)
 
     prompt = format_multiple_choice_prompt(example)
     question_text = parse_question_tags(example.question, example)
@@ -428,17 +434,18 @@ def run_qwen_relevance_example(
             video_kwargs["fps"] = effective_sample_fps(video_batches[0])
         return messages, rendered_prompt, image_inputs, video_inputs, normalize_video_kwargs(video_kwargs)
 
-    _messages, rendered, image_inputs, video_inputs, video_kwargs = build_messages(frame_batches)
+    with stage("video_decoding_preprocessing"):
+        _messages, rendered, image_inputs, video_inputs, video_kwargs = build_messages(frame_batches)
 
-    inputs = model._processor(
-        text=[rendered],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-        **video_kwargs,
-    ).to(model._model.device)
-    corrected_seconds = apply_corrected_second_per_grid_ts(inputs, frame_batches, model._model, torch)
+        inputs = model._processor(
+            text=[rendered],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+            **video_kwargs,
+        ).to(model._model.device)
+        corrected_seconds = apply_corrected_second_per_grid_ts(inputs, frame_batches, model._model, torch)
 
     video_grid_tensor = inputs.get("video_grid_thw")
     video_grid_thw = video_grid_tensor.detach().cpu().tolist() if video_grid_tensor is not None else []
@@ -459,16 +466,17 @@ def run_qwen_relevance_example(
                 tuple(pre_encoder_keep_temporal_bins),
             )
         frame_batches = masked_batches
-        _messages, rendered, image_inputs, video_inputs, video_kwargs = build_messages(frame_batches)
-        inputs = model._processor(
-            text=[rendered],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-            **video_kwargs,
-        ).to(model._model.device)
-        corrected_seconds = apply_corrected_second_per_grid_ts(inputs, frame_batches, model._model, torch)
+        with stage("pre_encoder_intervention_preprocessing"):
+            _messages, rendered, image_inputs, video_inputs, video_kwargs = build_messages(frame_batches)
+            inputs = model._processor(
+                text=[rendered],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+                **video_kwargs,
+            ).to(model._model.device)
+            corrected_seconds = apply_corrected_second_per_grid_ts(inputs, frame_batches, model._model, torch)
 
     temporal_patch_size = float(model._processor.video_processor.temporal_patch_size)
     actual_seconds = [temporal_patch_size / effective_sample_fps(batch) for batch in frame_batches if batch.metadata.get("input_modality") != "image"]
@@ -526,30 +534,21 @@ def run_qwen_relevance_example(
     pre_encoder_bins = tuple(pre_encoder_remove_temporal_bins or ())
     keep_bins = tuple(pre_encoder_keep_temporal_bins or ())
     decoder_intervention_active = bool(decoder_mask_bins) or vision_access_through_layer not in {None, "none"}
-    if attention_extraction == "full":
-        context = (
-            masked_eager_attention_context(
-                model._model,
-                layout,
-                vision_access_through_layer,
-                decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
-                decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+    decoder_tensor_shapes: dict[str, Any] = {}
+    with stage("decoder_prefill_attention_extraction"):
+        if attention_extraction == "full":
+            context = (
+                masked_eager_attention_context(
+                    model._model,
+                    layout,
+                    vision_access_through_layer,
+                    decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+                    decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+                )
+                if vision_access_through_layer not in {None, "none"} or decoder_mask_bins
+                else None
             )
-            if vision_access_through_layer not in {None, "none"} or decoder_mask_bins
-            else None
-        )
-        if context is None:
-            with vision_temporal_capture_context(
-                model._model,
-                video_grid_thw,
-                spatial_merge_size,
-                video_grid_tensor=video_grid_tensor,
-            ) as encoder_capture:
-                with vision_attention_context(encoder_capture) as vision_attention_capture:
-                    with torch.inference_mode():
-                        outputs = model._model(**inputs, output_attentions=True, use_cache=False)
-        else:
-            with context:
+            if context is None:
                 with vision_temporal_capture_context(
                     model._model,
                     video_grid_thw,
@@ -559,79 +558,96 @@ def run_qwen_relevance_example(
                     with vision_attention_context(encoder_capture) as vision_attention_capture:
                         with torch.inference_mode():
                             outputs = model._model(**inputs, output_attentions=True, use_cache=False)
-        attentions = getattr(outputs, "attentions", None)
-        if attentions is None:
-            raise RuntimeError(
-                "Qwen did not return decoder attentions. Ensure attn_implementation='eager' and output_attentions=True."
+            else:
+                with context:
+                    with vision_temporal_capture_context(
+                        model._model,
+                        video_grid_thw,
+                        spatial_merge_size,
+                        video_grid_tensor=video_grid_tensor,
+                    ) as encoder_capture:
+                        with vision_attention_context(encoder_capture) as vision_attention_capture:
+                            with torch.inference_mode():
+                                outputs = model._model(**inputs, output_attentions=True, use_cache=False)
+            attentions = getattr(outputs, "attentions", None)
+            if attentions is None:
+                raise RuntimeError(
+                    "Qwen did not return decoder attentions. Ensure attn_implementation='eager' and output_attentions=True."
+                )
+            prefill_next_token_topk = next_token_topk_from_outputs(outputs)
+            token_scores = aggregate_question_to_visual_attention(
+                attentions, layout.question_token_indices, layout.visual_token_indices
             )
-        prefill_next_token_topk = next_token_topk_from_outputs(outputs)
-        token_scores = aggregate_question_to_visual_attention(
-            attentions, layout.question_token_indices, layout.visual_token_indices
-        )
-        temporal_relevance = build_temporal_relevance_from_token_scores(
-            token_scores,
-            layout,
-            frame_batches,
-            "returned_full_attention_temporally_reduced_after_forward",
-        )
-        del outputs, attentions
-    elif attention_extraction == "reduced_sdpa":
-        expected_layers = int(model._model.config.text_config.num_hidden_layers)
-        with reduced_attention_context(
-            model._model,
-            layout,
-            vision_access_through_layer,
-            decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
-            decoder_direct_access_through_layer=decoder_direct_access_through_layer,
-        ) as capture:
-            with vision_temporal_capture_context(
+            temporal_relevance = build_temporal_relevance_from_token_scores(
+                token_scores,
+                layout,
+                frame_batches,
+                "returned_full_attention_temporally_reduced_after_forward",
+            )
+            del outputs, attentions
+        elif attention_extraction == "reduced_sdpa":
+            expected_layers = int(model._model.config.text_config.num_hidden_layers)
+            with reduced_attention_context(
                 model._model,
-                video_grid_thw,
-                spatial_merge_size,
-                video_grid_tensor=video_grid_tensor,
-            ) as encoder_capture:
-                with vision_attention_context(encoder_capture) as vision_attention_capture:
-                    with torch.inference_mode():
-                        outputs = model._model(**inputs, output_attentions=False, use_cache=False)
-        prefill_next_token_topk = next_token_topk_from_outputs(outputs)
-        del outputs
-        token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
-        temporal_relevance = build_temporal_relevance_from_token_scores(
-            token_scores,
-            layout,
-            frame_batches,
-            "qwen_reduced_sdpa_temporal_question_visual_rows",
-        )
-    else:
-        raise ValueError("attention_extraction must be 'full' or 'reduced_sdpa'.")
+                layout,
+                vision_access_through_layer,
+                decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+                decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+            ) as capture:
+                with vision_temporal_capture_context(
+                    model._model,
+                    video_grid_thw,
+                    spatial_merge_size,
+                    video_grid_tensor=video_grid_tensor,
+                ) as encoder_capture:
+                    with vision_attention_context(encoder_capture) as vision_attention_capture:
+                        with torch.inference_mode():
+                            outputs = model._model(**inputs, output_attentions=False, use_cache=False)
+                decoder_tensor_shapes = {
+                    str(layer): shapes for layer, shapes in sorted(capture.tensor_shapes_by_layer.items())
+                }
+            prefill_next_token_topk = next_token_topk_from_outputs(outputs)
+            del outputs
+            token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
+            temporal_relevance = build_temporal_relevance_from_token_scores(
+                token_scores,
+                layout,
+                frame_batches,
+                "qwen_reduced_sdpa_temporal_question_visual_rows",
+            )
+        else:
+            raise ValueError("attention_extraction must be 'full' or 'reduced_sdpa'.")
+    if profiler is not None and decoder_tensor_shapes:
+        profiler.add_tensor_shapes("decoder_question_visual_reduction", decoder_tensor_shapes)
 
     prefill_runtime = time.time() - started
 
     scoring_started = time.time()
-    with torch.inference_mode():
-        scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
-    answer_choice_scores = score_answer_choices_from_outputs(
-        scoring_outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
-    )
-    unmodified_prefill_next_token_topk = next_token_topk_from_outputs(scoring_outputs)
-    del scoring_outputs
-    if decoder_intervention_active:
-        with masked_eager_attention_context(
-            model._model,
-            layout,
-            vision_access_through_layer,
-            decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
-            decoder_direct_access_through_layer=decoder_direct_access_through_layer,
-        ):
-            with torch.inference_mode():
-                intervention_scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
-        intervention_answer_choice_scores = score_answer_choices_from_outputs(
-            intervention_scoring_outputs,
-            model._processor.tokenizer,
-            example.correct_idx,
-            len(example.choices),
+    with stage("answer_scoring"):
+        with torch.inference_mode():
+            scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
+        answer_choice_scores = score_answer_choices_from_outputs(
+            scoring_outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
         )
-        del intervention_scoring_outputs
+        unmodified_prefill_next_token_topk = next_token_topk_from_outputs(scoring_outputs)
+        del scoring_outputs
+        if decoder_intervention_active:
+            with masked_eager_attention_context(
+                model._model,
+                layout,
+                vision_access_through_layer,
+                decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+                decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+            ):
+                with torch.inference_mode():
+                    intervention_scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
+            intervention_answer_choice_scores = score_answer_choices_from_outputs(
+                intervention_scoring_outputs,
+                model._processor.tokenizer,
+                example.correct_idx,
+                len(example.choices),
+            )
+            del intervention_scoring_outputs
     answer_scoring_runtime = time.time() - scoring_started
 
     memory_after_prefill = cuda_memory_metadata(torch)
@@ -639,8 +655,22 @@ def run_qwen_relevance_example(
         torch.cuda.empty_cache()
 
     gen_started = time.time()
-    if vision_access_through_layer in {None, "none"}:
-        if decoder_mask_bins:
+    with stage("generation"):
+        if vision_access_through_layer in {None, "none"}:
+            if decoder_mask_bins:
+                with masked_eager_attention_context(
+                    model._model,
+                    layout,
+                    vision_access_through_layer,
+                    decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
+                    decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+                ):
+                    with torch.inference_mode():
+                        output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
+            else:
+                with torch.inference_mode():
+                    output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
+        else:
             with masked_eager_attention_context(
                 model._model,
                 layout,
@@ -650,19 +680,6 @@ def run_qwen_relevance_example(
             ):
                 with torch.inference_mode():
                     output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
-        else:
-            with torch.inference_mode():
-                output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
-    else:
-        with masked_eager_attention_context(
-            model._model,
-            layout,
-            vision_access_through_layer,
-            decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
-            decoder_direct_access_through_layer=decoder_direct_access_through_layer,
-        ):
-            with torch.inference_mode():
-                output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
     raw_response = model._processor.batch_decode(
         output_ids[:, inputs["input_ids"].shape[1] :],
         skip_special_tokens=True,
@@ -687,6 +704,11 @@ def run_qwen_relevance_example(
                 encoder_attention_temporal,
                 frame_batches[0],
             )
+            if profiler is not None:
+                profiler.add_tensor_shapes(
+                    "vision_encoder_attention_reduction",
+                    encoder_attention_temporal.get("tensor_shapes_reduced"),
+                )
         except Exception as exc:
             encoder_attention_temporal = {"available": False, "error": str(exc)}
 
@@ -768,6 +790,12 @@ def run_qwen_relevance_example(
             "effective_sample_fps": [effective_sample_fps(batch) for batch in frame_batches],
             "prefill_next_token_topk": prefill_next_token_topk,
             "unmodified_prefill_next_token_topk": unmodified_prefill_next_token_topk,
+            "reduced_attention_tensor_shapes": {
+                "decoder": decoder_tensor_shapes,
+                "encoder": encoder_attention_temporal.get("tensor_shapes_reduced")
+                if isinstance(encoder_attention_temporal, dict)
+                else None,
+            },
             "answer_choice_score_source": (
                 "separate_unmodified_prefill_forward"
                 if not pre_encoder_bins and not keep_bins
