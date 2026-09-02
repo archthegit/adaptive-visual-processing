@@ -241,22 +241,24 @@ example, the runner uniformly samples frames, uses Qwen's actual
 decoder attention from question tokens to visual tokens, and aggregates spatial
 visual tokens into Qwen temporal bins.
 
-The v2 publication-quality plan and current implementation status are documented
-in [`docs/experiment1.md`](docs/experiment1.md). Build the source-video-level v2
-manifest from local MP4s with:
+The corrected v3 publication-quality plan and current implementation status are
+documented in [`docs/experiment1.md`](docs/experiment1.md). The old
+`outputs/experiment1_v2/runs/baseline` pilot used an invalid realtime sampling
+policy and is non-final. Prepare the frozen-cohort v3 manifest and CPU-only
+sampling audit with:
 
 ```bash
-python scripts/create_experiment1_v2_manifest.py \
+python scripts/prepare_experiment1_v3_sampling.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
-  --output-dir outputs/experiment1_v2 \
-  --seed 20260830 \
-  --dev-fraction 0.2
+  --frozen-primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --output-dir outputs/experiment1_v3
 ```
 
 The command writes `duration_inventory.jsonl`, `primary_manifest.jsonl`,
 `additional_questions.jsonl`, `mismatched_queries.json`, `split_summary.json`,
-and `exclusions.jsonl`. It does not run Qwen inference.
+`exclusions.jsonl`, `sampling_audit.json`, and
+`sampling_audit_per_example.jsonl`. It does not run Qwen inference.
 
 The existing Milestone 1 runner uses Qwen's `video_grid_thw` temporal axis,
 spatially pools all visual tokens inside each temporal bin, and tracks how

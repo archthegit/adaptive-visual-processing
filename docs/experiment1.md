@@ -10,7 +10,8 @@ High attention alone is not treated as proof of importance. The experiment separ
 
 The independent unit is the source video. Bins, heads, layers, questions, and repeated conditions are measurements nested under source videos and are not counted as independent samples.
 
-The v2 manifest uses only single-video examples from:
+The v3 manifest freezes the existing Experiment 1 question/video cohort and
+uses only single-video examples from:
 
 - `fine_grained`
 - `gaze`
@@ -21,29 +22,39 @@ Image-only, video-plus-image, multi-video, unavailable, and corrupt/incomplete-v
 
 ## Dataset Construction
 
-Build the source-video-level manifest with:
+The old `outputs/experiment1_v2/runs/baseline` pilot used an invalid
+17-second realtime policy. It is retained only as a failed engineering pilot
+and must not be cited as final results.
+
+Prepare the corrected v3 manifests and CPU-only sampling audit with:
 
 ```bash
-python scripts/create_experiment1_v2_manifest.py \
+python scripts/prepare_experiment1_v3_sampling.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
-  --output-dir outputs/experiment1_v2 \
-  --seed 20260830 \
-  --dev-fraction 0.2
+  --frozen-primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --output-dir outputs/experiment1_v3
 ```
 
 This writes:
 
 ```text
-outputs/experiment1_v2/duration_inventory.jsonl
-outputs/experiment1_v2/primary_manifest.jsonl
-outputs/experiment1_v2/additional_questions.jsonl
-outputs/experiment1_v2/mismatched_queries.json
-outputs/experiment1_v2/split_summary.json
-outputs/experiment1_v2/exclusions.jsonl
+outputs/experiment1_v3/duration_inventory.jsonl
+outputs/experiment1_v3/primary_manifest.jsonl
+outputs/experiment1_v3/additional_questions.jsonl
+outputs/experiment1_v3/mismatched_queries.json
+outputs/experiment1_v3/split_summary.json
+outputs/experiment1_v3/exclusions.jsonl
+outputs/experiment1_v3/sampling_audit.json
+outputs/experiment1_v3/sampling_audit_per_example.jsonl
 ```
 
-Duration groups are short/medium/long tertiles computed from unique eligible source MP4 durations reported by `ffprobe`, not from annotated question spans. The exact thresholds are saved in `split_summary.json` with `duration_tertile_basis`. Each primary record separately preserves `source_video_duration_seconds`, `analyzed_duration_seconds`, analyzed start/end, and whether the analyzed input is an unbounded/full-video input.
+Duration groups are short/medium/long tertiles computed from
+`analyzed_duration_seconds`, the exact interval presented to Qwen. The exact
+thresholds are saved in `split_summary.json` with `duration_tertile_basis`.
+Each primary record separately preserves `source_video_duration_seconds`,
+`analyzed_duration_seconds`, analyzed start/end, and whether the analyzed input
+is an unbounded/full-video input.
 
 The primary manifest enforces at most one primary question per source video. The development/test split is source-video-level and approximately 20/80, stratified by category and duration group where possible. Mismatched queries are deterministic derangements within category and duration group, using a different source video and closest available token length.
 
@@ -52,13 +63,21 @@ The primary manifest enforces at most one primary question per source video. The
 Primary policy:
 
 ```text
-delta_t = ceil(P95(development analyzed durations) / 64)
-bins = min(64, ceil(duration / delta_t))
+target_delta_t = median(development analyzed durations) / 16
+desired_bins = ceil(analyzed_duration / target_delta_t)
+bins = clip(desired_bins, 8, 64)
 frames_per_bin = 2
 max_frames = 128
 ```
 
-Each real-time bin samples two chronological frames. Frames are not duplicated when enough unique source frames exist.
+The complete analyzed interval is partitioned into equal contiguous bins for
+each example. The first bin begins at the effective analyzed start and the final
+bin ends at the effective analyzed end, so long clips are compressed into wider
+bins instead of being truncated. Decord length is the authoritative decodable
+frame count; if the annotated end exceeds the decodable boundary, the effective
+analyzed end is adjusted before constructing bins and the adjustment is recorded.
+Each bin samples exactly two chronological frames. Frames are not duplicated
+when enough unique source frames exist.
 
 Robustness policy:
 
@@ -124,9 +143,9 @@ The experiment can support temporal pruning only if temporal distributions are n
 
 Implemented:
 
-- source-video-level v2 manifest builder
+- source-video-level v3 frozen-cohort manifest/audit builder
 - complete local MP4 inventory through `ffprobe`
-- duration tertiles from unique eligible source MP4 durations, not weighted by question count
+- duration tertiles from analyzed model-input durations
 - separate preservation of source MP4 duration and analyzed question duration
 - primary source-video manifest with one primary question per video and deterministic global category-duration balancing
 - deterministic source-level development/test split
@@ -168,15 +187,14 @@ Pending:
 
 ## Engineering Commands
 
-Manifest dry engineering path on the GPU Pod:
+Corrected v3 manifest and CPU-only sampling audit:
 
 ```bash
-python scripts/create_experiment1_v2_manifest.py \
+python scripts/prepare_experiment1_v3_sampling.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
-  --output-dir outputs/experiment1_v2 \
-  --seed 20260830 \
-  --dev-fraction 0.2
+  --frozen-primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --output-dir outputs/experiment1_v3
 ```
 
 After manifests exist, run a small engineering validation before any pilot:
@@ -185,26 +203,26 @@ After manifests exist, run a small engineering validation before any pilot:
 python scripts/run_experiment1.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
-  --manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --manifest outputs/experiment1_v3/primary_manifest.jsonl \
   --limit 3 \
   --num-frames 128 \
   --sampling-mode realtime \
-  --sampling-policy-json outputs/experiment1_v2/split_summary.json \
+  --sampling-policy-json outputs/experiment1_v3/split_summary.json \
   --resolution-config low \
   --attention-extraction reduced_sdpa \
   --query-scope question \
   --resume \
   --allow-7b-inference \
-  --output-dir outputs/experiment1_v2/engineering_low_f32_baseline
+  --output-dir outputs/experiment1_v3/engineering_low_f32_baseline
 ```
 
-The realtime policy freezes `delta_t = ceil(P95(dev analyzed durations) / 64)`,
-samples two chronological frames per bin, caps at 64 bins and therefore 128
-frames, and records exact frame/bin mappings in each artifact. The frozen
-policy is stored in `split_summary.json` under `realtime_sampling_policy`; every
-realtime run, including test-only intervention manifests, must pass that file
-with `--sampling-policy-json` because intervention manifests do not contain
-development records.
+The realtime policy freezes `target_delta_t = median(dev analyzed durations) /
+16`, clips each example to 8-64 full-coverage bins, samples two chronological
+frames per bin, and records exact frame/bin mappings in each artifact. The
+frozen policy is stored in `split_summary.json` under
+`realtime_sampling_policy`; every realtime run, including test-only intervention
+manifests, must pass that file with `--sampling-policy-json` because
+intervention manifests do not contain development records.
 
 The robustness policy is run separately with fixed-budget sampling:
 
@@ -212,7 +230,7 @@ The robustness policy is run separately with fixed-budget sampling:
 python scripts/run_experiment1.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
-  --manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --manifest outputs/experiment1_v3/primary_manifest.jsonl \
   --num-frames 128 \
   --sampling-mode fixed_budget \
   --condition baseline_fixed_budget \
@@ -221,7 +239,7 @@ python scripts/run_experiment1.py \
   --query-scope question \
   --resume \
   --allow-7b-inference \
-  --output-dir outputs/experiment1_v2/runs/baseline_fixed_budget
+  --output-dir outputs/experiment1_v3/runs/baseline_fixed_budget
 ```
 
 Realtime runs use the frozen policy:
@@ -230,17 +248,17 @@ Realtime runs use the frozen policy:
 python scripts/run_experiment1.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
-  --manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --manifest outputs/experiment1_v3/primary_manifest.jsonl \
   --num-frames 128 \
   --sampling-mode realtime \
-  --sampling-policy-json outputs/experiment1_v2/split_summary.json \
+  --sampling-policy-json outputs/experiment1_v3/split_summary.json \
   --condition baseline \
   --resolution-config low \
   --attention-extraction reduced_sdpa \
   --query-scope question \
   --resume \
   --allow-7b-inference \
-  --output-dir outputs/experiment1_v2/runs/baseline
+  --output-dir outputs/experiment1_v3/runs/baseline
 ```
 
 To construct manifests and print the ordered GPU commands without starting
@@ -250,17 +268,17 @@ expensive inference:
 python scripts/prepare_experiment1_v2.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
-  --output-root outputs/experiment1_v2 \
-  --run-root outputs/experiment1_v2/runs
+  --output-root outputs/experiment1_v3 \
+  --run-root outputs/experiment1_v3/runs
 ```
 
 Generate the expected matrix and completeness report:
 
 ```bash
 python scripts/analyze_experiment1_v2.py \
-  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
-  --output-root outputs/experiment1_v2/runs \
-  --final-dir outputs/experiment1_v2/final \
+  --primary-manifest outputs/experiment1_v3/primary_manifest.jsonl \
+  --output-root outputs/experiment1_v3/runs \
+  --final-dir outputs/experiment1_v3/final \
   --bootstrap-replicates 10000
 ```
 
@@ -268,13 +286,13 @@ Create held-out intervention manifests from completed baseline artifacts:
 
 ```bash
 python scripts/create_experiment1_v2_intervention_manifest.py \
-  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
-  --baseline-output-dir outputs/experiment1_v2/runs/baseline \
-  --output-jsonl outputs/experiment1_v2/interventions/mask_top20.jsonl \
+  --primary-manifest outputs/experiment1_v3/primary_manifest.jsonl \
+  --baseline-output-dir outputs/experiment1_v3/runs/baseline \
+  --output-jsonl outputs/experiment1_v3/interventions/mask_top20.jsonl \
   --condition mask_top20 \
   --strategy top \
   --removal-fraction 0.2 \
-  --frozen-reference-layer-json outputs/experiment1_v2/frozen_reference_layer.json \
+  --frozen-reference-layer-json outputs/experiment1_v3/frozen_reference_layer.json \
   --seed 20260830
 ```
 
@@ -291,13 +309,13 @@ attention only after layer 8:
 
 ```bash
 python scripts/create_experiment1_v2_intervention_manifest.py \
-  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
-  --baseline-output-dir outputs/experiment1_v2/runs/baseline \
-  --output-jsonl outputs/experiment1_v2/interventions/fusion_block_top20_after_layer_8.jsonl \
+  --primary-manifest outputs/experiment1_v3/primary_manifest.jsonl \
+  --baseline-output-dir outputs/experiment1_v3/runs/baseline \
+  --output-jsonl outputs/experiment1_v3/interventions/fusion_block_top20_after_layer_8.jsonl \
   --condition fusion_block_top20_after_layer_8 \
   --strategy top \
   --removal-fraction 0.2 \
-  --frozen-reference-layer-json outputs/experiment1_v2/frozen_reference_layer.json \
+  --frozen-reference-layer-json outputs/experiment1_v3/frozen_reference_layer.json \
   --seed 20260830
 ```
 
@@ -315,9 +333,9 @@ Create control manifests:
 
 ```bash
 python scripts/create_experiment1_v2_control_manifest.py \
-  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
-  --mismatched-queries outputs/experiment1_v2/mismatched_queries.json \
-  --output-jsonl outputs/experiment1_v2/controls/mismatched_query.jsonl \
+  --primary-manifest outputs/experiment1_v3/primary_manifest.jsonl \
+  --mismatched-queries outputs/experiment1_v3/mismatched_queries.json \
+  --output-jsonl outputs/experiment1_v3/controls/mismatched_query.jsonl \
   --control mismatched_query
 ```
 
@@ -325,10 +343,10 @@ Same-video/different-query controls use `additional_questions.jsonl`:
 
 ```bash
 python scripts/create_experiment1_v2_control_manifest.py \
-  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
-  --mismatched-queries outputs/experiment1_v2/mismatched_queries.json \
-  --additional-questions outputs/experiment1_v2/additional_questions.jsonl \
-  --output-jsonl outputs/experiment1_v2/controls/same_video_different_query.jsonl \
+  --primary-manifest outputs/experiment1_v3/primary_manifest.jsonl \
+  --mismatched-queries outputs/experiment1_v3/mismatched_queries.json \
+  --additional-questions outputs/experiment1_v3/additional_questions.jsonl \
+  --output-jsonl outputs/experiment1_v3/controls/same_video_different_query.jsonl \
   --control same_video_different_query
 ```
 
@@ -337,10 +355,10 @@ control artifacts exist:
 
 ```bash
 python scripts/select_experiment1_v2_reference_layer.py \
-  --primary-manifest outputs/experiment1_v2/primary_manifest.jsonl \
-  --baseline-output-dir outputs/experiment1_v2/runs/baseline \
-  --mismatched-output-dir outputs/experiment1_v2/runs/mismatched_query \
-  --output-json outputs/experiment1_v2/frozen_reference_layer.json
+  --primary-manifest outputs/experiment1_v3/primary_manifest.jsonl \
+  --baseline-output-dir outputs/experiment1_v3/runs/baseline \
+  --mismatched-output-dir outputs/experiment1_v3/runs/mismatched_query \
+  --output-json outputs/experiment1_v3/frozen_reference_layer.json
 ```
 
 Medium-resolution profiling gate for the longest realtime engineering stress
@@ -351,11 +369,11 @@ while reporting stage-specific CPU/GPU peaks:
 python scripts/run_experiment1.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
-  --manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --manifest outputs/experiment1_v3/primary_manifest.jsonl \
   --question-id ingredient_ingredient_adding_localization_16 \
   --num-frames 128 \
   --sampling-mode realtime \
-  --sampling-policy-json outputs/experiment1_v2/split_summary.json \
+  --sampling-policy-json outputs/experiment1_v3/split_summary.json \
   --resolution-config medium \
   --attention-extraction reduced_sdpa \
   --query-scope question \
@@ -363,6 +381,6 @@ python scripts/run_experiment1.py \
   --resume \
   --allow-7b-inference \
   --profile-one-example \
-  --profile-output-json outputs/experiment1_v2/profiles/medium_128_ingredient_ingredient_adding_localization_16.json \
-  --output-dir outputs/experiment1_v2/profile_medium_128_ingredient_ingredient_adding_localization_16
+  --profile-output-json outputs/experiment1_v3/profiles/medium_128_ingredient_ingredient_adding_localization_16.json \
+  --output-dir outputs/experiment1_v3/profile_medium_128_ingredient_ingredient_adding_localization_16
 ```

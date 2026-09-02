@@ -139,14 +139,16 @@ def test_build_experiment1_v2_manifests_are_source_disjoint_and_deranged(tmp_pat
         assert mismatch["duration_group"] == record["duration_group"]
     assert outputs_a["additional_questions"]
     assert outputs_a["split_summary"]["primary_manifest_count"] == len(primary)
-    assert outputs_a["split_summary"]["duration_tertile_basis"] == "unique eligible source MP4 durations from ffprobe"
+    assert outputs_a["split_summary"]["duration_tertile_basis"] == "analyzed model-input durations for eligible single-video questions"
     assert "realtime_sampling_policy" in outputs_a["split_summary"]
     assert outputs_a["split_summary"]["realtime_sampling_policy"]["frames_per_bin"] == 2
-    assert all(record["duration_group_basis"] == "source_mp4_duration_seconds" for record in primary)
+    assert outputs_a["split_summary"]["realtime_sampling_policy"]["target_delta_t_seconds"] > 0
+    assert outputs_a["split_summary"]["realtime_sampling_policy"]["min_bins"] == 8
+    assert all(record["duration_group_basis"] == "analyzed_duration_seconds" for record in primary)
     assert all(record["source_video_duration_seconds"] == 600.0 for record in primary)
 
 
-def test_duration_groups_use_source_mp4_duration_not_short_question_duration(tmp_path):
+def test_duration_groups_use_analyzed_question_duration_not_source_mp4_duration(tmp_path):
     questions_dir = tmp_path / "questions"
     mp4_dir = tmp_path / "mp4"
     question_type = "gaze_interaction_anticipation"
@@ -159,17 +161,26 @@ def test_duration_groups_use_source_mp4_duration_not_short_question_duration(tmp
         "P05-long-a": 1000.0,
         "P06-long-b": 1200.0,
     }
+    analyzed_durations = {
+        "P01-short-a": 5.0,
+        "P02-short-b": 6.0,
+        "P03-medium-a": 50.0,
+        "P04-medium-b": 55.0,
+        "P05-long-a": 300.0,
+        "P06-long-b": 320.0,
+    }
     for idx, (video_id, _source_duration) in enumerate(source_durations.items()):
         participant = video_id.split("-")[0]
         path = mp4_dir / participant / f"{video_id}.mp4"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"mp4")
+        analyzed_duration = analyzed_durations[video_id]
         records[f"{question_type}_{idx}"] = {
             "inputs": {
                 "video 1": {
                     "id": video_id,
                     "start_time": "00:00:00.000",
-                    "end_time": "00:00:05.000",
+                    "end_time": _time(analyzed_duration),
                 }
             },
             "question": f"Question {idx}?",
@@ -208,7 +219,8 @@ def test_duration_groups_use_source_mp4_duration_not_short_question_duration(tmp
     assert by_video["P01-short-a"]["duration_group"] == "short"
     assert by_video["P03-medium-a"]["duration_group"] == "medium"
     assert by_video["P05-long-a"]["duration_group"] == "long"
-    assert {record["analyzed_duration_seconds"] for record in outputs["primary_manifest"]} == {5.0}
+    assert by_video["P01-short-a"]["duration_group_basis"] == "analyzed_duration_seconds"
+    assert by_video["P05-long-a"]["source_video_duration_seconds"] == 1000.0
 
 
 def _candidate(video_id: str, question_id: str, question_type: str, category: str, duration_group: str):

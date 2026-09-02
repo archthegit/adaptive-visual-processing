@@ -27,8 +27,8 @@ def parse_args() -> argparse.Namespace:
         choices=["legacy", "realtime", "fixed_budget"],
         default="legacy",
         help=(
-            "legacy uses the historical uniform --num-frames sampler; realtime uses the Experiment 1 v2 "
-            "development-P95 real-time bin policy; fixed_budget uses 128 frames, 16 bins, 8 frames per bin."
+            "legacy uses the historical uniform --num-frames sampler; realtime uses the Experiment 1 adaptive "
+            "full-coverage policy; fixed_budget uses 128 frames, 16 bins, 8 frames per bin."
         ),
     )
     parser.add_argument(
@@ -291,6 +291,15 @@ def _sample_video_indices(path: str | Path, indices: list[int]) -> Any:
     return reader.get_batch(indices).asnumpy()
 
 
+def _decord_video_length(path: str | Path) -> int | None:
+    try:
+        import decord
+    except ImportError:
+        return None
+    reader = decord.VideoReader(str(path), ctx=decord.cpu(0))
+    return int(len(reader))
+
+
 def _load_realtime_sampling_policy(path: str | Path | None) -> dict[str, Any]:
     if path is None:
         raise ValueError("--sampling-mode realtime requires --sampling-policy-json.")
@@ -314,22 +323,38 @@ def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sa
     info = _probe_video_for_sampling(video_path)
     start = float(record.get("analyzed_start_seconds", 0.0) or 0.0)
     end = float(record.get("analyzed_end_seconds") or info["num_frames"] / float(info["fps"]))
+    decord_length = _decord_video_length(video_path)
     if sampling_mode == "realtime":
         frozen = record.get("_realtime_sampling_policy")
         if frozen is None:
             raise ValueError("Realtime sampling requires a frozen policy from --sampling-policy-json.")
         policy = TemporalSamplingPolicy(
-            name="real_time_p95_development",
+            name="adaptive_full_coverage_median_development",
             delta_t_seconds=float(frozen["delta_t_seconds"]),
             frames_per_bin=int(frozen["frames_per_bin"]),
             max_bins=int(frozen["max_bins"]),
             fixed_num_frames=None,
             fixed_num_bins=None,
+            min_bins=int(frozen.get("min_bins", 8)),
         )
-        plan = real_time_bin_plan(start, end, float(info["fps"]), policy)
+        plan = real_time_bin_plan(
+            start,
+            end,
+            float(info["fps"]),
+            policy,
+            decord_length=decord_length,
+            ffprobe_frame_count=int(info["num_frames"]),
+        )
     elif sampling_mode == "fixed_budget":
         policy = robustness_policy()
-        plan = fixed_budget_bin_plan(start, end, float(info["fps"]), policy)
+        plan = fixed_budget_bin_plan(
+            start,
+            end,
+            float(info["fps"]),
+            policy,
+            decord_length=decord_length,
+            ffprobe_frame_count=int(info["num_frames"]),
+        )
     else:
         raise ValueError(f"Unsupported v2 sampling mode: {sampling_mode}")
     return plan, {
@@ -337,8 +362,21 @@ def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sa
         "policy": policy.to_json(),
         "source_fps": float(info["fps"]),
         "source_num_frames": int(info["num_frames"]),
+        "ffprobe_frame_count": int(info["num_frames"]),
+        "decord_frame_count": plan[0].get("decord_frame_count") if plan else None,
         "start_seconds": start,
         "end_seconds": end,
+        "effective_analyzed_start_seconds": plan[0].get("effective_analyzed_start_seconds") if plan else start,
+        "effective_analyzed_end_seconds": plan[-1].get("effective_analyzed_end_seconds") if plan else end,
+        "analyzed_end_adjustment": plan[0].get("analyzed_end_adjustment") if plan else None,
+        "target_delta_t_seconds": plan[0].get("target_delta_t_seconds") if plan else None,
+        "effective_seconds_per_bin": plan[0].get("effective_seconds_per_bin") if plan else None,
+        "desired_bins": plan[0].get("desired_bins") if plan else None,
+        "num_bins": len(plan),
+        "min_bin_clipped": plan[0].get("min_bin_clipped") if plan else None,
+        "max_bin_clipped": plan[0].get("max_bin_clipped") if plan else None,
+        "first_sampled_timestamp_seconds": plan[0]["source_timestamps"][0] if plan else None,
+        "last_sampled_timestamp_seconds": plan[-1]["source_timestamps"][-1] if plan else None,
         "frozen_policy_source": record.get("_sampling_policy_json"),
     }
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import math
 import random
@@ -194,7 +194,7 @@ def question_token_length(example: VQAExample) -> int:
 def eligible_primary_candidates(
     examples: list[VQAExample],
     inventory_records: list[VideoInventoryRecord],
-    thresholds: dict[str, float],
+    thresholds: dict[str, float] | None,
 ) -> tuple[list[PrimaryCandidate], list[dict[str, Any]]]:
     inventory = {record.video_id: record for record in inventory_records if record.complete}
     candidates: list[PrimaryCandidate] = []
@@ -237,7 +237,7 @@ def eligible_primary_candidates(
                 analyzed_end_seconds=end,
                 analyzed_duration_seconds=duration,
                 is_unbounded_full_video=unbounded,
-                duration_group=assign_duration_group(source_duration, thresholds),
+                duration_group=assign_duration_group(duration, thresholds) if thresholds is not None else "unassigned",
             )
         )
     return candidates, exclusions
@@ -393,7 +393,7 @@ def primary_manifest_record(candidate: PrimaryCandidate, split: str | None = Non
         "analyzed_duration_seconds": candidate.analyzed_duration_seconds,
         "source_video_duration_seconds": candidate.source_video_duration_seconds,
         "duration_group": candidate.duration_group,
-        "duration_group_basis": "source_mp4_duration_seconds",
+        "duration_group_basis": "analyzed_duration_seconds",
         "is_unbounded_full_video": candidate.is_unbounded_full_video,
         "video_clip": [
             {
@@ -489,7 +489,7 @@ def build_split_summary(
         "dev_fraction": config.dev_fraction,
         "max_primary_per_source_video": config.max_primary_per_source_video,
         "duration_tertile_thresholds": thresholds,
-        "duration_tertile_basis": "unique eligible source MP4 durations from ffprobe",
+        "duration_tertile_basis": "analyzed model-input durations for eligible single-video questions",
         "realtime_sampling_policy": sampling_policy,
         "inventory_complete_mp4s": len(inventory),
         "eligible_question_count_before_primary_video_cap": len(candidates),
@@ -512,16 +512,12 @@ def build_experiment1_v2_manifests(
     inventory, video_exclusions = inventory_local_mp4s(mp4_dir, runner=ffprobe_runner)
     if not inventory:
         raise ValueError(f"No complete MP4 files were inventoried under {mp4_dir}.")
-    inventory_map = {record.video_id: record for record in inventory}
-    eligible_source_videos: set[str] = set()
-    for example in dataset.examples:
-        category = infer_experiment1_category(example.question_type)
-        if category not in EXPERIMENT1_CATEGORIES:
-            continue
-        if len(example.inputs) == 1 and not example.inputs[0].is_image and example.inputs[0].video_id in inventory_map:
-            eligible_source_videos.add(example.inputs[0].video_id)
-    thresholds = duration_tertiles(inventory_map[video_id].duration_seconds for video_id in eligible_source_videos)
-    candidates, question_exclusions = eligible_primary_candidates(dataset.examples, inventory, thresholds)
+    ungrouped_candidates, question_exclusions = eligible_primary_candidates(dataset.examples, inventory, None)
+    thresholds = duration_tertiles(candidate.analyzed_duration_seconds for candidate in ungrouped_candidates)
+    candidates = [
+        replace(candidate, duration_group=assign_duration_group(candidate.analyzed_duration_seconds, thresholds))
+        for candidate in ungrouped_candidates
+    ]
     primaries, additional_questions = choose_primary_per_video(candidates, seed=config.seed)
     dev, test = split_primary_videos(primaries, config)
     records = [primary_manifest_record(item, split="dev") for item in dev]
@@ -531,12 +527,14 @@ def build_experiment1_v2_manifests(
     exclusions = video_exclusions + question_exclusions
     assert_v2_manifest_invariants(records, mismatches, inventory)
     dev_durations = [item.analyzed_duration_seconds for item in dev]
-    dev_p95 = percentile(dev_durations, 0.95)
+    dev_median = percentile(dev_durations, 0.5)
     policy = primary_policy_from_development_durations(dev_durations)
     sampling_policy = {
-        "development_duration_p95_seconds": dev_p95,
+        "development_duration_median_seconds": dev_median,
+        "target_delta_t_seconds": policy.delta_t_seconds,
         "delta_t_seconds": policy.delta_t_seconds,
         "frames_per_bin": policy.frames_per_bin,
+        "min_bins": policy.min_bins,
         "max_bins": policy.max_bins,
         "max_frames": policy.max_bins * policy.frames_per_bin,
         "policy": policy.to_json(),
