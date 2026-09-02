@@ -343,13 +343,16 @@ python scripts/select_experiment1_v2_reference_layer.py \
   --output-json outputs/experiment1_v2/frozen_reference_layer.json
 ```
 
-Medium-resolution profiling gate for one realtime example:
+Medium-resolution profiling gate for the longest realtime engineering stress
+case. This keeps all layers, heads, prompts, frames and medium resolution intact
+while reporting stage-specific CPU/GPU peaks:
 
 ```bash
 python scripts/run_experiment1.py \
   --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
   --mp4-dir /workspace/data/hd_epic_mp4 \
   --manifest outputs/experiment1_v2/primary_manifest.jsonl \
+  --question-id ingredient_ingredient_adding_localization_16 \
   --num-frames 128 \
   --sampling-mode realtime \
   --sampling-policy-json outputs/experiment1_v2/split_summary.json \
@@ -360,6 +363,6 @@ python scripts/run_experiment1.py \
   --resume \
   --allow-7b-inference \
   --profile-one-example \
-  --profile-output-json outputs/experiment1_v2/profiles/medium_one_example.json \
-  --output-dir outputs/experiment1_v2/profile_medium_one_example
+  --profile-output-json outputs/experiment1_v2/profiles/medium_128_ingredient_ingredient_adding_localization_16.json \
+  --output-dir outputs/experiment1_v2/profile_medium_128_ingredient_ingredient_adding_localization_16
 ```

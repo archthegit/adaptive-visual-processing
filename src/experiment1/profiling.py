@@ -36,6 +36,19 @@ def cuda_memory_snapshot(torch_module: Any | None = None) -> dict[str, int]:
         return {}
 
 
+def reset_cuda_peak_memory_stats(torch_module: Any | None = None) -> None:
+    if torch_module is None:
+        try:
+            import torch as torch_module  # type: ignore[no-redef]
+        except Exception:
+            return
+    try:
+        if torch_module.cuda.is_available():
+            torch_module.cuda.reset_peak_memory_stats()
+    except Exception:
+        return
+
+
 @dataclass
 class StageProfiler:
     enabled: bool = False
@@ -53,6 +66,7 @@ class StageProfiler:
             yield
             return
         self.log(f"[experiment1] start {name}")
+        reset_cuda_peak_memory_stats()
         started = time.time()
         start_rss = peak_cpu_rss_bytes()
         try:

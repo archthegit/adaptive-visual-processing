@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import gc
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -18,7 +19,12 @@ from src.models.qwen_temporal_rope import temporal_position_interval
 from .answer_scoring import score_answer_choices_from_outputs
 from .encoder_temporal import adjacent_cosine_similarity, vision_temporal_capture_context
 from .qwen_vision_attention import qwen_vision_attention_capture_context
-from .qwen_reduced_attention import masked_eager_attention_context, reduced_attention_context
+from .qwen_reduced_attention import (
+    masked_eager_attention_context,
+    masked_sdpa_attention_context,
+    reduced_attention_context,
+    sdpa_attention_context,
+)
 from .relevance import aggregate_question_to_visual_attention
 from .resolution import ResolutionConfig
 from .temporal import build_temporal_relevance_from_token_scores, represented_sampled_frames
@@ -217,6 +223,15 @@ def cuda_memory_metadata(torch_module: Any) -> dict[str, int]:
         "cuda_max_memory_allocated_bytes": int(torch_module.cuda.max_memory_allocated()),
         "cuda_max_memory_reserved_bytes": int(torch_module.cuda.max_memory_reserved()),
     }
+
+
+def release_torch_intermediates(torch_module: Any) -> None:
+    gc.collect()
+    try:
+        if torch_module.cuda.is_available():
+            torch_module.cuda.empty_cache()
+    except Exception:
+        return
 
 
 def visual_token_cell_metadata(layout: Any, frame_batches: list[FrameBatch]) -> list[dict[str, Any]]:
@@ -619,20 +634,24 @@ def run_qwen_relevance_example(
             raise ValueError("attention_extraction must be 'full' or 'reduced_sdpa'.")
     if profiler is not None and decoder_tensor_shapes:
         profiler.add_tensor_shapes("decoder_question_visual_reduction", decoder_tensor_shapes)
+    del token_scores
+    release_torch_intermediates(torch)
 
     prefill_runtime = time.time() - started
 
     scoring_started = time.time()
     with stage("answer_scoring"):
-        with torch.inference_mode():
-            scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
+        with sdpa_attention_context(model._model):
+            with torch.inference_mode():
+                scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
         answer_choice_scores = score_answer_choices_from_outputs(
             scoring_outputs, model._processor.tokenizer, example.correct_idx, len(example.choices)
         )
         unmodified_prefill_next_token_topk = next_token_topk_from_outputs(scoring_outputs)
         del scoring_outputs
+        release_torch_intermediates(torch)
         if decoder_intervention_active:
-            with masked_eager_attention_context(
+            with masked_sdpa_attention_context(
                 model._model,
                 layout,
                 vision_access_through_layer,
@@ -648,17 +667,17 @@ def run_qwen_relevance_example(
                 len(example.choices),
             )
             del intervention_scoring_outputs
+            release_torch_intermediates(torch)
     answer_scoring_runtime = time.time() - scoring_started
 
     memory_after_prefill = cuda_memory_metadata(torch)
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    release_torch_intermediates(torch)
 
     gen_started = time.time()
     with stage("generation"):
         if vision_access_through_layer in {None, "none"}:
             if decoder_mask_bins:
-                with masked_eager_attention_context(
+                with masked_sdpa_attention_context(
                     model._model,
                     layout,
                     vision_access_through_layer,
@@ -668,10 +687,11 @@ def run_qwen_relevance_example(
                     with torch.inference_mode():
                         output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
             else:
-                with torch.inference_mode():
-                    output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
+                with sdpa_attention_context(model._model):
+                    with torch.inference_mode():
+                        output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
         else:
-            with masked_eager_attention_context(
+            with masked_sdpa_attention_context(
                 model._model,
                 layout,
                 vision_access_through_layer,
@@ -802,7 +822,7 @@ def run_qwen_relevance_example(
                 else "separate_prefill_forward_on_pre_encoder_modified_inputs"
             ),
             "intervention_answer_choice_score_source": (
-                "separate_masked_eager_prefill_forward"
+                "separate_masked_sdpa_prefill_forward"
                 if decoder_intervention_active
                 else None
             ),

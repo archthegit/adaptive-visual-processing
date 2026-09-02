@@ -2,11 +2,14 @@ import numpy as np
 
 from src.experiment1.qwen_reduced_attention import (
     DecoderDirectAccessMask,
+    MASKED_SDPA_IMPLEMENTATION,
     ReducedAttentionCapture,
     VisualAccessIntervention,
     _decoder_direct_access_block_mask,
     _query_sequence_positions,
     _set_attention_implementation,
+    masked_sdpa_attention_context,
+    sdpa_attention_context,
 )
 from src.experiment1.token_layout import TokenLayout, VisualTokenCell
 
@@ -37,6 +40,14 @@ def test_reduced_attention_capture_orders_layers():
     np.testing.assert_allclose(capture.ordered_token_scores(expected_layers=2), [[0.7, 0.3], [0.2, 0.8]])
 
 
+def test_reduced_attention_capture_requires_all_decoder_layers():
+    capture = ReducedAttentionCapture(question_token_indices=(2,), visual_token_indices=(0, 1))
+    for layer in range(28):
+        capture.reduced_by_layer[layer] = np.array([float(layer), float(layer + 1)])
+
+    assert capture.ordered_token_scores(expected_layers=28).shape == (28, 2)
+
+
 def test_set_attention_implementation_only_changes_decoder_layers():
     text_config = _Config()
     vision_config = _Config()
@@ -45,6 +56,52 @@ def test_set_attention_implementation_only_changes_decoder_layers():
     assert text_config._attn_implementation == "custom"
     assert vision_config._attn_implementation == "eager"
     assert changed == [(text_config, "eager")]
+
+
+def test_sdpa_attention_context_uses_memory_efficient_backend_and_restores():
+    text_config = _Config()
+    model = _Model([_Module(text_config, layer_idx=0), _Module(text_config, layer_idx=1)])
+
+    with sdpa_attention_context(model):
+        assert text_config._attn_implementation == "sdpa"
+
+    assert text_config._attn_implementation == "eager"
+
+
+def test_masked_sdpa_attention_context_uses_custom_backend_and_restores():
+    import pytest
+
+    pytest.importorskip("torch")
+    text_config = _Config()
+
+    class _FullModel(_Model):
+        class Config:
+            num_hidden_layers = 28
+
+        config = Config()
+
+    model = _FullModel([_Module(text_config, layer_idx=0), _Module(text_config, layer_idx=1)])
+    layout = TokenLayout(
+        question_token_indices=(4,),
+        prompt_token_indices=tuple(range(6)),
+        visual_token_indices=(1, 3),
+        visual_cells=(
+            VisualTokenCell(1, 0, "video", 0, 0, 0, 0, 2, 1, 2),
+            VisualTokenCell(3, 1, "video", 0, 1, 0, 0, 2, 1, 2),
+        ),
+        visual_grid_metadata={},
+        query_scope="question",
+    )
+
+    with masked_sdpa_attention_context(
+        model,
+        layout,
+        vision_access_through_layer="none",
+        decoder_direct_access_mask_temporal_bins=(1,),
+    ):
+        assert text_config._attn_implementation == MASKED_SDPA_IMPLEMENTATION
+
+    assert text_config._attn_implementation == "eager"
 
 
 def test_custom_attention_implementations_register_causal_masks():
@@ -63,7 +120,11 @@ def test_custom_attention_implementations_register_causal_masks():
         def __init__(self, implementation):
             self._attn_implementation = implementation
 
-    for implementation in [reduced.ATTENTION_IMPLEMENTATION, reduced.MASKED_EAGER_IMPLEMENTATION]:
+    for implementation in [
+        reduced.ATTENTION_IMPLEMENTATION,
+        reduced.MASKED_EAGER_IMPLEMENTATION,
+        reduced.MASKED_SDPA_IMPLEMENTATION,
+    ]:
         mask = create_causal_mask(
             config=Config(implementation),
             inputs_embeds=torch.zeros(1, 4, 8),
@@ -296,6 +357,50 @@ def test_decoder_direct_access_mask_blocks_exact_requested_temporal_columns():
     assert not torch.allclose(baseline, blocked)
     assert torch.all(weights[:, :, :, [1, 3]] == 0)
     assert torch.all(weights[:, :, :, [0, 2, 4, 5, 6]] > 0)
+
+
+def test_masked_sdpa_matches_masked_eager_attention_output():
+    import pytest
+
+    torch = pytest.importorskip("torch")
+
+    from src.experiment1 import qwen_reduced_attention as reduced
+
+    class Module:
+        num_key_value_groups = 1
+        training = False
+        layer_idx = 1
+
+    query = torch.tensor([[[[1.0, 0.5], [0.5, 1.0]]]])
+    key = torch.tensor(
+        [[[[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0], [1.0, 1.0], [2.0, 1.0], [1.0, 2.0]]]]
+    )
+    value = torch.eye(7).reshape(1, 1, 7, 7)
+    old_mask = reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask(visual_token_indices=(1, 3), prompt_seq_len=5)
+    try:
+        eager_output, eager_weights = reduced.qwen_relevance_masked_eager_forward(
+            Module(),
+            query,
+            key,
+            value,
+            None,
+            scaling=1.0,
+        )
+        sdpa_output, sdpa_weights = reduced.qwen_relevance_masked_sdpa_forward(
+            Module(),
+            query,
+            key,
+            value,
+            None,
+            scaling=1.0,
+        )
+    finally:
+        reduced._ACTIVE_DECODER_DIRECT_ACCESS_MASK = old_mask
+
+    assert sdpa_weights is None
+    assert torch.all(eager_weights[:, :, :, [1, 3]] == 0)
+    torch.testing.assert_close(sdpa_output, eager_output, rtol=1e-5, atol=1e-6)
 
 
 def test_decoder_direct_access_block_mask_values_exact_requested_columns():

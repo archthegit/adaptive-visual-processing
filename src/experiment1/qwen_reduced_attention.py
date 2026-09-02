@@ -12,6 +12,7 @@ from .token_layout import TokenLayout
 
 ATTENTION_IMPLEMENTATION = "qwen_relevance_reduced_sdpa"
 MASKED_EAGER_IMPLEMENTATION = "qwen_relevance_masked_eager"
+MASKED_SDPA_IMPLEMENTATION = "qwen_relevance_masked_sdpa"
 _ACTIVE_CAPTURE: "ReducedAttentionCapture | None" = None
 _ACTIVE_VISUAL_ACCESS: "VisualAccessIntervention | None" = None
 _ACTIVE_DECODER_DIRECT_ACCESS_MASK: "DecoderDirectAccessMask | None" = None
@@ -117,8 +118,10 @@ def register_reduced_attention() -> None:
 
     ALL_ATTENTION_FUNCTIONS.register(ATTENTION_IMPLEMENTATION, qwen_relevance_reduced_sdpa_forward)
     ALL_ATTENTION_FUNCTIONS.register(MASKED_EAGER_IMPLEMENTATION, qwen_relevance_masked_eager_forward)
+    ALL_ATTENTION_FUNCTIONS.register(MASKED_SDPA_IMPLEMENTATION, qwen_relevance_masked_sdpa_forward)
     ALL_MASK_ATTENTION_FUNCTIONS.register(ATTENTION_IMPLEMENTATION, eager_mask)
     ALL_MASK_ATTENTION_FUNCTIONS.register(MASKED_EAGER_IMPLEMENTATION, eager_mask)
+    ALL_MASK_ATTENTION_FUNCTIONS.register(MASKED_SDPA_IMPLEMENTATION, eager_mask)
 
 
 def _set_attention_implementation(model: Any, implementation: str) -> list[tuple[Any, str]]:
@@ -177,6 +180,46 @@ def reduced_attention_context(
         yield capture
     finally:
         _ACTIVE_CAPTURE = previous_capture
+        _ACTIVE_VISUAL_ACCESS = previous_intervention
+        _ACTIVE_DECODER_DIRECT_ACCESS_MASK = previous_direct_access_mask
+        for config, previous_implementation in previous_configs:
+            config._attn_implementation = previous_implementation
+
+
+@contextmanager
+def sdpa_attention_context(model: Any) -> Iterator[None]:
+    previous_configs = _set_attention_implementation(model, "sdpa")
+    try:
+        yield
+    finally:
+        for config, previous_implementation in previous_configs:
+            config._attn_implementation = previous_implementation
+
+
+@contextmanager
+def masked_sdpa_attention_context(
+    model: Any,
+    layout: TokenLayout,
+    vision_access_through_layer: str | int | None,
+    decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
+    decoder_direct_access_through_layer: int | None = None,
+) -> Iterator[None]:
+    global _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    register_reduced_attention()
+    previous_intervention = _ACTIVE_VISUAL_ACCESS
+    previous_direct_access_mask = _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    _ACTIVE_VISUAL_ACCESS = VisualAccessIntervention.from_layout(
+        layout, vision_access_through_layer, _num_decoder_layers(model)
+    )
+    _ACTIVE_DECODER_DIRECT_ACCESS_MASK = DecoderDirectAccessMask.from_layout(
+        layout,
+        decoder_direct_access_mask_temporal_bins,
+        through_layer=decoder_direct_access_through_layer,
+    )
+    previous_configs = _set_attention_implementation(model, MASKED_SDPA_IMPLEMENTATION)
+    try:
+        yield
+    finally:
         _ACTIVE_VISUAL_ACCESS = previous_intervention
         _ACTIVE_DECODER_DIRECT_ACCESS_MASK = previous_direct_access_mask
         for config, previous_implementation in previous_configs:
@@ -317,6 +360,34 @@ def qwen_relevance_masked_eager_forward(
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
+
+
+def qwen_relevance_masked_sdpa_forward(
+    module: Any,
+    query: Any,
+    key: Any,
+    value: Any,
+    attention_mask: Any,
+    scaling: float,
+    dropout: float = 0.0,
+    **kwargs: Any,
+) -> tuple[Any, None]:
+    import torch.nn.functional as F
+
+    key_states = _repeat_kv(key, module.num_key_value_groups)
+    value_states = _repeat_kv(value, module.num_key_value_groups)
+    attention_mask = _apply_experiment1_blocks(attention_mask, module, query, key_states, kwargs.get("position_ids"))
+    attn_output = F.scaled_dot_product_attention(
+        query,
+        key_states,
+        value_states,
+        attn_mask=attention_mask,
+        dropout_p=dropout,
+        scale=scaling,
+        is_causal=False,
+    )
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    return attn_output, None
 
 
 def qwen_relevance_reduced_sdpa_forward(

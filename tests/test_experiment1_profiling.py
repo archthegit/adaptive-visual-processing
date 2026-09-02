@@ -1,5 +1,6 @@
 import json
 
+from src.experiment1 import profiling
 from src.experiment1.profiling import StageProfiler, peak_cpu_rss_bytes
 
 
@@ -20,3 +21,20 @@ def test_stage_profiler_records_elapsed_memory_and_shapes(tmp_path):
     path = tmp_path / "profile.json"
     profiler.write_json(path)
     assert json.loads(path.read_text())["stages"][0]["example"] == "q1"
+
+
+def test_stage_profiler_resets_cuda_peak_memory_per_stage(monkeypatch):
+    calls = []
+
+    def fake_reset():
+        calls.append("reset")
+
+    monkeypatch.setattr(profiling, "reset_cuda_peak_memory_stats", fake_reset)
+    profiler = StageProfiler(enabled=True, log_progress=False)
+
+    with profiler.stage("one"):
+        pass
+    with profiler.stage("two"):
+        pass
+
+    assert calls == ["reset", "reset"]
