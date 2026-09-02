@@ -12,6 +12,9 @@ from src.io import write_json
 from .v2_metrics import jensen_shannon_divergence, top_fraction_mass
 
 
+MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS = 0.05
+
+
 @dataclass(frozen=True)
 class ReferenceLayerScore:
     layer: int
@@ -19,7 +22,7 @@ class ReferenceLayerScore:
     mean_correct_mismatch_jsd: float
     mean_absolute_visual_mass: float
     mean_top20_mass: float
-    score: float
+    passes_absolute_visual_mass_threshold: bool
 
 
 def load_manifest_records(path: str | Path) -> list[dict[str, Any]]:
@@ -57,6 +60,7 @@ def score_reference_layers(
     dev_records: list[dict[str, Any]],
     baseline_output_dir: str | Path,
     mismatched_output_dir: str | Path | None = None,
+    min_absolute_visual_mass: float = MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS,
 ) -> list[ReferenceLayerScore]:
     if not dev_records:
         raise ValueError("Reference-layer selection requires at least one development example.")
@@ -83,7 +87,6 @@ def score_reference_layers(
         mean_jsd = float(np.mean(layer_jsd[layer]))
         mean_mass = float(np.mean(layer_mass[layer]))
         mean_top20 = float(np.mean(layer_top20[layer]))
-        combined = mean_jsd * 10.0 + mean_mass + mean_top20
         scores.append(
             ReferenceLayerScore(
                 layer=layer,
@@ -91,16 +94,33 @@ def score_reference_layers(
                 mean_correct_mismatch_jsd=mean_jsd,
                 mean_absolute_visual_mass=mean_mass,
                 mean_top20_mass=mean_top20,
-                score=combined,
+                passes_absolute_visual_mass_threshold=mean_mass >= min_absolute_visual_mass,
             )
         )
     return scores
 
 
-def select_reference_layer(scores: list[ReferenceLayerScore]) -> ReferenceLayerScore:
+def select_reference_layer(
+    scores: list[ReferenceLayerScore],
+    min_absolute_visual_mass: float = MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS,
+) -> ReferenceLayerScore:
     if not scores:
         raise ValueError("No reference-layer scores available.")
-    return max(scores, key=lambda item: (item.score, item.mean_correct_mismatch_jsd, item.mean_absolute_visual_mass, item.mean_top20_mass, -item.layer))
+    eligible = [score for score in scores if score.mean_absolute_visual_mass >= min_absolute_visual_mass]
+    if not eligible:
+        raise ValueError(
+            "No decoder layer passed the frozen minimum absolute visual mass threshold "
+            f"({min_absolute_visual_mass})."
+        )
+    return max(
+        eligible,
+        key=lambda item: (
+            item.mean_correct_mismatch_jsd,
+            item.mean_absolute_visual_mass,
+            item.mean_top20_mass,
+            -item.layer,
+        ),
+    )
 
 
 def write_frozen_reference_layer(
@@ -111,15 +131,23 @@ def write_frozen_reference_layer(
 ) -> dict[str, Any]:
     primary = load_manifest_records(primary_manifest_path)
     dev = common_dev_records(primary)
-    scores = score_reference_layers(dev, baseline_output_dir, mismatched_output_dir=mismatched_output_dir)
-    selected = select_reference_layer(scores)
+    scores = score_reference_layers(
+        dev,
+        baseline_output_dir,
+        mismatched_output_dir=mismatched_output_dir,
+        min_absolute_visual_mass=MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS,
+    )
+    selected = select_reference_layer(scores, min_absolute_visual_mass=MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS)
     payload = {
         "selected_layer": selected.layer,
+        "minimum_absolute_visual_mass_threshold": MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS,
         "selection_rule": [
-            "temporal evidence alignment when annotation permits it",
-            "correct-query versus mismatched-query separation",
-            "sufficient absolute visual attention mass",
-            "temporal concentration",
+            "annotation temporal alignment is unavailable, so no ground-truth temporal evidence term is used",
+            f"exclude decoder layers with mean absolute visual mass below {MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS}",
+            "maximize correct-query versus mismatched-query temporal Jensen-Shannon divergence",
+            "break ties by higher mean absolute visual mass",
+            "then higher top-20% temporal mass",
+            "then shallower decoder layer index",
         ],
         "annotation_alignment_available": False,
         "scores": [asdict(score) for score in scores],

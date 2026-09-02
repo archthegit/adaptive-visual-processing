@@ -1,6 +1,7 @@
 import json
 
 from src.experiment1.v2_reference_layer import (
+    MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS,
     score_reference_layers,
     select_reference_layer,
     write_frozen_reference_layer,
@@ -55,6 +56,33 @@ def test_reference_layer_selection_prioritizes_mismatch_separation(tmp_path):
 
     assert selected.layer == 1
     assert selected.mean_correct_mismatch_jsd > scores[0].mean_correct_mismatch_jsd
+    assert all(score.passes_absolute_visual_mass_threshold for score in scores)
+
+
+def test_reference_layer_selection_excludes_low_absolute_visual_mass_layers():
+    from src.experiment1.v2_reference_layer import ReferenceLayerScore
+
+    scores = [
+        ReferenceLayerScore(0, 3, 0.9, 0.01, 0.9, False),
+        ReferenceLayerScore(1, 3, 0.2, 0.10, 0.7, True),
+    ]
+
+    selected = select_reference_layer(scores, min_absolute_visual_mass=0.05)
+
+    assert selected.layer == 1
+
+
+def test_reference_layer_selection_ties_end_at_shallower_layer():
+    from src.experiment1.v2_reference_layer import ReferenceLayerScore
+
+    scores = [
+        ReferenceLayerScore(5, 3, 0.3, 0.10, 0.7, True),
+        ReferenceLayerScore(2, 3, 0.3, 0.10, 0.7, True),
+    ]
+
+    selected = select_reference_layer(scores, min_absolute_visual_mass=0.05)
+
+    assert selected.layer == 2
 
 
 def test_write_frozen_reference_layer_uses_dev_records_only(tmp_path):
@@ -69,5 +97,6 @@ def test_write_frozen_reference_layer_uses_dev_records_only(tmp_path):
 
     assert output.exists()
     assert payload["selected_layer"] == 1
+    assert payload["minimum_absolute_visual_mass_threshold"] == MIN_REFERENCE_LAYER_ABSOLUTE_VISUAL_MASS
     assert payload["selected"]["num_examples"] == 1
     assert payload["annotation_alignment_available"] is False

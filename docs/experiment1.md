@@ -43,7 +43,7 @@ outputs/experiment1_v2/split_summary.json
 outputs/experiment1_v2/exclusions.jsonl
 ```
 
-Duration groups are short/medium/long tertiles computed from eligible locally available analyzed durations. The exact thresholds are saved in `split_summary.json`.
+Duration groups are short/medium/long tertiles computed from unique eligible source MP4 durations reported by `ffprobe`, not from annotated question spans. The exact thresholds are saved in `split_summary.json` with `duration_tertile_basis`. Each primary record separately preserves `source_video_duration_seconds`, `analyzed_duration_seconds`, analyzed start/end, and whether the analyzed input is an unbounded/full-video input.
 
 The primary manifest enforces at most one primary question per source video. The development/test split is source-video-level and approximately 20/80, stratified by category and duration group where possible. Mismatched queries are deterministic derangements within category and duration group, using a different source video and closest available token length.
 
@@ -92,12 +92,13 @@ Same-video/different-query analysis compares temporal distributions for addition
 
 ## Interventions
 
-Use development videos only to select one decoder reference layer. Freeze the selected layer before held-out test interventions. Selection priority:
+Use development videos only to select one decoder reference layer. Freeze the selected layer before held-out test interventions. Temporal ground-truth alignment is unavailable, so the predeclared deterministic selection rule is:
 
-1. temporal evidence alignment when annotations permit it
-2. correct-query versus mismatched-query separation
-3. sufficient absolute visual attention mass
-4. temporal concentration
+1. exclude decoder layers whose mean absolute question-to-visual attention mass is below the frozen threshold `0.05`
+2. maximize correct-query versus mismatched-query temporal Jensen-Shannon divergence
+3. break ties by higher mean absolute question-to-visual attention mass
+4. then higher top-20% temporal mass
+5. then shallower decoder layer index
 
 Held-out test interventions derive bin sets from baseline outputs:
 
@@ -125,8 +126,8 @@ Implemented:
 
 - source-video-level v2 manifest builder
 - complete local MP4 inventory through `ffprobe`
-- duration tertiles from eligible local analyzed durations
-- duration tertiles computed once per eligible source video, not weighted by question count
+- duration tertiles from unique eligible source MP4 durations, not weighted by question count
+- separate preservation of source MP4 duration and analyzed question duration
 - primary source-video manifest with one primary question per video and deterministic global category-duration balancing
 - deterministic source-level development/test split
 - deterministic same-category/same-duration mismatched query derangement
@@ -146,15 +147,16 @@ Implemented:
 - mismatched-query manifests with runner-side question overrides
 - same-video/different-query manifests with runner-side question overrides
 - pre-encoder keep/pruning support distinct from pre-encoder masking
-- frozen decoder reference-layer selection from development artifacts
+- frozen decoder reference-layer selection from development artifacts using the predeclared JSD-first rule and a frozen absolute-visual-mass threshold
 - confirmatory intervention manifest generation restricted to `split=test` and to the frozen reference layer
 - final condition-summary tables, average encoder/decoder heatmap generation,
   and figure manifest generation when plotting dependencies are installed
-- paired per-video deltas, hierarchical participant/video bootstrap CIs,
-  paired permutation tests, paired effect sizes, Benjamini-Hochberg correction,
-  duration/category stratification, same-video comparison summaries, and
-  aggregate encoder-decoder alignment summaries when artifacts contain the
-  required fields
+- paired per-video answer deltas, temporal control layer deltas, reversed-video
+  content-versus-position summaries, hierarchical participant/video bootstrap
+  CIs, paired permutation tests, paired effect sizes, Benjamini-Hochberg
+  correction, duration/category stratification, same-video comparison summaries,
+  encoder layer summaries, encoder representation summaries, and aggregate
+  encoder-decoder alignment summaries when artifacts contain the required fields
 
 Pending:
 
@@ -186,6 +188,7 @@ python scripts/run_experiment1.py \
   --limit 3 \
   --num-frames 128 \
   --sampling-mode realtime \
+  --sampling-policy-json outputs/experiment1_v2/split_summary.json \
   --resolution-config low \
   --attention-extraction reduced_sdpa \
   --query-scope question \

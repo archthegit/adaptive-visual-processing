@@ -10,13 +10,21 @@ import numpy as np
 from src.io import write_json, write_jsonl
 
 from .v2_metrics import (
+    adjacent_nonadjacent_far_similarity,
     benjamini_hochberg,
+    bins_to_mass,
     bootstrap_ci_clustered_by_video,
+    effective_rank,
+    gini_coefficient,
     jensen_shannon_divergence,
+    lag_similarity_profile,
+    normalize_distribution,
+    normalized_entropy,
     paired_effect_size,
     paired_permutation_pvalue,
     spearman_from_scores,
     top_fraction_jaccard,
+    top_fraction_mass,
 )
 
 
@@ -275,6 +283,113 @@ def _stratified_delta_summary(paired: list[dict[str, Any]], key: str) -> dict[st
     }
 
 
+def _identity_from_artifact(data: dict[str, Any]) -> dict[str, Any]:
+    clip = (data.get("video_clip") or [{}])[0]
+    metadata = data.get("metadata") or {}
+    return {
+        "question_id": data.get("question_id"),
+        "source_video_id": data.get("source_video_id") or clip.get("video_id"),
+        "participant_id": data.get("participant_id") or clip.get("participant_id"),
+        "category": data.get("category") or data.get("question_type", "").split("_", 1)[0],
+        "duration_group": data.get("duration_group") or metadata.get("duration_group"),
+    }
+
+
+def _temporal_metric_values(distribution: Iterable[float]) -> dict[str, float]:
+    probs = normalize_distribution(list(distribution))
+    return {
+        "normalized_entropy": normalized_entropy(probs),
+        "top20_mass": top_fraction_mass(probs, 0.2),
+        "gini": gini_coefficient(probs),
+        "bins_to_80pct_mass": float(bins_to_mass(probs, 0.8)),
+        "first_bin_mass": float(probs[0]) if probs.size else 0.0,
+        "last_bin_mass": float(probs[-1]) if probs.size else 0.0,
+        "top1_mass": float(probs.max()) if probs.size else 0.0,
+    }
+
+
+def _paired_delta_stat(
+    paired: list[dict[str, Any]],
+    bootstrap_replicates: int,
+    permutation_replicates: int,
+    seed: int,
+) -> dict[str, Any]:
+    deltas = [float(row["delta"]) for row in paired]
+    result = {
+        "num_pairs": len(paired),
+        "mean_baseline": float(np.mean([row["baseline"] for row in paired])) if paired else None,
+        "mean_condition": float(np.mean([row["condition_value"] for row in paired])) if paired else None,
+        "mean_delta": float(np.mean(deltas)) if deltas else None,
+        "by_category": _stratified_delta_summary(paired, "category"),
+        "by_duration_group": _stratified_delta_summary(paired, "duration_group"),
+    }
+    if deltas:
+        pvalue = paired_permutation_pvalue(deltas, replicates=permutation_replicates, seed=seed)
+        result.update(
+            {
+                "effect_size_paired_cohens_dz": paired_effect_size(deltas),
+                "paired_permutation_p": pvalue,
+                "delta_bootstrap_ci": bootstrap_ci_clustered_by_video(
+                    [dict(row, value=row["delta"]) for row in paired],
+                    "value",
+                    replicates=bootstrap_replicates,
+                    seed=seed,
+                ),
+            }
+        )
+    return result
+
+
+def _apply_bh_by_family(stats_by_key: dict[Any, dict[str, Any]]) -> None:
+    ordered_keys = [key for key, value in stats_by_key.items() if value.get("paired_permutation_p") is not None]
+    adjusted = benjamini_hochberg([stats_by_key[key]["paired_permutation_p"] for key in ordered_keys])
+    for key, qvalue in zip(ordered_keys, adjusted):
+        stats_by_key[key]["benjamini_hochberg_q"] = qvalue
+
+
+def _summarize_layer_metric_rows(
+    rows: list[dict[str, Any]],
+    bootstrap_replicates: int,
+    seed: int,
+    metric_key: str = "value",
+) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    grouped: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[(int(row["layer"]), str(row["metric"]))].append(row)
+    for index, ((layer, metric), items) in enumerate(sorted(grouped.items())):
+        key = f"layer_{layer}:{metric}"
+        values = [float(item[metric_key]) for item in items]
+        output[key] = {
+            "layer": layer,
+            "metric": metric,
+            "num_records": len(items),
+            "mean": float(np.mean(values)) if values else None,
+            "bootstrap_ci": bootstrap_ci_clustered_by_video(
+                [dict(item, value=item[metric_key]) for item in items],
+                "value",
+                replicates=bootstrap_replicates,
+                seed=seed + index,
+            )
+            if values
+            else None,
+            "by_category": _stratified_value_summary(items, "category", metric_key),
+            "by_duration_group": _stratified_value_summary(items, "duration_group", metric_key),
+        }
+    return output
+
+
+def _stratified_value_summary(rows: list[dict[str, Any]], group_key: str, value_key: str) -> dict[str, Any]:
+    by_key: dict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        if row.get(group_key) is not None and row.get(value_key) is not None:
+            by_key[str(row[group_key])].append(float(row[value_key]))
+    return {
+        name: {"num_records": len(values), "mean": float(np.mean(values))}
+        for name, values in sorted(by_key.items())
+    }
+
+
 def same_video_different_query_comparisons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     baseline = {row["source_video_id"]: row for row in rows if row.get("condition") == BASELINE_CONDITION}
     comparisons = []
@@ -351,13 +466,41 @@ def reversed_video_correlations(output_root: str | Path) -> list[dict[str, Any]]
     return rows
 
 
+def reversed_video_layer_statistics(output_root: str | Path, bootstrap_replicates: int, seed: int) -> dict[str, Any]:
+    rows = reversed_video_correlations(output_root)
+    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row.get("content_following_spearman") is None or row.get("position_following_spearman") is None:
+            continue
+        grouped[int(row["layer"])].append(
+            {
+                **row,
+                "baseline": float(row["position_following_spearman"]),
+                "condition_value": float(row["content_following_spearman"]),
+                "delta": float(row["content_following_spearman"]) - float(row["position_following_spearman"]),
+            }
+        )
+    output: dict[str, Any] = {"raw": rows, "paired_layer_deltas": {}}
+    for layer, items in sorted(grouped.items()):
+        output["paired_layer_deltas"][str(layer)] = _paired_delta_stat(
+            items,
+            bootstrap_replicates=bootstrap_replicates,
+            permutation_replicates=bootstrap_replicates,
+            seed=seed + layer,
+        )
+        output["paired_layer_deltas"][str(layer)]["metric"] = "content_following_minus_position_following_spearman"
+    _apply_bh_by_family(output["paired_layer_deltas"])
+    return output
+
+
 def temporal_control_layer_statistics(output_root: str | Path, bootstrap_replicates: int, seed: int) -> dict[str, Any]:
     root = Path(output_root)
     baseline_dir = root / BASELINE_CONDITION
     output: dict[str, Any] = {}
     for condition in ("repeated_frame", "mismatched_query", "same_video_different_query"):
         condition_dir = root / condition
-        per_layer: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        metric_pairs: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
+        jsd_pairs: dict[int, list[dict[str, Any]]] = defaultdict(list)
         for path in sorted(condition_dir.glob("*.json")):
             base_path = baseline_dir / path.name
             if not base_path.exists():
@@ -366,46 +509,156 @@ def temporal_control_layer_statistics(output_root: str | Path, bootstrap_replica
             other = json.loads(path.read_text())
             base_layers = (base.get("temporal_relevance") or {}).get("normalized_temporal_bin_scores") or []
             other_layers = (other.get("temporal_relevance") or {}).get("normalized_temporal_bin_scores") or []
-            base_metrics = (base.get("temporal_relevance") or {}).get("layer_metrics") or []
-            other_metrics = (other.get("temporal_relevance") or {}).get("layer_metrics") or []
+            identity = _identity_from_artifact(base)
             for layer, (base_dist, other_dist) in enumerate(zip(base_layers, other_layers)):
                 if len(base_dist) != len(other_dist):
                     continue
-                row = {
-                    "source_video_id": (base.get("video_clip") or [{}])[0].get("video_id"),
-                    "participant_id": (base.get("video_clip") or [{}])[0].get("participant_id"),
-                    "category": base.get("category"),
-                    "duration_group": base.get("duration_group"),
-                    "temporal_jsd": jensen_shannon_divergence(base_dist, other_dist),
+                jsd = jensen_shannon_divergence(base_dist, other_dist)
+                jsd_pairs[layer].append({**identity, "baseline": 0.0, "condition_value": jsd, "delta": jsd})
+                if condition != "repeated_frame":
+                    continue
+                base_values = _temporal_metric_values(base_dist)
+                other_values = _temporal_metric_values(other_dist)
+                for metric in (
+                    "normalized_entropy",
+                    "top20_mass",
+                    "gini",
+                    "first_bin_mass",
+                    "last_bin_mass",
+                    "top1_mass",
+                ):
+                    metric_pairs[(layer, metric)].append(
+                        {
+                            **identity,
+                            "baseline": base_values[metric],
+                            "condition_value": other_values[metric],
+                            "delta": other_values[metric] - base_values[metric],
+                        }
+                    )
+        condition_output: dict[str, Any] = {"temporal_jsd": {}, "metric_deltas": {}}
+        for layer, rows in sorted(jsd_pairs.items()):
+            condition_output["temporal_jsd"][str(layer)] = _paired_delta_stat(
+                rows,
+                bootstrap_replicates=bootstrap_replicates,
+                permutation_replicates=bootstrap_replicates,
+                seed=seed + layer,
+            )
+            condition_output["temporal_jsd"][str(layer)]["metric"] = "temporal_jsd"
+        _apply_bh_by_family(condition_output["temporal_jsd"])
+        for index, ((layer, metric), rows) in enumerate(sorted(metric_pairs.items())):
+            key = f"layer_{layer}:{metric}"
+            condition_output["metric_deltas"][key] = _paired_delta_stat(
+                rows,
+                bootstrap_replicates=bootstrap_replicates,
+                permutation_replicates=bootstrap_replicates,
+                seed=seed + 1000 + index,
+            )
+            condition_output["metric_deltas"][key].update({"layer": layer, "metric": metric})
+        _apply_bh_by_family(condition_output["metric_deltas"])
+        output[condition] = condition_output
+    output["reversed_video"] = reversed_video_layer_statistics(output_root, bootstrap_replicates, seed + 2000)
+    return output
+
+
+def _mean_head_agreement(head_distributions: list[list[float]]) -> float | None:
+    if len(head_distributions) < 2:
+        return None
+    agreements = []
+    for left in range(len(head_distributions)):
+        for right in range(left + 1, len(head_distributions)):
+            if len(head_distributions[left]) == len(head_distributions[right]):
+                agreements.append(spearman_from_scores(head_distributions[left], head_distributions[right]))
+    return float(np.mean(agreements)) if agreements else None
+
+
+def _group_rows(rows: list[dict[str, Any]], key: str) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row.get(key))].append(row)
+    return grouped
+
+
+def encoder_layer_statistics(output_root: str | Path, bootstrap_replicates: int, seed: int) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    previous_by_artifact: dict[str, list[float]] = {}
+    for path in sorted((Path(output_root) / BASELINE_CONDITION).glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        encoder = data.get("encoder_attention_temporal") or {}
+        layers = encoder.get("normalized_incoming_temporal_attention") or []
+        if not encoder.get("available") or not layers:
+            continue
+        identity = _identity_from_artifact(data)
+        artifact_key = str(identity.get("source_video_id") or identity.get("question_id"))
+        for layer, head_distributions in enumerate(layers):
+            arr = np.asarray(head_distributions, dtype=np.float64)
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+            distribution = normalize_distribution(arr.mean(axis=0).tolist())
+            metrics = _temporal_metric_values(distribution)
+            previous = previous_by_artifact.get(artifact_key)
+            metric_values = {
+                "entropy": metrics["normalized_entropy"],
+                "top20_mass": metrics["top20_mass"],
+                "gini": metrics["gini"],
+                "bins_to_80pct_mass": metrics["bins_to_80pct_mass"],
+                "first_bin_mass": metrics["first_bin_mass"],
+                "last_bin_mass": metrics["last_bin_mass"],
+                "head_agreement": _mean_head_agreement(arr.tolist()),
+                "consecutive_layer_jsd": None if previous is None else jensen_shannon_divergence(previous, distribution),
+                "consecutive_layer_spearman": None if previous is None else spearman_from_scores(previous, distribution),
+            }
+            previous_by_artifact[artifact_key] = distribution.tolist()
+            for metric, value in metric_values.items():
+                if value is None:
+                    continue
+                rows.append({**identity, "layer": layer, "metric": metric, "value": float(value)})
+    return _summarize_layer_metric_rows(rows, bootstrap_replicates=bootstrap_replicates, seed=seed)
+
+
+def encoder_representation_statistics(output_root: str | Path) -> dict[str, Any]:
+    rows = []
+    for path in sorted((Path(output_root) / BASELINE_CONDITION).glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        encoder = data.get("encoder_temporal") or {}
+        stages = encoder.get("stages") or {}
+        identity = _identity_from_artifact(data)
+        for stage_name, stage in sorted(stages.items()):
+            reps = stage.get("temporal_representations")
+            if not reps:
+                continue
+            similarity = adjacent_nonadjacent_far_similarity(reps)
+            rows.append(
+                {
+                    **identity,
+                    "stage": stage_name,
+                    "num_temporal_bins": stage.get("num_temporal_bins"),
+                    "analysis_bin_remap_active": bool(stage.get("analysis_bin_remap_active")),
+                    "effective_temporal_rank": effective_rank(reps),
+                    "lag_similarity_profile": lag_similarity_profile(reps),
+                    **similarity,
                 }
-                if condition == "repeated_frame" and layer < len(base_metrics) and layer < len(other_metrics):
-                    for key in (
-                        "normalized_temporal_entropy",
-                        "top20_temporal_bin_mass",
-                        "temporal_gini",
-                        "first_bin_mass",
-                        "last_bin_mass",
-                        "top1_temporal_bin_mass",
-                    ):
-                        row[f"{key}_delta"] = float(other_metrics[layer].get(key, 0.0)) - float(base_metrics[layer].get(key, 0.0))
-                per_layer[layer].append(row)
-        output[condition] = {
-            str(layer): {
-                "num_pairs": len(rows),
-                "mean_temporal_jsd": float(np.mean([row["temporal_jsd"] for row in rows])) if rows else None,
-                "temporal_jsd_ci": bootstrap_ci_clustered_by_video(
-                    [dict(row, value=row["temporal_jsd"]) for row in rows],
-                    "value",
-                    replicates=bootstrap_replicates,
-                    seed=seed + layer,
+            )
+    return {
+        "records": rows,
+        "by_stage": {
+            stage: {
+                "num_records": len(items),
+                "mean_effective_temporal_rank": float(np.mean([row["effective_temporal_rank"] for row in items])),
+                "mean_adjacent_cosine_similarity": float(
+                    np.mean([row["adjacent_cosine_similarity"] for row in items if row["adjacent_cosine_similarity"] is not None])
                 )
-                if rows
+                if any(row["adjacent_cosine_similarity"] is not None for row in items)
                 else None,
             }
-            for layer, rows in sorted(per_layer.items())
-        }
-    output["reversed_video"] = reversed_video_correlations(output_root)
-    return output
+            for stage, items in sorted(_group_rows(rows, "stage").items())
+        },
+    }
 
 
 def encoder_decoder_alignment(data: dict[str, Any]) -> dict[str, Any]:
@@ -710,6 +963,8 @@ def write_v2_analysis_outputs(
         },
         "same_video_different_query": same_video_different_query_comparisons(rows) if rows else [],
         "temporal_control_statistics": temporal_control_layer_statistics(output_root, bootstrap_replicates, seed),
+        "encoder_layer_statistics": encoder_layer_statistics(output_root, bootstrap_replicates, seed + 3000),
+        "encoder_representation_statistics": encoder_representation_statistics(output_root),
         "encoder_decoder_alignment": aggregate_encoder_decoder_alignment(output_root),
     }
     write_jsonl(final / "tables" / "expected_run_matrix.jsonl", matrix)

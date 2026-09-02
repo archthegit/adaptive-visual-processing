@@ -139,8 +139,76 @@ def test_build_experiment1_v2_manifests_are_source_disjoint_and_deranged(tmp_pat
         assert mismatch["duration_group"] == record["duration_group"]
     assert outputs_a["additional_questions"]
     assert outputs_a["split_summary"]["primary_manifest_count"] == len(primary)
+    assert outputs_a["split_summary"]["duration_tertile_basis"] == "unique eligible source MP4 durations from ffprobe"
     assert "realtime_sampling_policy" in outputs_a["split_summary"]
     assert outputs_a["split_summary"]["realtime_sampling_policy"]["frames_per_bin"] == 2
+    assert all(record["duration_group_basis"] == "source_mp4_duration_seconds" for record in primary)
+    assert all(record["source_video_duration_seconds"] == 600.0 for record in primary)
+
+
+def test_duration_groups_use_source_mp4_duration_not_short_question_duration(tmp_path):
+    questions_dir = tmp_path / "questions"
+    mp4_dir = tmp_path / "mp4"
+    question_type = "gaze_interaction_anticipation"
+    records = {}
+    source_durations = {
+        "P01-short-a": 10.0,
+        "P02-short-b": 20.0,
+        "P03-medium-a": 100.0,
+        "P04-medium-b": 120.0,
+        "P05-long-a": 1000.0,
+        "P06-long-b": 1200.0,
+    }
+    for idx, (video_id, _source_duration) in enumerate(source_durations.items()):
+        participant = video_id.split("-")[0]
+        path = mp4_dir / participant / f"{video_id}.mp4"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"mp4")
+        records[f"{question_type}_{idx}"] = {
+            "inputs": {
+                "video 1": {
+                    "id": video_id,
+                    "start_time": "00:00:00.000",
+                    "end_time": "00:00:05.000",
+                }
+            },
+            "question": f"Question {idx}?",
+            "choices": ["A", "B", "C", "D", "E"],
+            "correct_idx": 0,
+        }
+    questions_dir.mkdir(parents=True)
+    (questions_dir / f"{question_type}.json").write_text(json.dumps(records))
+
+    def runner(command):
+        path = Path(command[-1])
+        duration = source_durations[path.stem]
+        return json.dumps(
+            {
+                "streams": [
+                    {
+                        "width": 320,
+                        "height": 240,
+                        "avg_frame_rate": "30/1",
+                        "nb_frames": str(int(duration * 30)),
+                        "duration": str(duration),
+                    }
+                ],
+                "format": {"duration": str(duration)},
+            }
+        )
+
+    outputs = build_experiment1_v2_manifests(
+        questions_dir,
+        mp4_dir,
+        Experiment1V2Config(seed=123, dev_fraction=0.34, min_test_per_category=0),
+        ffprobe_runner=runner,
+    )
+
+    by_video = {record["source_video_id"]: record for record in outputs["primary_manifest"]}
+    assert by_video["P01-short-a"]["duration_group"] == "short"
+    assert by_video["P03-medium-a"]["duration_group"] == "medium"
+    assert by_video["P05-long-a"]["duration_group"] == "long"
+    assert {record["analyzed_duration_seconds"] for record in outputs["primary_manifest"]} == {5.0}
 
 
 def _candidate(video_id: str, question_id: str, question_type: str, category: str, duration_group: str):
@@ -159,6 +227,7 @@ def _candidate(video_id: str, question_id: str, question_type: str, category: st
         category=category,
         source_video_id=video_id,
         participant_id=video_id.split("-")[0],
+        source_video_duration_seconds=10.0,
         analyzed_start_seconds=0.0,
         analyzed_end_seconds=10.0,
         analyzed_duration_seconds=10.0,

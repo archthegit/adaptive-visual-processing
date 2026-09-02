@@ -42,6 +42,7 @@ class PrimaryCandidate:
     category: str
     source_video_id: str
     participant_id: str
+    source_video_duration_seconds: float
     analyzed_start_seconds: float
     analyzed_end_seconds: float
     analyzed_duration_seconds: float
@@ -224,17 +225,19 @@ def eligible_primary_candidates(
         if duration <= 0:
             exclusions.append({"kind": "question", "question_id": example.question_id, "reason": "non_positive_duration"})
             continue
+        source_duration = float(inventory[segment.video_id].duration_seconds)
         candidates.append(
             PrimaryCandidate(
                 example=example,
                 category=category,
                 source_video_id=segment.video_id,
                 participant_id=segment.participant_id,
+                source_video_duration_seconds=source_duration,
                 analyzed_start_seconds=start,
                 analyzed_end_seconds=end,
                 analyzed_duration_seconds=duration,
                 is_unbounded_full_video=unbounded,
-                duration_group=assign_duration_group(duration, thresholds),
+                duration_group=assign_duration_group(source_duration, thresholds),
             )
         )
     return candidates, exclusions
@@ -388,7 +391,9 @@ def primary_manifest_record(candidate: PrimaryCandidate, split: str | None = Non
         "analyzed_start_seconds": candidate.analyzed_start_seconds,
         "analyzed_end_seconds": candidate.analyzed_end_seconds,
         "analyzed_duration_seconds": candidate.analyzed_duration_seconds,
+        "source_video_duration_seconds": candidate.source_video_duration_seconds,
         "duration_group": candidate.duration_group,
+        "duration_group_basis": "source_mp4_duration_seconds",
         "is_unbounded_full_video": candidate.is_unbounded_full_video,
         "video_clip": [
             {
@@ -484,6 +489,7 @@ def build_split_summary(
         "dev_fraction": config.dev_fraction,
         "max_primary_per_source_video": config.max_primary_per_source_video,
         "duration_tertile_thresholds": thresholds,
+        "duration_tertile_basis": "unique eligible source MP4 durations from ffprobe",
         "realtime_sampling_policy": sampling_policy,
         "inventory_complete_mp4s": len(inventory),
         "eligible_question_count_before_primary_video_cap": len(candidates),
@@ -507,19 +513,14 @@ def build_experiment1_v2_manifests(
     if not inventory:
         raise ValueError(f"No complete MP4 files were inventoried under {mp4_dir}.")
     inventory_map = {record.video_id: record for record in inventory}
-    preliminary_duration_by_video: dict[str, float] = {}
+    eligible_source_videos: set[str] = set()
     for example in dataset.examples:
         category = infer_experiment1_category(example.question_type)
         if category not in EXPERIMENT1_CATEGORIES:
             continue
         if len(example.inputs) == 1 and not example.inputs[0].is_image and example.inputs[0].video_id in inventory_map:
-            start, end, duration, _unbounded = analyzed_bounds(example, inventory_map)
-            if end > start:
-                video_id = example.inputs[0].video_id
-                previous = preliminary_duration_by_video.get(video_id)
-                if previous is None or duration < previous:
-                    preliminary_duration_by_video[video_id] = duration
-    thresholds = duration_tertiles(preliminary_duration_by_video.values())
+            eligible_source_videos.add(example.inputs[0].video_id)
+    thresholds = duration_tertiles(inventory_map[video_id].duration_seconds for video_id in eligible_source_videos)
     candidates, question_exclusions = eligible_primary_candidates(dataset.examples, inventory, thresholds)
     primaries, additional_questions = choose_primary_per_video(candidates, seed=config.seed)
     dev, test = split_primary_videos(primaries, config)

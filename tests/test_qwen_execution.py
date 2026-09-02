@@ -10,6 +10,7 @@ from src.experiment1.qwen_execution import (
     mask_frame_batch_temporal_bins,
     next_token_topk_from_outputs,
     normalize_video_kwargs,
+    remap_encoder_temporal_representations_to_analysis_bins,
     represented_sampled_frames,
     validate_scalar_video_fps_compatibility,
 )
@@ -197,3 +198,40 @@ def test_reversed_video_control_reverses_content_but_preserves_temporal_position
     assert reversed_batch.metadata["presented_to_original_frame_bin_mapping"][0]["original_analysis_bin"] == 1
     assert reversed_batch.metadata["presented_to_original_frame_bin_mapping"][0]["presented_analysis_bin"] == 0
     assert reversed_batch.frames[:, 0, 0, 0].tolist() == [3, 2, 1, 0]
+
+
+def test_encoder_temporal_representations_remap_to_fixed_budget_analysis_bins():
+    import numpy as np
+
+    batch = FrameBatch(
+        frames=np.zeros((128, 1, 1, 1), dtype=np.uint8),
+        frame_indices=tuple(range(128)),
+        timestamps=tuple(float(i) for i in range(128)),
+        video_path=None,
+        metadata={
+            "frame_bin_mapping": [
+                {"sample_position": pos, "analysis_bin": pos // 8}
+                for pos in range(128)
+            ],
+        },
+    )
+    encoder = {
+        "available": True,
+        "stages": {
+            "vision_final": {
+                "temporal_representations": [[float(i), 1.0] for i in range(128)],
+                "num_temporal_bins": 128,
+            }
+        },
+    }
+
+    remapped = remap_encoder_temporal_representations_to_analysis_bins(encoder, batch)
+    stage = remapped["stages"]["vision_final"]
+
+    assert stage["analysis_bin_remap_active"] is True
+    assert stage["qwen_num_temporal_bins"] == 128
+    assert stage["num_temporal_bins"] == 16
+    assert len(stage["temporal_representations"]) == 16
+    assert stage["temporal_representations"][0][0] == pytest.approx(3.5)
+    assert "lag_similarity_profile" in stage
+    assert "effective_temporal_rank" in stage

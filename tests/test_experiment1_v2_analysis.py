@@ -3,10 +3,14 @@ import json
 from src.experiment1.v2_analysis import (
     average_decoder_heatmap,
     condition_table,
+    encoder_layer_statistics,
+    encoder_representation_statistics,
     flatten_completed_artifacts,
     expected_conditions,
     expected_run_matrix,
     reversed_distribution_to_original_bins,
+    reversed_video_layer_statistics,
+    temporal_control_layer_statistics,
     validate_completeness,
     write_v2_analysis_outputs,
 )
@@ -171,3 +175,100 @@ def test_reversed_distribution_remaps_presented_scores_to_original_bins():
         {"presented_analysis_bin": 2, "original_analysis_bin": 0},
     ]
     assert reversed_distribution_to_original_bins(distribution, mapping) == [0.7, 0.2, 0.1]
+
+
+def _write_temporal_artifact(path, distribution, *, condition="baseline", category="gaze", duration_group="short"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "question_id": path.stem,
+                "category": category,
+                "duration_group": duration_group,
+                "video_clip": [{"video_id": f"v-{path.stem}", "participant_id": "p1"}],
+                "metadata": {"condition": condition},
+                "temporal_relevance": {
+                    "normalized_temporal_bin_scores": [distribution, list(reversed(distribution))],
+                },
+            }
+        )
+    )
+
+
+def test_temporal_control_layer_statistics_outputs_metric_deltas_and_inference_fields(tmp_path):
+    output_root = tmp_path / "runs"
+    _write_temporal_artifact(output_root / "baseline" / "q1.json", [0.7, 0.2, 0.1])
+    _write_temporal_artifact(output_root / "repeated_frame" / "q1.json", [0.34, 0.33, 0.33], condition="repeated_frame")
+    _write_temporal_artifact(output_root / "mismatched_query" / "q1.json", [0.1, 0.2, 0.7], condition="mismatched_query")
+
+    stats = temporal_control_layer_statistics(output_root, bootstrap_replicates=8, seed=1)
+
+    entropy_delta = stats["repeated_frame"]["metric_deltas"]["layer_0:normalized_entropy"]
+    assert entropy_delta["num_pairs"] == 1
+    assert entropy_delta["metric"] == "normalized_entropy"
+    assert "delta_bootstrap_ci" in entropy_delta
+    assert "paired_permutation_p" in entropy_delta
+    assert "benjamini_hochberg_q" in entropy_delta
+    assert "top1_mass" in {item["metric"] for item in stats["repeated_frame"]["metric_deltas"].values()}
+    mismatch_jsd = stats["mismatched_query"]["temporal_jsd"]["0"]
+    assert mismatch_jsd["metric"] == "temporal_jsd"
+    assert mismatch_jsd["by_duration_group"]["short"]["num_pairs"] == 1
+
+
+def test_reversed_video_layer_statistics_reports_content_vs_position_deltas(tmp_path):
+    output_root = tmp_path / "runs"
+    _write_temporal_artifact(output_root / "baseline" / "q1.json", [0.7, 0.2, 0.1])
+    reversed_path = output_root / "reversed_video" / "q1.json"
+    _write_temporal_artifact(reversed_path, [0.1, 0.2, 0.7], condition="reversed_video")
+    data = json.loads(reversed_path.read_text())
+    data["presented_to_original_frame_bin_mappings"] = [
+        [
+            {"presented_analysis_bin": 0, "original_analysis_bin": 2},
+            {"presented_analysis_bin": 1, "original_analysis_bin": 1},
+            {"presented_analysis_bin": 2, "original_analysis_bin": 0},
+        ]
+    ]
+    reversed_path.write_text(json.dumps(data))
+
+    stats = reversed_video_layer_statistics(output_root, bootstrap_replicates=8, seed=2)
+
+    layer = stats["paired_layer_deltas"]["0"]
+    assert layer["metric"] == "content_following_minus_position_following_spearman"
+    assert layer["num_pairs"] == 1
+    assert layer["mean_delta"] > 0
+    assert "benjamini_hochberg_q" in layer
+
+
+def test_encoder_layer_and_representation_statistics_are_reported(tmp_path):
+    output_root = tmp_path / "runs"
+    path = output_root / "baseline" / "q1.json"
+    _write_temporal_artifact(path, [0.7, 0.2, 0.1])
+    data = json.loads(path.read_text())
+    data["encoder_attention_temporal"] = {
+        "available": True,
+        "normalized_incoming_temporal_attention": [
+            [[0.7, 0.2, 0.1], [0.6, 0.3, 0.1]],
+            [[0.2, 0.3, 0.5], [0.1, 0.3, 0.6]],
+        ],
+    }
+    data["encoder_temporal"] = {
+        "available": True,
+        "stages": {
+            "vision_final": {
+                "analysis_bin_remap_active": True,
+                "num_temporal_bins": 3,
+                "temporal_representations": [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+            }
+        },
+    }
+    path.write_text(json.dumps(data))
+
+    layer_stats = encoder_layer_statistics(output_root, bootstrap_replicates=8, seed=3)
+    rep_stats = encoder_representation_statistics(output_root)
+
+    assert "layer_0:entropy" in layer_stats
+    assert "layer_1:consecutive_layer_jsd" in layer_stats
+    assert "layer_0:head_agreement" in layer_stats
+    assert layer_stats["layer_0:entropy"]["by_category"]["gaze"]["num_records"] == 1
+    assert rep_stats["by_stage"]["vision_final"]["num_records"] == 1
+    assert rep_stats["records"][0]["analysis_bin_remap_active"] is True

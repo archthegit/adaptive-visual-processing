@@ -16,13 +16,18 @@ from src.models.qwen import Qwen25VLWrapper
 from src.models.qwen_temporal_rope import temporal_position_interval
 
 from .answer_scoring import score_answer_choices_from_outputs
-from .encoder_temporal import vision_temporal_capture_context
+from .encoder_temporal import adjacent_cosine_similarity, vision_temporal_capture_context
 from .qwen_vision_attention import qwen_vision_attention_capture_context
 from .qwen_reduced_attention import masked_eager_attention_context, reduced_attention_context
 from .relevance import aggregate_question_to_visual_attention
 from .resolution import ResolutionConfig
 from .temporal import build_temporal_relevance_from_token_scores, represented_sampled_frames
 from .token_layout import build_token_layout
+from .v2_metrics import (
+    adjacent_nonadjacent_far_similarity,
+    effective_rank,
+    lag_similarity_profile,
+)
 
 
 def _pil_frames(batch: FrameBatch) -> list[Image.Image]:
@@ -250,14 +255,10 @@ def next_token_topk_from_outputs(outputs: Any, k: int = 10) -> list[dict[str, fl
     ]
 
 
-def remap_encoder_attention_to_analysis_bins(encoder_json: dict[str, Any], batch: FrameBatch) -> dict[str, Any]:
+def _qwen_to_analysis_weights(batch: FrameBatch, num_qwen_bins: int) -> tuple[int, list[dict[int, float]]] | None:
     mapping_items = batch.metadata.get("frame_bin_mapping", []) or []
-    if not mapping_items or not encoder_json.get("available"):
-        return encoder_json
-    qwen_layers = encoder_json.get("normalized_incoming_temporal_attention") or []
-    if not qwen_layers:
-        return encoder_json
-    num_qwen_bins = int(encoder_json.get("num_temporal_bins") or len(qwen_layers[0][0]))
+    if not mapping_items:
+        return None
     num_samples = len(batch.frame_indices)
     position_to_analysis = {int(item["sample_position"]): int(item["analysis_bin"]) for item in mapping_items}
     num_analysis_bins = max(position_to_analysis.values()) + 1
@@ -272,6 +273,21 @@ def remap_encoder_attention_to_analysis_bins(encoder_json: dict[str, Any], batch
         for analysis_bin in bins:
             weights[analysis_bin] = weights.get(analysis_bin, 0.0) + 1.0 / max(1, len(bins))
         qwen_to_analysis.append(weights or {temporal_index: 1.0})
+    return num_analysis_bins, qwen_to_analysis
+
+
+def remap_encoder_attention_to_analysis_bins(encoder_json: dict[str, Any], batch: FrameBatch) -> dict[str, Any]:
+    mapping_items = batch.metadata.get("frame_bin_mapping", []) or []
+    if not mapping_items or not encoder_json.get("available"):
+        return encoder_json
+    qwen_layers = encoder_json.get("normalized_incoming_temporal_attention") or []
+    if not qwen_layers:
+        return encoder_json
+    num_qwen_bins = int(encoder_json.get("num_temporal_bins") or len(qwen_layers[0][0]))
+    remap = _qwen_to_analysis_weights(batch, num_qwen_bins)
+    if remap is None:
+        return encoder_json
+    num_analysis_bins, qwen_to_analysis = remap
 
     remapped_layers = []
     for layer in qwen_layers:
@@ -293,6 +309,64 @@ def remap_encoder_attention_to_analysis_bins(encoder_json: dict[str, Any], batch
     updated["num_temporal_bins"] = num_analysis_bins
     updated["analysis_bin_remap_active"] = True
     updated["normalized_incoming_temporal_attention"] = remapped_layers
+    return updated
+
+
+def remap_encoder_temporal_representations_to_analysis_bins(encoder_json: dict[str, Any], batch: FrameBatch) -> dict[str, Any]:
+    if not encoder_json.get("available"):
+        return encoder_json
+    stages = encoder_json.get("stages") or {}
+    if not stages:
+        return encoder_json
+    updated = dict(encoder_json)
+    updated_stages: dict[str, Any] = {}
+    for name, stage in stages.items():
+        reps = stage.get("temporal_representations")
+        if not reps:
+            updated_stages[name] = stage
+            continue
+        qwen_reps = np.asarray(reps, dtype=np.float64)
+        if qwen_reps.ndim != 2:
+            updated_stages[name] = stage
+            continue
+        remap = _qwen_to_analysis_weights(batch, int(qwen_reps.shape[0]))
+        if remap is None:
+            updated_stages[name] = stage
+            continue
+        num_analysis_bins, qwen_to_analysis = remap
+        sums = np.zeros((num_analysis_bins, qwen_reps.shape[1]), dtype=np.float64)
+        weights_sum = np.zeros(num_analysis_bins, dtype=np.float64)
+        for qwen_bin, weights in enumerate(qwen_to_analysis):
+            if qwen_bin >= qwen_reps.shape[0]:
+                continue
+            for analysis_bin, weight in weights.items():
+                if analysis_bin < num_analysis_bins:
+                    sums[analysis_bin] += qwen_reps[qwen_bin] * weight
+                    weights_sum[analysis_bin] += weight
+        nonzero = weights_sum > 0
+        sums[nonzero] /= weights_sum[nonzero, None]
+        similarity = adjacent_nonadjacent_far_similarity(sums.tolist())
+        lag_profile = lag_similarity_profile(sums.tolist())
+        stage_updated = dict(stage)
+        adjacent = adjacent_cosine_similarity(sums.tolist())
+        stage_updated.update(
+            {
+                "qwen_num_temporal_bins": int(qwen_reps.shape[0]),
+                "num_temporal_bins": int(num_analysis_bins),
+                "analysis_bin_remap_active": True,
+                "temporal_representations": sums.tolist(),
+                "embedding_dim": int(sums.shape[1]) if sums.ndim == 2 else 0,
+                "adjacent_bin_cosine_similarity": adjacent,
+                "mean_adjacent_bin_cosine_similarity": float(np.mean(adjacent)) if adjacent else None,
+                "min_adjacent_bin_cosine_similarity": float(np.min(adjacent)) if adjacent else None,
+                "max_adjacent_bin_cosine_similarity": float(np.max(adjacent)) if adjacent else None,
+                "lag_similarity_profile": lag_profile,
+                "effective_temporal_rank": effective_rank(sums.tolist()),
+                **similarity,
+            }
+        )
+        updated_stages[name] = stage_updated
+    updated["stages"] = updated_stages
     return updated
 
 
@@ -616,6 +690,11 @@ def run_qwen_relevance_example(
         except Exception as exc:
             encoder_attention_temporal = {"available": False, "error": str(exc)}
 
+    encoder_temporal = remap_encoder_temporal_representations_to_analysis_bins(
+        encoder_capture.to_json_dict(),
+        frame_batches[0],
+    )
+
     return {
         "question_id": example.question_id,
         "question_type": example.question_type,
@@ -655,7 +734,7 @@ def run_qwen_relevance_example(
             "visual_token_cells": visual_token_cell_metadata(layout, frame_batches),
         },
         "temporal_relevance": temporal_relevance.to_json_dict(),
-        "encoder_temporal": encoder_capture.to_json_dict(),
+        "encoder_temporal": encoder_temporal,
         "encoder_attention_temporal": encoder_attention_temporal,
         "metadata": {
             "model_id": model.config.model_id,
