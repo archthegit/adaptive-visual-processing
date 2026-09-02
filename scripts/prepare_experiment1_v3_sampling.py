@@ -143,9 +143,9 @@ def recompute_v3_split(
                 str(item.get("participant_id", "")),
                 str(item["source_video_id"]),
                 str(item["question_id"]),
-                rng.random(),
             ),
         )
+        rng.shuffle(ordered)
         if len(ordered) == 1:
             dev_count = 0
         else:
@@ -258,12 +258,21 @@ def assert_v3_protocol_invariants(
         raise ValueError("v3 mismatched_queries keys do not exactly match primary_manifest question IDs.")
     for question_id, mismatch in mismatch_map.items():
         record = by_question[question_id]
+        donor = by_question.get(str(mismatch["mismatched_question_id"]))
+        if donor is None:
+            raise ValueError(f"Mismatch donor is not in v3 primary_manifest for {question_id}.")
         if mismatch["category"] != record["category"]:
             raise ValueError(f"Mismatch category changed for {question_id}.")
         if mismatch["duration_group"] != record["duration_group"]:
             raise ValueError(f"Mismatch duration group changed for {question_id}.")
+        if donor["category"] != record["category"]:
+            raise ValueError(f"Mismatch donor category differs from recipient for {question_id}.")
+        if donor["duration_group"] != record["duration_group"]:
+            raise ValueError(f"Mismatch donor analyzed-duration group differs from recipient for {question_id}.")
         if mismatch["mismatched_source_video_id"] == record["source_video_id"]:
             raise ValueError(f"Mismatch uses same source video for {question_id}.")
+        if donor["source_video_id"] == record["source_video_id"]:
+            raise ValueError(f"Mismatch donor record uses same source video for {question_id}.")
     if summary is not None:
         expected = summarize_records(v3_records)
         if summary.get("primary_summary") != expected:

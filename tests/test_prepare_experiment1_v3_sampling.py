@@ -115,6 +115,40 @@ def test_v3_split_preserves_exact_77_ids_and_recomputes_stratified_dev_test():
         assert previous == record["split"]
 
 
+def test_v3_split_same_seed_identical_different_seed_changes_feasible_stratum():
+    records = [_record(f"q_{idx:02d}", "gaze", 20.0, "medium") for idx in range(20)]
+
+    split_a, strata_a = recompute_v3_split(records, seed=20260830, dev_fraction=0.2)
+    split_b, strata_b = recompute_v3_split(records, seed=20260830, dev_fraction=0.2)
+    split_c, strata_c = recompute_v3_split(records, seed=20260831, dev_fraction=0.2)
+
+    assignment_a = {record["question_id"]: record["split"] for record in split_a}
+    assignment_b = {record["question_id"]: record["split"] for record in split_b}
+    assignment_c = {record["question_id"]: record["split"] for record in split_c}
+    assert assignment_a == assignment_b
+    assert assignment_a != assignment_c
+    assert strata_a == strata_b
+    assert strata_a == strata_c
+    assert all(item["has_dev_and_test_when_feasible"] for item in strata_a.values())
+
+
+def test_v3_split_counts_match_summary():
+    records = []
+    for idx in range(24):
+        category = "gaze" if idx < 12 else "ingredient"
+        group = "short" if idx % 2 == 0 else "long"
+        records.append(_record(f"q_{idx:02d}", category, 20.0, group))
+
+    split_records, _split_strata = recompute_v3_split(records, seed=20260830, dev_fraction=0.25)
+    summary = summarize_records(split_records)
+
+    assert summary["num_examples"] == len(split_records)
+    assert sum(summary["by_split"].values()) == len(split_records)
+    assert sum(summary["by_category"].values()) == len(split_records)
+    assert sum(summary["by_duration_group"].values()) == len(split_records)
+    assert sum(summary["by_category_and_duration"].values()) == len(split_records)
+
+
 def test_v3_mismatches_are_recomputed_for_new_category_duration_groups():
     records = []
     for idx, duration in enumerate([5.0, 6.0, 50.0, 55.0]):
@@ -137,6 +171,39 @@ def test_v3_mismatches_are_recomputed_for_new_category_duration_groups():
         assert mismatch["category"] == record["category"] == donor["category"]
         assert mismatch["duration_group"] == record["duration_group"] == donor["duration_group"]
         assert mismatch["mismatched_source_video_id"] != record["source_video_id"]
+
+
+def test_v3_mismatch_invariants_validate_donor_record_not_only_copied_metadata():
+    records = [_record("q0", "gaze", 5.0, "short"), _record("q1", "ingredient", 6.0, "short")]
+    split_records, split_strata = recompute_v3_split(records, seed=20260830, dev_fraction=0.5)
+    mismatches = {
+        "seed": 20260830,
+        "mismatches": {
+            "q0": {
+                "mismatched_question_id": "q1",
+                "mismatched_source_video_id": "q1",
+                "category": "gaze",
+                "duration_group": "short",
+                "question": "bad donor",
+                "choices": ["A", "B", "C", "D", "E"],
+                "correct_idx": 0,
+            },
+            "q1": {
+                "mismatched_question_id": "q0",
+                "mismatched_source_video_id": "q0",
+                "category": "ingredient",
+                "duration_group": "short",
+                "question": "bad donor",
+                "choices": ["A", "B", "C", "D", "E"],
+                "correct_idx": 0,
+            },
+        },
+    }
+
+    import pytest
+
+    with pytest.raises(ValueError, match="donor category"):
+        assert_v3_protocol_invariants(records, split_records, mismatches, split_strata)
 
 
 def test_v3_target_delta_t_uses_corrected_dev_split_after_regrouping():
