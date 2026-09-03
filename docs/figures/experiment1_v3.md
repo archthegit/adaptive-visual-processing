@@ -47,23 +47,23 @@ These measurements indicate layer-wise changes in temporal allocation. They do n
 
 ### Encoder temporal attention
 
-![Encoder temporal heatmap](assets/experiment1_v3/encoder_temporal_heatmap.png)
+![Encoder temporal heatmap](../assets/experiment1_v3/encoder_temporal_heatmap.png)
 
 ### Decoder temporal attention
 
-![Decoder temporal heatmap](assets/experiment1_v3/decoder_temporal_heatmap.png)
+![Decoder temporal heatmap](../assets/experiment1_v3/decoder_temporal_heatmap.png)
 
 ### Decoder entropy by category
 
-![Decoder entropy](assets/experiment1_v3/decoder_entropy_by_category.png)
+![Decoder entropy](../assets/experiment1_v3/decoder_entropy_by_category.png)
 
 ### Encoder temporal similarity
 
-![Encoder pairwise cosine similarity](assets/experiment1_v3/encoder_pairwise_cosine.png)
+![Encoder pairwise cosine similarity](../assets/experiment1_v3/encoder_pairwise_cosine.png)
 
 ### Encoder local temporal advantage
 
-![Encoder local temporal advantage](assets/experiment1_v3/encoder_local_temporal_advantage.png)
+![Encoder local temporal advantage](../assets/experiment1_v3/encoder_local_temporal_advantage.png)
 
 ## Duration Confound
 
