@@ -182,3 +182,64 @@ The baseline does **not** yet show that decoder-selected bins are query-relevant
 8. **Clustered statistical analysis:** treat source video as the independent unit and cluster resampling by participant and video.
 
 Only these paired controls and interventions can establish whether the observed decoder allocation is useful for temporal optimization.
+
+## Preliminary repeated-frame positional control
+
+To distinguish content-dependent temporal allocation from architectural position bias, we constructed a repeated-frame control that preserves the original number of frames, temporal bins, visual tokens, and temporal positions while replacing every sampled frame with the same frame. Because visual content is identical across time, any nonuniform temporal attention observed under this condition cannot be attributed to changing video content.
+
+The following results are preliminary and include 12 of the 77 videos. The subset contains five action-recognition, three action-localization, three gaze-anticipation, and one ingredient-localization example; it contains no object-motion examples. Consequently, these results establish an engineering and qualitative signal but are not used for final effect-size or significance claims.
+
+### Decoder attention reveals a strong positional prior
+
+![Repeated-frame decoder temporal attention](../outputs/experiment1_v3/preliminary/repeated_frame_partial/decoder_attention_lift_heatmap.png)
+
+The decoder remains strongly nonuniform even though every temporal position contains identical visual content. The maximum absolute deviation from uniform is \(2.739\) in lift-minus-one units, corresponding to a peak temporal-bin allocation of approximately \(3.74\times\) the uniform expectation.
+
+The heatmap reveals that this concentration is highly structured: the decoder consistently overweights the beginning of the visual sequence, with particularly strong first-bin preference around layers 9, 14, and 21–27. Intermediate temporal positions are correspondingly underweighted. This demonstrates that temporal attention concentration alone is insufficient evidence of content relevance; Qwen possesses a substantial intrinsic temporal-position prior.
+
+Qualitatively, this pattern differs from the real-video baseline. The baseline initially favors early positions but transitions toward a strong end-of-video preference after approximately layers 11–15. In contrast, the repeated-frame control remains dominated by the beginning of the sequence. This suggests that the baseline’s late-video preference is not explained by a static positional prior alone: changing visual content, temporal ordering, or their interaction with the query modifies the decoder’s temporal allocation. This comparison remains descriptive until the repeated-frame run is completed and evaluated through paired per-video statistics.
+
+### Aggregate encoder attention remains uniform
+
+![Repeated-frame encoder temporal attention](../outputs/experiment1_v3/preliminary/repeated_frame_partial/encoder_attention_lift_heatmap.png)
+
+Aggregate incoming encoder attention is effectively uniform across temporal positions. Its maximum absolute deviation from uniform is only \(2.68\times10^{-8}\), consistent with floating-point noise. This agrees with the real-video baseline and indicates that aggregate encoder attention mass does not expose meaningful temporal selectivity in this model.
+
+This result does not imply that the encoder discards temporal information. Attention mass and residual representation structure measure different properties: the former records where tokens attend, whereas the latter tests whether representations of neighboring moments remain more similar than representations of distant moments.
+
+### Encoder representation structure disappears when content is repeated
+
+![Repeated-frame encoder local temporal advantage](../outputs/experiment1_v3/preliminary/repeated_frame_partial/encoder_local_temporal_advantage_ci.png)
+
+Under the repeated-frame control, the adjacent-minus-far representation-similarity advantage collapses to approximately \(10^{-17}\) at every captured encoder stage, for both raw and mean-centered representations. All confidence intervals lie at or overlap numerical zero.
+
+This contrasts with the real-video baseline, where adjacent temporal bins exhibit a positive similarity advantage at the captured encoder stages. The disappearance of this effect when visual content is held constant provides evidence that the baseline encoder structure is driven by local changes and continuity in video content, rather than merely by temporal-position encoding. Thus, while aggregate encoder attention is uniform, encoder representations still appear to preserve content-dependent local temporal organization.
+
+### Absolute visual access remains substantial despite redundancy
+
+![Repeated-frame decoder absolute visual mass](../outputs/experiment1_v3/preliminary/repeated_frame_partial/decoder_absolute_visual_mass.png)
+
+The decoder continues to allocate substantial absolute attention mass to visual tokens even though those tokens contain heavily duplicated information. Visual access is highest in the earliest layer, decreases sharply, and then varies non-monotonically across subsequent layers.
+
+This separates two notions that must not be conflated:
+
+* **Absolute visual mass** measures how much the question tokens access visual tokens.
+* **Conditional temporal allocation** measures how that visual attention is distributed across time.
+
+The repeated-frame result shows that high visual access does not necessarily imply access to additional or useful evidence. Likewise, a highly ranked temporal bin may reflect positional preference rather than unique information.
+
+### Temporal concentration remains depth-dependent
+
+![Repeated-frame decoder temporal entropy](../outputs/experiment1_v3/preliminary/repeated_frame_partial/decoder_entropy_by_question_type.png)
+
+Normalized temporal entropy remains relatively high overall, but it decreases at specific decoder depths even with identical frames. The strongest concentration appears around layers 10, 14, 22, and 27. These layer-specific changes indicate that positional concentration is not a constant offset that can be removed globally; it evolves through the decoder.
+
+### Preliminary conclusion
+
+The repeated-frame control supports three preliminary conclusions:
+
+1. Aggregate encoder attention is temporally uniform and therefore is not, by itself, a useful temporal-pruning signal.
+2. Local temporal structure in encoder representations disappears when content variation is removed, suggesting that the corresponding baseline structure is genuinely content-dependent.
+3. Decoder temporal attention contains a strong, depth-dependent positional component, particularly a first-bin bias, even when every temporal position presents identical visual information.
+
+These results motivate bias-corrected, layer-specific temporal selection rather than direct pruning based on raw decoder attention. The completed 77-video paired analysis will quantify how much of the real-video decoder distribution is explained by this positional prior. Reversed-video and mismatched-query controls are additionally required to separate content following, temporal-order sensitivity, and query-specific relevance.
