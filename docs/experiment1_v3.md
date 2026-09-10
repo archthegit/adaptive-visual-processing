@@ -205,12 +205,25 @@ The VILA path supports three descriptive conditions:
 - `repeated_frame`
 - `reversed_video`
 
-For VILA, the runner requires an exact prepared-input mapping from input frame
-position to visual token columns. It does not infer equal token counts per frame.
-The VILA preparer must expose the exact question-token rows, visual-token
-columns, visual-token-to-frame mapping, prepared frame order, and truncation
-status. The run fails if VILA truncates, resamples, duplicates, or reorders the
-frames.
+For VILA, the runner uses the official NVLabs/VILA implementation pinned at
+commit `0f1426e8da9181e6e6653e10bc15f62d515fa2f6`. The isolated setup script
+clones that repository, installs its dependencies, and loads
+`Efficient-Large-Model/Llama-3-VILA1.5-8B` through VILA's official model
+builder, tokenizer, image processor, and conversation template.
+
+The runner bypasses VILA's MP4 sampler. It passes Experiment 1's already-decoded
+ordered RGB frames directly as image inputs. It constructs the multimodal prompt
+with one VILA image placeholder per sampled frame, measures the actual
+encoded/projected image-feature length for every frame, and maps the inserted
+visual token columns back to input frames and temporal bins. It does not infer
+equal visual-token counts across frames. The run fails if prepared frame order,
+token mapping, or truncation checks fail.
+
+Decoder prefill extraction wraps VILA/Llama SDPA during the measurement forward.
+It preserves the original SDPA output path, uses the same attention mask and
+causal semantics, and computes only question-token rows by visual-token columns
+before reducing to temporal bins. It does not request full sequence-by-sequence
+attention tensors from the real backend.
 
 The VILA decoder analysis records the same primary temporal measurements used
 for Qwen decoder prefill analysis:
@@ -230,11 +243,13 @@ mass, absolute visual mass, and per-example Spearman correlation, and reports
 paired bootstrap confidence intervals clustered by source video. Baseline,
 repeated-frame, and reversed-video conditions are analyzed separately.
 
-The current repository implementation includes mocked VILA regression tests for
-the frame/token mapping contract. Real-checkpoint validation remains required
-before interpreting cross-model results, because the public VILA preprocessing
-API must expose or be adapted to expose the exact `prepare_experiment1_inputs`
-mapping used by this repository.
+The current repository implementation includes CPU regression tests for VILA-style
+image placeholder insertion, variable image-feature lengths, frame order,
+question-row isolation, and temporal reduction. Real-checkpoint validation is
+still required before interpreting cross-model results: the backend should not
+be treated as empirically runnable until `scripts/smoke_test_vila_temporal.py`
+successfully reaches the checkpoint, preprocesses one 8-frame and one 64-frame
+example, and validates token mapping, output equivalence, memory and runtime.
 
 ## Preliminary repeated-frame positional control
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 import numpy as np
 
@@ -27,6 +28,9 @@ from .temporal import (
 
 
 VILA_DEFAULT_CHECKPOINT = "Efficient-Large-Model/Llama-3-VILA1.5-8B"
+VILA_REPO_URL = "https://github.com/NVlabs/VILA.git"
+VILA_PINNED_COMMIT = "0f1426e8da9181e6e6653e10bc15f62d515fa2f6"
+VILA_DEFAULT_CONV_MODE = "llama_3"
 
 
 @dataclass(frozen=True)
@@ -39,68 +43,71 @@ class PreparedVILAInputs:
     visual_token_frame_indices: tuple[int, ...]
     prepared_frame_indices: tuple[int, ...]
     truncation_occurred: bool = False
+    image_feature_lengths: tuple[int, ...] = ()
+    base_image_token_positions: tuple[int, ...] = ()
+    base_to_expanded_token_positions: dict[int, int] = field(default_factory=dict)
 
 
 class VILALlama3Wrapper:
-    """Thin adapter for the VILA checkpoint.
+    """Experiment 1 adapter for the official NVLabs/VILA implementation."""
 
-    The public VILA preprocessing APIs are not stable enough to infer temporal
-    token mappings in this repository. A real integration must expose
-    ``prepare_experiment1_inputs`` returning the exact fields in
-    ``PreparedVILAInputs``. This wrapper fails loudly when that mapping is not
-    available rather than assuming equal tokens per frame.
-    """
-
-    def __init__(self, checkpoint: str = VILA_DEFAULT_CHECKPOINT, max_new_tokens: int = 16):
+    def __init__(
+        self,
+        checkpoint: str = VILA_DEFAULT_CHECKPOINT,
+        max_new_tokens: int = 16,
+        conv_mode: str = VILA_DEFAULT_CONV_MODE,
+    ):
         self.checkpoint = checkpoint
         self.max_new_tokens = max_new_tokens
+        self.conv_mode = conv_mode
+        self.model_name: str | None = None
+        self.context_len: int | None = None
         self._model = None
-        self._processor = None
+        self._tokenizer = None
+        self._image_processor = None
+        self._llava_modules: dict[str, Any] = {}
 
     def _load(self) -> None:
         if self._model is not None:
             return
         try:
             import torch
-            from transformers import AutoModelForCausalLM, AutoProcessor
+            from llava.mm_utils import get_model_name_from_path
+            from llava.model.builder import load_pretrained_model
+            from llava.utils import disable_torch_init
         except ImportError as exc:
             raise RuntimeError(
-                "VILA inference requires an isolated environment with torch, transformers, and VILA-compatible "
-                "remote-code dependencies. See requirements-vila.txt and scripts/setup_vila_environment.sh."
+                "VILA inference requires the official NVLabs/VILA code installed at pinned commit "
+                f"{VILA_PINNED_COMMIT}. Run scripts/setup_vila_environment.sh."
             ) from exc
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available; refusing to run VILA inference.")
-        self._processor = AutoProcessor.from_pretrained(self.checkpoint, trust_remote_code=True)
-        self._model = AutoModelForCausalLM.from_pretrained(
+        disable_torch_init()
+        self.model_name = get_model_name_from_path(self.checkpoint)
+        self._tokenizer, self._model, self._image_processor, self.context_len = load_pretrained_model(
             self.checkpoint,
-            torch_dtype="auto",
-            device_map="auto",
-            trust_remote_code=True,
-            attn_implementation="sdpa",
+            self.model_name,
+            None,
         )
+        _set_vila_attention_backend(self._model, "sdpa")
         self._model.eval()
 
     @property
     def tokenizer(self) -> Any:
         self._load()
-        tokenizer = getattr(self._processor, "tokenizer", None)
-        if tokenizer is None:
-            tokenizer = self._processor
-        return tokenizer
+        return self._tokenizer
 
     def prepare_inputs(self, example: Any, prompt: str, frame_batches: list[FrameBatch]) -> PreparedVILAInputs:
         self._load()
-        if hasattr(self._processor, "prepare_experiment1_inputs"):
-            payload = self._processor.prepare_experiment1_inputs(prompt=prompt, frame_batches=frame_batches)
-        elif hasattr(self._model, "prepare_experiment1_inputs"):
-            payload = self._model.prepare_experiment1_inputs(prompt=prompt, frame_batches=frame_batches)
-        else:
-            raise RuntimeError(
-                "The loaded VILA processor/model does not expose prepare_experiment1_inputs. "
-                "This repository requires an exact frame->visual-token mapping to prevent silent VILA "
-                "resampling, truncation, duplication, or reordering."
-            )
-        return coerce_prepared_vila_inputs(payload)
+        return prepare_vila_inputs_from_decoded_frames(
+            model=self._model,
+            tokenizer=self._tokenizer,
+            image_processor=self._image_processor,
+            example=example,
+            prompt=prompt,
+            frame_batches=frame_batches,
+            conv_mode=self.conv_mode,
+        )
 
     def forward(self, prepared: PreparedVILAInputs, output_attentions: bool = True) -> Any:
         self._load()
@@ -108,7 +115,9 @@ class VILALlama3Wrapper:
 
     def generate(self, prepared: PreparedVILAInputs) -> Any:
         self._load()
-        return self._model.generate(**prepared.model_inputs, max_new_tokens=self.max_new_tokens)
+        generation_inputs = dict(prepared.model_inputs)
+        generation_inputs.pop("labels", None)
+        return self._model.generate(**generation_inputs, max_new_tokens=self.max_new_tokens, use_cache=True)
 
     def decode_new_tokens(self, output_ids: Any, input_length: int) -> str:
         tokenizer = self.tokenizer
@@ -149,6 +158,200 @@ def coerce_prepared_vila_inputs(payload: Any) -> PreparedVILAInputs:
         visual_token_frame_indices=tuple(int(item) for item in payload["visual_token_frame_indices"]),
         prepared_frame_indices=tuple(int(item) for item in payload["prepared_frame_indices"]),
         truncation_occurred=bool(payload.get("truncation_occurred", False)),
+        image_feature_lengths=tuple(int(item) for item in payload.get("image_feature_lengths", ())),
+        base_image_token_positions=tuple(int(item) for item in payload.get("base_image_token_positions", ())),
+        base_to_expanded_token_positions={
+            int(key): int(value) for key, value in dict(payload.get("base_to_expanded_token_positions", {})).items()
+        },
+    )
+
+
+def decoded_rgb_frames_as_pil(frame_batches: Sequence[FrameBatch]) -> list[Any]:
+    from PIL import Image
+
+    frames = []
+    for batch in frame_batches:
+        for frame in batch.frames:
+            frames.append(Image.fromarray(frame).convert("RGB"))
+    return frames
+
+
+def official_vila_prompt(prompt: str, num_frames: int, conv_mode: str = VILA_DEFAULT_CONV_MODE) -> tuple[str, str]:
+    try:
+        from llava.constants import MEDIA_TOKENS
+        from llava.conversation import SeparatorStyle, conv_templates
+    except ImportError as exc:
+        raise RuntimeError("Official VILA modules are not importable; run scripts/setup_vila_environment.sh.") from exc
+    if num_frames <= 0:
+        raise ValueError("VILA prompt construction requires at least one decoded frame.")
+    conv = conv_templates[conv_mode].copy()
+    user_role = conv.roles[0]
+    assistant_role = conv.roles[1]
+    media_prompt = "".join(MEDIA_TOKENS.get("image", "<image>") for _ in range(num_frames)) + "\n" + prompt
+    conv.append_message(user_role, media_prompt)
+    if conv.sep_style == SeparatorStyle.LLAMA_3:
+        conv.append_message(assistant_role, "")
+    else:
+        conv.append_message(assistant_role, None)
+    return conv.get_prompt(), media_prompt
+
+
+def _tensor_to_device(value: Any, device: Any, dtype: Any | None = None) -> Any:
+    if hasattr(value, "to"):
+        kwargs = {"device": device}
+        if dtype is not None:
+            kwargs["dtype"] = dtype
+        return value.to(**kwargs)
+    return value
+
+
+def _process_vila_images(images: Sequence[Any], image_processor: Any, model_config: Any) -> Any:
+    try:
+        from llava.mm_utils import process_images
+    except ImportError as exc:
+        raise RuntimeError("Official VILA process_images is unavailable.") from exc
+    image_tensors = process_images(list(images), image_processor, model_config)
+    return image_tensors
+
+
+def _feature_lengths_from_encoded_images(model: Any, image_tensors: Any) -> tuple[int, ...]:
+    import torch
+
+    with torch.inference_mode():
+        if hasattr(model, "encode_images"):
+            features = model.encode_images(image_tensors)
+        elif hasattr(model, "get_model") and hasattr(model.get_model(), "encode_images"):
+            features = model.get_model().encode_images(image_tensors)
+        else:
+            raise RuntimeError("Loaded VILA model does not expose encode_images for feature-length verification.")
+    if isinstance(features, (list, tuple)):
+        lengths = []
+        for feature in features:
+            if len(feature.shape) == 3 and int(feature.shape[0]) == 1:
+                lengths.append(int(feature.shape[1]))
+            else:
+                lengths.append(int(feature.shape[0]))
+        return tuple(lengths)
+    if len(features.shape) == 3:
+        return tuple(int(features.shape[1]) for _ in range(int(features.shape[0])))
+    if len(features.shape) == 2 and int(image_tensors.shape[0]) == 1:
+        return (int(features.shape[0]),)
+    raise RuntimeError(f"Cannot derive per-frame VILA image feature lengths from shape {tuple(features.shape)}.")
+
+
+def expanded_positions_from_image_features(
+    input_ids: Sequence[int],
+    image_token_index: int,
+    feature_lengths: Sequence[int],
+) -> tuple[tuple[int, ...], dict[int, int], tuple[int, ...]]:
+    feature_lengths = tuple(int(item) for item in feature_lengths)
+    visual_positions: list[int] = []
+    image_positions: list[int] = []
+    base_to_expanded: dict[int, int] = {}
+    cursor = 0
+    feature_cursor = 0
+    for base_pos, token_id in enumerate(input_ids):
+        if int(token_id) == int(image_token_index):
+            if feature_cursor >= len(feature_lengths):
+                raise ValueError("Input contains more VILA image placeholders than encoded image features.")
+            length = feature_lengths[feature_cursor]
+            image_positions.append(base_pos)
+            visual_positions.extend(range(cursor, cursor + length))
+            cursor += length
+            feature_cursor += 1
+        else:
+            base_to_expanded[base_pos] = cursor
+            cursor += 1
+    if feature_cursor != len(feature_lengths):
+        raise ValueError("Encoded VILA image feature count does not match prompt image placeholders.")
+    return tuple(visual_positions), base_to_expanded, tuple(image_positions)
+
+
+def _find_subsequence(sequence: Sequence[int], subsequence: Sequence[int]) -> tuple[int, ...]:
+    if not subsequence:
+        return tuple()
+    n = len(subsequence)
+    seq = list(sequence)
+    sub = list(subsequence)
+    for start in range(0, len(seq) - n + 1):
+        if seq[start : start + n] == sub:
+            return tuple(range(start, start + n))
+    return tuple()
+
+
+def derive_vila_question_rows(
+    tokenizer: Any,
+    base_input_ids: Sequence[int],
+    base_to_expanded: dict[int, int],
+    question_text: str,
+) -> tuple[int, ...]:
+    question_ids = _tokenizer_ids(tokenizer(question_text, add_special_tokens=False))
+    base_question_positions = _find_subsequence([int(item) for item in base_input_ids], question_ids)
+    if not base_question_positions:
+        raise ValueError("Could not locate question tokens in official VILA prompt tokenization.")
+    missing = [pos for pos in base_question_positions if pos not in base_to_expanded]
+    if missing:
+        raise ValueError(f"Question token positions overlap VILA image placeholders: {missing}")
+    return tuple(int(base_to_expanded[pos]) for pos in base_question_positions)
+
+
+def prepare_vila_inputs_from_decoded_frames(
+    model: Any,
+    tokenizer: Any,
+    image_processor: Any,
+    example: Any,
+    prompt: str,
+    frame_batches: Sequence[FrameBatch],
+    conv_mode: str = VILA_DEFAULT_CONV_MODE,
+) -> PreparedVILAInputs:
+    import torch
+
+    try:
+        from llava.constants import IMAGE_TOKEN_INDEX
+        from llava.mm_utils import tokenizer_image_token
+    except ImportError as exc:
+        raise RuntimeError("Official VILA tokenizer utilities are unavailable.") from exc
+    images = decoded_rgb_frames_as_pil(frame_batches)
+    rendered_prompt, user_prompt = official_vila_prompt(prompt, len(images), conv_mode=conv_mode)
+    input_ids = tokenizer_image_token(rendered_prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0)
+    base_ids = _as_sequence(input_ids[0])
+    image_tensors = _process_vila_images(images, image_processor, model.config)
+    device = getattr(model, "device", None)
+    if device is None:
+        device = next(model.parameters()).device
+    dtype = getattr(model, "dtype", None)
+    if isinstance(image_tensors, list):
+        image_tensors = [_tensor_to_device(item, device, dtype=dtype) for item in image_tensors]
+    else:
+        image_tensors = _tensor_to_device(image_tensors, device, dtype=dtype)
+    feature_lengths = _feature_lengths_from_encoded_images(model, image_tensors)
+    visual_positions, base_to_expanded, image_positions = expanded_positions_from_image_features(
+        base_ids,
+        IMAGE_TOKEN_INDEX,
+        feature_lengths,
+    )
+    question_rows = derive_vila_question_rows(tokenizer, base_ids, base_to_expanded, example.question)
+    visual_frame_indices: list[int] = []
+    for frame_position, length in enumerate(feature_lengths):
+        visual_frame_indices.extend([frame_position] * int(length))
+    prepared_frame_indices = _all_frame_indices(frame_batches)
+    model_inputs = {
+        "input_ids": input_ids.to(device=device, non_blocking=True),
+        "images": image_tensors,
+        "image_sizes": [image.size for image in images],
+    }
+    return PreparedVILAInputs(
+        model_inputs=model_inputs,
+        rendered_prompt=rendered_prompt,
+        input_ids=tuple(base_ids),
+        question_token_indices=question_rows,
+        visual_token_indices=tuple(int(item) for item in visual_positions),
+        visual_token_frame_indices=tuple(visual_frame_indices),
+        prepared_frame_indices=prepared_frame_indices,
+        truncation_occurred=False,
+        image_feature_lengths=tuple(int(item) for item in feature_lengths),
+        base_image_token_positions=image_positions,
+        base_to_expanded_token_positions=base_to_expanded,
     )
 
 
@@ -162,6 +365,14 @@ def _as_sequence(value: Any) -> list[int]:
     return [int(item) for item in value]
 
 
+def _tokenizer_ids(tokenizer_output: Any) -> list[int]:
+    if isinstance(tokenizer_output, dict):
+        return _as_sequence(tokenizer_output["input_ids"])
+    if hasattr(tokenizer_output, "input_ids"):
+        return _as_sequence(tokenizer_output.input_ids)
+    return _as_sequence(tokenizer_output)
+
+
 def _to_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach"):
         value = value.detach()
@@ -169,6 +380,190 @@ def _to_numpy(value: Any) -> np.ndarray:
             value = value.float()
         value = value.cpu().numpy()
     return np.asarray(value, dtype=np.float64)
+
+
+def _set_vila_attention_backend(model: Any, implementation: str) -> list[tuple[Any, str]]:
+    changed: list[tuple[Any, str]] = []
+    seen: set[int] = set()
+    for module in model.modules():
+        config = getattr(module, "config", None)
+        if config is None or not hasattr(config, "_attn_implementation") or id(config) in seen:
+            continue
+        seen.add(id(config))
+        changed.append((config, config._attn_implementation))
+        config._attn_implementation = implementation
+    return changed
+
+
+@dataclass
+class VILAReducedAttentionCapture:
+    question_token_indices: tuple[int, ...]
+    visual_token_indices: tuple[int, ...]
+    reduced_by_layer: dict[int, np.ndarray] = field(default_factory=dict)
+    tensor_shapes_by_layer: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    sdpa_calls_by_layer: dict[int, int] = field(default_factory=dict)
+
+    def record_shape(self, layer: int, stage: str, shape: Sequence[int]) -> None:
+        self.tensor_shapes_by_layer.setdefault(int(layer), []).append(
+            {"stage": stage, "shape": [int(item) for item in shape]}
+        )
+
+    def ordered_token_scores(self, expected_layers: int | None = None) -> np.ndarray:
+        if not self.reduced_by_layer:
+            raise RuntimeError("No VILA reduced attention scores were captured.")
+        layer_ids = sorted(self.reduced_by_layer)
+        if expected_layers is not None and layer_ids != list(range(expected_layers)):
+            raise RuntimeError(f"Captured VILA layers {layer_ids}, expected {list(range(expected_layers))}.")
+        return np.stack([self.reduced_by_layer[layer_idx] for layer_idx in layer_ids], axis=0)
+
+
+_ACTIVE_VILA_CAPTURE: VILAReducedAttentionCapture | None = None
+_ACTIVE_VILA_LAYER: int | None = None
+
+
+def _vila_decoder_attention_modules(model: Any) -> list[tuple[int, Any]]:
+    modules: list[tuple[int, Any]] = []
+    for module in model.modules():
+        if not (hasattr(module, "q_proj") and hasattr(module, "k_proj") and hasattr(module, "v_proj")):
+            continue
+        layer_idx = getattr(module, "layer_idx", None)
+        if layer_idx is None:
+            layer_idx = len(modules)
+        modules.append((int(layer_idx), module))
+    if not modules:
+        raise RuntimeError("Could not find VILA/Llama decoder attention modules.")
+    modules.sort(key=lambda item: item[0])
+    return modules
+
+
+def _num_vila_decoder_layers(model: Any) -> int:
+    config = getattr(model, "config", None)
+    if config is not None and hasattr(config, "num_hidden_layers"):
+        return int(config.num_hidden_layers)
+    return len(_vila_decoder_attention_modules(model))
+
+
+def _slice_vila_mask(attn_mask: Any, question_rows: Any, q_len: int, key_len: int) -> Any:
+    if attn_mask is None:
+        return None
+    if len(attn_mask.shape) == 4:
+        if int(attn_mask.shape[2]) == q_len:
+            local_rows = question_rows - (key_len - q_len)
+            return attn_mask[:, :, local_rows, :]
+        return attn_mask[:, :, question_rows, :]
+    if len(attn_mask.shape) == 3:
+        return attn_mask[:, question_rows, :]
+    return attn_mask
+
+
+def _causal_mask_for_question_rows(query: Any, key: Any, question_rows: Any, is_causal: bool) -> Any | None:
+    if not is_causal:
+        return None
+    import torch
+
+    key_len = int(key.shape[-2])
+    mask = torch.zeros((1, 1, int(question_rows.numel()), key_len), dtype=query.dtype, device=query.device)
+    blocked_value = torch.finfo(query.dtype).min
+    key_positions = torch.arange(key_len, device=query.device).view(1, -1)
+    blocked = key_positions > question_rows.view(-1, 1)
+    mask[:, :, :, :] = torch.where(blocked.view(1, 1, blocked.shape[0], blocked.shape[1]), blocked_value, 0.0)
+    return mask
+
+
+@contextmanager
+def vila_reduced_sdpa_context(model: Any, prepared: PreparedVILAInputs) -> Iterator[VILAReducedAttentionCapture]:
+    import torch
+    import torch.nn.functional as F
+
+    global _ACTIVE_VILA_CAPTURE, _ACTIVE_VILA_LAYER
+    capture = VILAReducedAttentionCapture(
+        question_token_indices=tuple(prepared.question_token_indices),
+        visual_token_indices=tuple(prepared.visual_token_indices),
+    )
+    previous_capture = _ACTIVE_VILA_CAPTURE
+    previous_layer = _ACTIVE_VILA_LAYER
+    previous_configs = _set_vila_attention_backend(model, "sdpa")
+    modules = _vila_decoder_attention_modules(model)
+    original_forwards: list[tuple[Any, Any]] = []
+    original_sdpa = F.scaled_dot_product_attention
+
+    def make_forward(layer_idx: int, original_forward: Any) -> Any:
+        def wrapped_forward(*args: Any, **kwargs: Any) -> Any:
+            global _ACTIVE_VILA_LAYER
+            previous = _ACTIVE_VILA_LAYER
+            _ACTIVE_VILA_LAYER = int(layer_idx)
+            try:
+                return original_forward(*args, **kwargs)
+            finally:
+                _ACTIVE_VILA_LAYER = previous
+
+        return wrapped_forward
+
+    def reduced_sdpa(
+        query: Any,
+        key: Any,
+        value: Any,
+        attn_mask: Any = None,
+        dropout_p: float = 0.0,
+        is_causal: bool = False,
+        scale: float | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        output = original_sdpa(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            scale=scale,
+            *args,
+            **kwargs,
+        )
+        active_capture = _ACTIVE_VILA_CAPTURE
+        layer = _ACTIVE_VILA_LAYER
+        if active_capture is not None and layer is not None:
+            device = query.device
+            q_len = int(query.shape[-2])
+            key_len = int(key.shape[-2])
+            question_rows = torch.as_tensor(active_capture.question_token_indices, device=device, dtype=torch.long)
+            question_rows = question_rows[(question_rows >= key_len - q_len) & (question_rows < key_len)]
+            if int(question_rows.numel()) > 0:
+                local_rows = question_rows - (key_len - q_len)
+                visual_cols = torch.as_tensor(active_capture.visual_token_indices, device=device, dtype=torch.long)
+                visual_cols = visual_cols[visual_cols < key_len]
+                query_rows = query.index_select(-2, local_rows)
+                active_capture.record_shape(int(layer), "vila_question_rows", tuple(query_rows.shape))
+                logits = torch.matmul(query_rows, key.transpose(-2, -1))
+                logits = logits * (float(scale) if scale is not None else (float(query.shape[-1]) ** -0.5))
+                reduced_mask = _slice_vila_mask(attn_mask, question_rows, q_len, key_len)
+                causal_mask = _causal_mask_for_question_rows(query, key, question_rows, is_causal)
+                for candidate in (reduced_mask, causal_mask):
+                    if candidate is not None:
+                        logits = logits + candidate
+                probs = torch.softmax(logits, dim=-1, dtype=torch.float32)
+                qv = probs.index_select(-1, visual_cols)
+                active_capture.record_shape(int(layer), "vila_question_by_visual_probs", tuple(qv.shape))
+                active_capture.reduced_by_layer[int(layer)] = qv.mean(dim=(0, 1, 2)).detach().cpu().numpy()
+                active_capture.sdpa_calls_by_layer[int(layer)] = active_capture.sdpa_calls_by_layer.get(int(layer), 0) + 1
+        return output
+
+    _ACTIVE_VILA_CAPTURE = capture
+    try:
+        for layer_idx, module in modules:
+            original_forwards.append((module, module.forward))
+            module.forward = make_forward(layer_idx, module.forward)
+        F.scaled_dot_product_attention = reduced_sdpa
+        yield capture
+    finally:
+        F.scaled_dot_product_attention = original_sdpa
+        for module, original_forward in original_forwards:
+            module.forward = original_forward
+        _ACTIVE_VILA_CAPTURE = previous_capture
+        _ACTIVE_VILA_LAYER = previous_layer
+        for config, previous_implementation in previous_configs:
+            config._attn_implementation = previous_implementation
 
 
 def _all_frame_indices(frame_batches: Sequence[FrameBatch]) -> tuple[int, ...]:
@@ -397,17 +792,37 @@ def run_vila_relevance_example(
     num_bins = max(visual_bins) + 1
 
     with stage_fn("vila_decoder_prefill_attention_extraction"):
-        outputs = model.forward(prepared, output_attentions=True)
-        attentions = getattr(outputs, "attentions", None)
-        if attentions is None:
-            raise ValueError("VILA forward did not return decoder attentions.")
-        raw_temporal, absolute_mass = extract_temporal_scores_from_vila_attentions(
-            attentions,
-            prepared.question_token_indices,
-            prepared.visual_token_indices,
-            visual_bins,
-            num_bins,
-        )
+        target_model = getattr(model, "_model", model)
+        if getattr(model, "allow_full_attention_test_fallback", False):
+            outputs = model.forward(prepared, output_attentions=True)
+            reduced_prefill_next_logits = (
+                _to_numpy(outputs.logits[0, -1]) if getattr(outputs, "logits", None) is not None else None
+            )
+            attentions = getattr(outputs, "attentions", None)
+            if attentions is None:
+                raise ValueError("VILA test fallback requested full attentions but none were returned.")
+            raw_temporal, absolute_mass = extract_temporal_scores_from_vila_attentions(
+                attentions,
+                prepared.question_token_indices,
+                prepared.visual_token_indices,
+                visual_bins,
+                num_bins,
+            )
+        else:
+            expected_layers = _num_vila_decoder_layers(target_model)
+            with vila_reduced_sdpa_context(target_model, prepared) as capture:
+                outputs = model.forward(prepared, output_attentions=False)
+            reduced_prefill_next_logits = (
+                _to_numpy(outputs.logits[0, -1]) if getattr(outputs, "logits", None) is not None else None
+            )
+            raw_token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
+            raw_temporal = np.zeros((raw_token_scores.shape[0], num_bins), dtype=np.float64)
+            for visual_index, analysis_bin in enumerate(visual_bins):
+                raw_temporal[:, int(analysis_bin)] += raw_token_scores[:, visual_index]
+            absolute_mass = raw_token_scores.sum(axis=1)
+            if profiler is not None:
+                profiler.add_tensor_shapes("vila_decoder_question_visual_reduction", capture.tensor_shapes_by_layer)
+            del outputs
     temporal_relevance = temporal_relevance_from_raw_scores(
         raw_temporal,
         absolute_mass,
@@ -425,6 +840,13 @@ def run_vila_relevance_example(
     )
     with stage_fn("vila_answer_scoring"):
         scoring_outputs = model.forward(prepared, output_attentions=False)
+        scoring_next_logits = (
+            _to_numpy(scoring_outputs.logits[0, -1]) if getattr(scoring_outputs, "logits", None) is not None else None
+        )
+        if reduced_prefill_next_logits is not None and scoring_next_logits is not None:
+            prefill_equivalence = float(np.max(np.abs(reduced_prefill_next_logits - scoring_next_logits)))
+        else:
+            prefill_equivalence = None
         answer_choice_scores = score_answer_choices_from_outputs(
             scoring_outputs,
             model.tokenizer,
@@ -496,6 +918,7 @@ def run_vila_relevance_example(
             "source_video_paths": [str(batch.video_path) if batch.video_path else None for batch in controlled_batches],
             "attention_extraction": attention_extraction,
             "answer_choice_score_source": "separate_unmodified_vila_prefill_forward",
+            "reduced_prefill_unmodified_next_logit_max_abs_diff": prefill_equivalence,
             **_profile_memory(),
         },
     }

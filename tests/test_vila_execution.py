@@ -8,6 +8,8 @@ import pytest
 from src.experiment1.resolution import get_resolution_config
 from src.experiment1.vila_execution import (
     PreparedVILAInputs,
+    derive_vila_question_rows,
+    expanded_positions_from_image_features,
     extract_temporal_scores_from_vila_attentions,
     run_vila_relevance_example,
     validate_prepared_vila_mapping,
@@ -27,6 +29,7 @@ class FakeTokenizer:
 
 class FakeVILAModel:
     checkpoint = "fake-vila"
+    allow_full_attention_test_fallback = True
 
     def __init__(self, layers=3, visual_token_frame_indices=(0, 0, 1, 2, 2), truncation=False):
         self.layers = layers
@@ -145,6 +148,28 @@ def test_visual_token_to_bin_mapping_supports_variable_tokens_per_frame():
         fake_example(), "prompt", [batch]
     )
     assert visual_token_analysis_bins(prepared, batch) == (0, 0, 1, 2, 2)
+
+
+def test_vila_style_image_placeholders_expand_to_actual_feature_lengths_and_question_rows():
+    image_token = -200
+    # Two image placeholders with variable projected lengths, followed by text tokens.
+    base_ids = [101, image_token, 102, image_token, 201, 202, 203]
+    visual_positions, base_to_expanded, image_positions = expanded_positions_from_image_features(
+        base_ids,
+        image_token,
+        feature_lengths=(3, 2),
+    )
+    assert image_positions == (1, 3)
+    assert visual_positions == (1, 2, 3, 5, 6)
+    assert base_to_expanded == {0: 0, 2: 4, 4: 7, 5: 8, 6: 9}
+
+    class QuestionTokenizer:
+        def __call__(self, text, add_special_tokens=False):
+            if text == "question":
+                return {"input_ids": [201, 202, 203]}
+            raise AssertionError(text)
+
+    assert derive_vila_question_rows(QuestionTokenizer(), base_ids, base_to_expanded, "question") == (7, 8, 9)
 
 
 def test_question_rows_only_and_absolute_mass_is_not_normalized():
