@@ -113,11 +113,24 @@ def validate_artifact(path: Path, expected_bins: int) -> dict[str, Any]:
         failures.append("normalized temporal distributions do not sum to one")
     if metadata.get("reduced_prefill_unmodified_next_logit_max_abs_diff") is None:
         failures.append("missing reduced/unmodified output-equivalence metric")
+    elif float(metadata["reduced_prefill_unmodified_next_logit_max_abs_diff"]) > 1e-5:
+        failures.append("reduced/unmodified next-token logits differ by more than 1e-5")
     if not token_cells:
         failures.append("missing visual token mapping")
     cell_positions = [int(cell["sample_position"]) for cell in token_cells]
     if min(cell_positions, default=0) < 0 or max(cell_positions, default=-1) >= len(frame_indices):
         failures.append("visual token maps outside prepared frame range")
+    expanded = metadata.get("expanded_sequence_length")
+    context_limit = metadata.get("context_limit")
+    if expanded is None or context_limit is None:
+        failures.append("missing expanded sequence/context metadata")
+    elif int(expanded) > int(context_limit):
+        failures.append("expanded sequence exceeds context limit")
+    feature_lengths = metadata.get("image_feature_lengths") or []
+    if len(feature_lengths) != len(frame_indices):
+        failures.append("feature length count does not match frame count")
+    if sum(int(item) for item in feature_lengths) != len(token_cells):
+        failures.append("feature lengths do not reconstruct visual token count")
     if failures:
         raise RuntimeError(f"{path} failed VILA smoke validation: {failures}")
     return {
@@ -127,7 +140,10 @@ def validate_artifact(path: Path, expected_bins: int) -> dict[str, Any]:
         "frames": len(frame_indices),
         "decoder_layers": metadata["num_decoder_layers"],
         "visual_tokens": metadata["actual_num_visual_tokens"],
+        "expanded_sequence_length": metadata.get("expanded_sequence_length"),
+        "context_limit": metadata.get("context_limit"),
         "max_equivalence_diff": metadata.get("reduced_prefill_unmodified_next_logit_max_abs_diff"),
+        "generated_response": artifact.get("raw_response"),
         "peak_cuda_memory_bytes": metadata.get("cuda_max_memory_allocated_bytes"),
         "runtime_seconds": metadata.get("prefill_runtime_seconds"),
     }

@@ -9,7 +9,6 @@ VENV_DIR="${VENV_DIR:-.venv-vila}"
 python -m venv "${VENV_DIR}"
 . "${VENV_DIR}/bin/activate"
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements-vila.txt
 
 if [ ! -d "${VILA_SRC_DIR}/.git" ]; then
   mkdir -p "$(dirname "${VILA_SRC_DIR}")"
@@ -19,11 +18,26 @@ fi
 git -C "${VILA_SRC_DIR}" fetch --tags origin "${VILA_COMMIT}"
 git -C "${VILA_SRC_DIR}" checkout --detach "${VILA_COMMIT}"
 
-if [ -f "${VILA_SRC_DIR}/requirements.txt" ]; then
-  python -m pip install -r "${VILA_SRC_DIR}/requirements.txt"
-fi
+python -m pip install -r requirements-vila.txt
 
-python -m pip install -e "${VILA_SRC_DIR}"
+python -m pip install -e "${VILA_SRC_DIR}" --no-deps
+python - <<'PY'
+import torch, torchvision, transformers
+expected = {
+    "torch": "2.3.0",
+    "torchvision": "0.18.0",
+    "transformers": "4.46.0",
+}
+actual = {
+    "torch": torch.__version__.split("+")[0],
+    "torchvision": torchvision.__version__.split("+")[0],
+    "transformers": transformers.__version__,
+}
+for name, version in expected.items():
+    if actual[name] != version:
+        raise SystemExit(f"{name} version mismatch: expected {version}, got {actual[name]}")
+print("Verified VILA core dependency versions:", actual)
+PY
 
 cat <<'MSG'
 VILA environment installed in .venv-vila.

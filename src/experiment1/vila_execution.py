@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,8 @@ class PreparedVILAInputs:
     image_feature_lengths: tuple[int, ...] = ()
     base_image_token_positions: tuple[int, ...] = ()
     base_to_expanded_token_positions: dict[int, int] = field(default_factory=dict)
+    expanded_sequence_length: int | None = None
+    context_limit: int | None = None
 
 
 class VILALlama3Wrapper:
@@ -72,6 +75,7 @@ class VILALlama3Wrapper:
             return
         try:
             import torch
+            from llava import conversation as conversation_lib
             from llava.mm_utils import get_model_name_from_path
             from llava.model.builder import load_pretrained_model
             from llava.utils import disable_torch_init
@@ -82,6 +86,9 @@ class VILALlama3Wrapper:
             ) from exc
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available; refusing to run VILA inference.")
+        if self.conv_mode not in conversation_lib.conv_templates:
+            raise RuntimeError(f"VILA conversation mode {self.conv_mode!r} is not available in pinned VILA.")
+        conversation_lib.default_conversation = conversation_lib.conv_templates[self.conv_mode].copy()
         disable_torch_init()
         self.model_name = get_model_name_from_path(self.checkpoint)
         self._tokenizer, self._model, self._image_processor, self.context_len = load_pretrained_model(
@@ -117,18 +124,18 @@ class VILALlama3Wrapper:
         self._load()
         generation_inputs = dict(prepared.model_inputs)
         generation_inputs.pop("labels", None)
-        return self._model.generate(**generation_inputs, max_new_tokens=self.max_new_tokens, use_cache=True)
+        return self._model.generate(
+            **generation_inputs,
+            max_new_tokens=self.max_new_tokens,
+            use_cache=True,
+        )
 
     def decode_new_tokens(self, output_ids: Any, input_length: int) -> str:
         tokenizer = self.tokenizer
-        if hasattr(output_ids, "detach"):
-            generated = output_ids[:, input_length:]
-        else:
-            generated = output_ids
         if hasattr(tokenizer, "batch_decode"):
-            return tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
+            return tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
         if hasattr(tokenizer, "decode"):
-            return tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+            return tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
         return ""
 
 
@@ -163,6 +170,10 @@ def coerce_prepared_vila_inputs(payload: Any) -> PreparedVILAInputs:
         base_to_expanded_token_positions={
             int(key): int(value) for key, value in dict(payload.get("base_to_expanded_token_positions", {})).items()
         },
+        expanded_sequence_length=(
+            None if payload.get("expanded_sequence_length") is None else int(payload["expanded_sequence_length"])
+        ),
+        context_limit=None if payload.get("context_limit") is None else int(payload["context_limit"]),
     )
 
 
@@ -176,24 +187,19 @@ def decoded_rgb_frames_as_pil(frame_batches: Sequence[FrameBatch]) -> list[Any]:
     return frames
 
 
-def official_vila_prompt(prompt: str, num_frames: int, conv_mode: str = VILA_DEFAULT_CONV_MODE) -> tuple[str, str]:
+def official_vila_conversation(prompt: str, num_frames: int) -> list[dict[str, str]]:
     try:
         from llava.constants import MEDIA_TOKENS
-        from llava.conversation import SeparatorStyle, conv_templates
     except ImportError as exc:
         raise RuntimeError("Official VILA modules are not importable; run scripts/setup_vila_environment.sh.") from exc
     if num_frames <= 0:
         raise ValueError("VILA prompt construction requires at least one decoded frame.")
-    conv = conv_templates[conv_mode].copy()
-    user_role = conv.roles[0]
-    assistant_role = conv.roles[1]
     media_prompt = "".join(MEDIA_TOKENS.get("image", "<image>") for _ in range(num_frames)) + "\n" + prompt
-    conv.append_message(user_role, media_prompt)
-    if conv.sep_style == SeparatorStyle.LLAMA_3:
-        conv.append_message(assistant_role, "")
-    else:
-        conv.append_message(assistant_role, None)
-    return conv.get_prompt(), media_prompt
+    return [{"from": "human", "value": media_prompt}]
+
+
+def json_safe_conversation(conversation: Sequence[dict[str, str]]) -> str:
+    return "\n".join(f"{item['from']}: {item['value']}" for item in conversation)
 
 
 def _tensor_to_device(value: Any, device: Any, dtype: Any | None = None) -> Any:
@@ -214,16 +220,13 @@ def _process_vila_images(images: Sequence[Any], image_processor: Any, model_conf
     return image_tensors
 
 
-def _feature_lengths_from_encoded_images(model: Any, image_tensors: Any) -> tuple[int, ...]:
+def _feature_lengths_from_native_image_encoder(model: Any, image_media: list[Any], image_media_config: dict[str, Any]) -> tuple[int, ...]:
     import torch
 
     with torch.inference_mode():
-        if hasattr(model, "encode_images"):
-            features = model.encode_images(image_tensors)
-        elif hasattr(model, "get_model") and hasattr(model.get_model(), "encode_images"):
-            features = model.get_model().encode_images(image_tensors)
-        else:
-            raise RuntimeError("Loaded VILA model does not expose encode_images for feature-length verification.")
+        if not hasattr(model, "encoders") or "image" not in model.encoders:
+            raise RuntimeError("Loaded pinned VILA model does not expose model.encoders['image'].")
+        features = model.encoders["image"](image_media, image_media_config)
     if isinstance(features, (list, tuple)):
         lengths = []
         for feature in features:
@@ -232,11 +235,12 @@ def _feature_lengths_from_encoded_images(model: Any, image_tensors: Any) -> tupl
             else:
                 lengths.append(int(feature.shape[0]))
         return tuple(lengths)
-    if len(features.shape) == 3:
+    if hasattr(features, "shape") and len(features.shape) == 3:
         return tuple(int(features.shape[1]) for _ in range(int(features.shape[0])))
-    if len(features.shape) == 2 and int(image_tensors.shape[0]) == 1:
+    if hasattr(features, "shape") and len(features.shape) == 2 and len(image_media) == 1:
         return (int(features.shape[0]),)
-    raise RuntimeError(f"Cannot derive per-frame VILA image feature lengths from shape {tuple(features.shape)}.")
+    shape = tuple(features.shape) if hasattr(features, "shape") else type(features).__name__
+    raise RuntimeError(f"Cannot derive per-frame VILA image feature lengths from shape {shape}.")
 
 
 def expanded_positions_from_image_features(
@@ -307,13 +311,12 @@ def prepare_vila_inputs_from_decoded_frames(
     import torch
 
     try:
-        from llava.constants import IMAGE_TOKEN_INDEX
-        from llava.mm_utils import tokenizer_image_token
+        from llava.utils.tokenizer import tokenize_conversation
     except ImportError as exc:
-        raise RuntimeError("Official VILA tokenizer utilities are unavailable.") from exc
+        raise RuntimeError("Official VILA tokenize_conversation utility is unavailable.") from exc
     images = decoded_rgb_frames_as_pil(frame_batches)
-    rendered_prompt, user_prompt = official_vila_prompt(prompt, len(images), conv_mode=conv_mode)
-    input_ids = tokenizer_image_token(rendered_prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0)
+    conversation = official_vila_conversation(prompt, len(images))
+    input_ids = tokenize_conversation(conversation, tokenizer, add_generation_prompt=True).unsqueeze(0)
     base_ids = _as_sequence(input_ids[0])
     image_tensors = _process_vila_images(images, image_processor, model.config)
     device = getattr(model, "device", None)
@@ -321,13 +324,17 @@ def prepare_vila_inputs_from_decoded_frames(
         device = next(model.parameters()).device
     dtype = getattr(model, "dtype", None)
     if isinstance(image_tensors, list):
-        image_tensors = [_tensor_to_device(item, device, dtype=dtype) for item in image_tensors]
+        image_media = [_tensor_to_device(item, device, dtype=dtype) for item in image_tensors]
     else:
         image_tensors = _tensor_to_device(image_tensors, device, dtype=dtype)
-    feature_lengths = _feature_lengths_from_encoded_images(model, image_tensors)
+        image_media = [image for image in image_tensors]
+    media_config = defaultdict(dict)
+    media = {"image": image_media}
+    image_token_id = int(tokenizer.media_token_ids["image"])
+    feature_lengths = _feature_lengths_from_native_image_encoder(model, image_media, media_config["image"])
     visual_positions, base_to_expanded, image_positions = expanded_positions_from_image_features(
         base_ids,
-        IMAGE_TOKEN_INDEX,
+        image_token_id,
         feature_lengths,
     )
     question_rows = derive_vila_question_rows(tokenizer, base_ids, base_to_expanded, example.question)
@@ -335,23 +342,48 @@ def prepare_vila_inputs_from_decoded_frames(
     for frame_position, length in enumerate(feature_lengths):
         visual_frame_indices.extend([frame_position] * int(length))
     prepared_frame_indices = _all_frame_indices(frame_batches)
+    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+    with torch.inference_mode():
+        inputs_embeds, _, expanded_attention_mask = model._embed(
+            input_ids.to(device=device, non_blocking=True),
+            media,
+            media_config,
+            None,
+            attention_mask.to(device=device, non_blocking=True),
+        )
+    actual_expanded_length = int(inputs_embeds.shape[1])
+    reconstructed_expanded_length = len([idx for idx in base_ids if int(idx) != image_token_id]) + sum(feature_lengths)
+    if actual_expanded_length != reconstructed_expanded_length:
+        raise ValueError(
+            "Pinned VILA expanded sequence length mismatch: "
+            f"reconstructed={reconstructed_expanded_length}, actual={actual_expanded_length}."
+        )
+    context_limit = int(
+        getattr(tokenizer, "model_max_length", 0)
+        or getattr(getattr(model, "config", None), "max_position_embeddings", 0)
+        or actual_expanded_length
+    )
+    truncation_occurred = actual_expanded_length > context_limit
     model_inputs = {
         "input_ids": input_ids.to(device=device, non_blocking=True),
-        "images": image_tensors,
-        "image_sizes": [image.size for image in images],
+        "media": media,
+        "media_config": media_config,
+        "attention_mask": attention_mask.to(device=device, non_blocking=True),
     }
     return PreparedVILAInputs(
         model_inputs=model_inputs,
-        rendered_prompt=rendered_prompt,
+        rendered_prompt=json_safe_conversation(conversation),
         input_ids=tuple(base_ids),
         question_token_indices=question_rows,
         visual_token_indices=tuple(int(item) for item in visual_positions),
         visual_token_frame_indices=tuple(visual_frame_indices),
         prepared_frame_indices=prepared_frame_indices,
-        truncation_occurred=False,
+        truncation_occurred=truncation_occurred,
         image_feature_lengths=tuple(int(item) for item in feature_lengths),
         base_image_token_positions=image_positions,
         base_to_expanded_token_positions=base_to_expanded,
+        expanded_sequence_length=actual_expanded_length,
+        context_limit=context_limit,
     )
 
 
@@ -470,6 +502,16 @@ def _causal_mask_for_question_rows(query: Any, key: Any, question_rows: Any, is_
     return mask
 
 
+def _repeat_kv_to_query_heads(key: Any, query_heads: int) -> Any:
+    key_heads = int(key.shape[-3])
+    if key_heads == query_heads:
+        return key
+    if query_heads % key_heads != 0:
+        raise ValueError(f"Cannot align VILA Q/K heads: query_heads={query_heads}, key_heads={key_heads}.")
+    repeat = query_heads // key_heads
+    return key.repeat_interleave(repeat, dim=-3)
+
+
 @contextmanager
 def vila_reduced_sdpa_context(model: Any, prepared: PreparedVILAInputs) -> Iterator[VILAReducedAttentionCapture]:
     import torch
@@ -535,7 +577,8 @@ def vila_reduced_sdpa_context(model: Any, prepared: PreparedVILAInputs) -> Itera
                 visual_cols = visual_cols[visual_cols < key_len]
                 query_rows = query.index_select(-2, local_rows)
                 active_capture.record_shape(int(layer), "vila_question_rows", tuple(query_rows.shape))
-                logits = torch.matmul(query_rows, key.transpose(-2, -1))
+                key_for_logits = _repeat_kv_to_query_heads(key, int(query.shape[-3]))
+                logits = torch.matmul(query_rows, key_for_logits.transpose(-2, -1))
                 logits = logits * (float(scale) if scale is not None else (float(query.shape[-1]) ** -0.5))
                 reduced_mask = _slice_vila_mask(attn_mask, question_rows, q_len, key_len)
                 causal_mask = _causal_mask_for_question_rows(query, key, question_rows, is_causal)
@@ -815,6 +858,14 @@ def run_vila_relevance_example(
             reduced_prefill_next_logits = (
                 _to_numpy(outputs.logits[0, -1]) if getattr(outputs, "logits", None) is not None else None
             )
+            missing_layers = [
+                layer for layer in range(expected_layers) if capture.sdpa_calls_by_layer.get(layer, 0) != 1
+            ]
+            if missing_layers:
+                raise RuntimeError(
+                    "VILA reduced SDPA capture did not observe every decoder layer exactly once: "
+                    f"calls={capture.sdpa_calls_by_layer}, expected_layers={expected_layers}."
+                )
             raw_token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
             raw_temporal = np.zeros((raw_token_scores.shape[0], num_bins), dtype=np.float64)
             for visual_index, analysis_bin in enumerate(visual_bins):
@@ -894,6 +945,10 @@ def run_vila_relevance_example(
             "visual_grid_metadata": {
                 "backend": "vila_llama3",
                 "visual_token_frame_indices": list(prepared.visual_token_frame_indices),
+                "image_feature_lengths": list(prepared.image_feature_lengths),
+                "base_image_token_positions": list(prepared.base_image_token_positions),
+                "expanded_sequence_length": prepared.expanded_sequence_length,
+                "context_limit": prepared.context_limit,
             },
             "num_visual_tokens": len(prepared.visual_token_indices),
             "query_scope": query_scope,
@@ -912,6 +967,9 @@ def run_vila_relevance_example(
             "question_token_indices": list(prepared.question_token_indices),
             "visual_token_indices": list(prepared.visual_token_indices),
             "truncation_occurred": bool(prepared.truncation_occurred),
+            "expanded_sequence_length": prepared.expanded_sequence_length,
+            "context_limit": prepared.context_limit,
+            "image_feature_lengths": list(prepared.image_feature_lengths),
             "condition": condition or "baseline",
             "resolution": resolution.to_metadata(),
             "prefill_runtime_seconds": time.time() - started,
