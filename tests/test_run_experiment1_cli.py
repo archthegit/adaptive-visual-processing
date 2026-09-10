@@ -35,6 +35,12 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
             "fixed_budget",
             "--attention-extraction",
             "reduced_sdpa",
+            "--model-backend",
+            "vila_llama3",
+            "--model-checkpoint",
+            "Efficient-Large-Model/Llama-3-VILA1.5-8B",
+            "--frames-per-bin",
+            "1",
             "--decoder-mask-temporal-bin",
             "2",
             "--decoder-direct-access-through-layer",
@@ -47,6 +53,9 @@ def test_run_experiment1_exposes_max_new_tokens(monkeypatch):
     assert args.max_new_tokens == 24
     assert args.sampling_mode == "fixed_budget"
     assert args.attention_extraction == "reduced_sdpa"
+    assert args.model_backend == "vila_llama3"
+    assert args.model_checkpoint == "Efficient-Large-Model/Llama-3-VILA1.5-8B"
+    assert args.frames_per_bin == 1
     assert args.frame_budget_mode == "total"
     assert args.resume is False
     assert args.shard_index == 0
@@ -143,6 +152,34 @@ def test_realtime_sampling_uses_development_durations_from_manifest(tmp_path):
     assert loaded["delta_t_seconds"] == 10
     with pytest.raises(ValueError, match="sampling-policy-json"):
         _load_realtime_sampling_policy(None)
+
+
+def test_realtime_sampling_frames_per_bin_override_uses_one_frame_per_bin(monkeypatch):
+    from scripts import run_experiment1
+
+    monkeypatch.setattr(run_experiment1, "_probe_video_for_sampling", lambda path: {"fps": 10.0, "num_frames": 1000})
+    monkeypatch.setattr(run_experiment1, "_decord_video_length", lambda path: 1000)
+    record = {
+        "analyzed_start_seconds": 0.0,
+        "analyzed_end_seconds": 8.0,
+        "_realtime_sampling_policy": {
+            "delta_t_seconds": 1.0,
+            "frames_per_bin": 2,
+            "max_bins": 64,
+            "min_bins": 8,
+        },
+        "_sampling_policy_json": "split_summary.json",
+    }
+    plan, metadata = run_experiment1._sampling_plan_for_record(
+        record,
+        "video.mp4",
+        "realtime",
+        frames_per_bin_override=1,
+    )
+    assert len(plan) == 8
+    assert all(len(item["source_frame_indices"]) == 1 for item in plan)
+    assert metadata["policy"]["frames_per_bin"] == 1
+    assert metadata["frames_per_bin_override"] == 1
 
 
 def test_v2_sampling_mode_requires_manifest_record():

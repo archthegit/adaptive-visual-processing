@@ -183,6 +183,59 @@ The baseline does **not** yet show that decoder-selected bins are query-relevant
 
 Only these paired controls and interventions can establish whether the observed decoder allocation is useful for temporal optimization.
 
+## Cross-Architecture Replication: VILA-Llama3
+
+Experiment 1 now includes an additive cross-model replication path for
+`Efficient-Large-Model/Llama-3-VILA1.5-8B`. This path is intentionally separate
+from the completed Qwen v3 baseline and does not change the Qwen protocol,
+prompts, sampling policy, token mappings, attention definitions, or artifact
+schema.
+
+The matched replication condition uses the same 77 primary examples from
+`outputs/experiment1_v3/primary_manifest.jsonl` and the same adaptive
+full-coverage temporal bins. For cross-model comparability, it samples exactly
+one deterministic frame per temporal bin by running the realtime policy with
+`--frames-per-bin 1`. This yields 8-64 decoded RGB frames per example. Qwen and
+VILA can therefore be run on identical frame indices and timestamps under the
+matched condition.
+
+The VILA path supports three descriptive conditions:
+
+- `baseline`
+- `repeated_frame`
+- `reversed_video`
+
+For VILA, the runner requires an exact prepared-input mapping from input frame
+position to visual token columns. It does not infer equal token counts per frame.
+The VILA preparer must expose the exact question-token rows, visual-token
+columns, visual-token-to-frame mapping, prepared frame order, and truncation
+status. The run fails if VILA truncates, resamples, duplicates, or reorders the
+frames.
+
+The VILA decoder analysis records the same primary temporal measurements used
+for Qwen decoder prefill analysis:
+
+- raw temporal-bin mass;
+- normalized temporal-bin distribution;
+- absolute question-to-visual attention mass;
+- normalized entropy;
+- top-bin mass;
+- first-bin and last-bin mass;
+- bins required for 80% mass.
+
+Cross-model analysis is performed with
+`scripts/analyze_cross_model_temporal.py`. It aligns layers by normalized depth
+\(l/(L-1)\), compares temporal lift relative to uniform, entropy, first/last-bin
+mass, absolute visual mass, and per-example Spearman correlation, and reports
+paired bootstrap confidence intervals clustered by source video. Baseline,
+repeated-frame, and reversed-video conditions are analyzed separately.
+
+The current repository implementation includes mocked VILA regression tests for
+the frame/token mapping contract. Real-checkpoint validation remains required
+before interpreting cross-model results, because the public VILA preprocessing
+API must expose or be adapted to expose the exact `prepare_experiment1_inputs`
+mapping used by this repository.
+
 ## Preliminary repeated-frame positional control
 
 To distinguish content-dependent temporal allocation from architectural position bias, we constructed a repeated-frame control that preserves the original number of frames, temporal bins, visual tokens, and temporal positions while replacing every sampled frame with the same frame. Because visual content is identical across time, any nonuniform temporal attention observed under this condition cannot be attributed to changing video content.

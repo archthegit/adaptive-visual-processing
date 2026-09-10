@@ -37,6 +37,21 @@ def parse_args() -> argparse.Namespace:
         help="Path to split_summary.json or a policy JSON containing realtime_sampling_policy for --sampling-mode realtime.",
     )
     parser.add_argument(
+        "--frames-per-bin",
+        type=int,
+        default=None,
+        help=(
+            "Override the frozen realtime policy frames_per_bin. This is intended for matched cross-model "
+            "replication conditions, e.g. one deterministic center frame per temporal bin."
+        ),
+    )
+    parser.add_argument("--model-backend", choices=["qwen", "vila_llama3"], default="qwen")
+    parser.add_argument(
+        "--model-checkpoint",
+        default=None,
+        help="Model checkpoint identifier. Defaults to the backend's canonical Experiment 1 checkpoint.",
+    )
+    parser.add_argument(
         "--frame-budget-mode",
         default="total",
         choices=["total", "per-input"],
@@ -312,7 +327,12 @@ def _load_realtime_sampling_policy(path: str | Path | None) -> dict[str, Any]:
     return policy
 
 
-def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sampling_mode: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _sampling_plan_for_record(
+    record: dict[str, Any],
+    video_path: str | Path,
+    sampling_mode: str,
+    frames_per_bin_override: int | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from src.experiment1.v2_sampling import (
         TemporalSamplingPolicy,
         fixed_budget_bin_plan,
@@ -328,10 +348,13 @@ def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sa
         frozen = record.get("_realtime_sampling_policy")
         if frozen is None:
             raise ValueError("Realtime sampling requires a frozen policy from --sampling-policy-json.")
+        frames_per_bin = int(frames_per_bin_override or frozen["frames_per_bin"])
+        if frames_per_bin <= 0:
+            raise ValueError("--frames-per-bin must be positive when provided.")
         policy = TemporalSamplingPolicy(
             name="adaptive_full_coverage_median_development",
             delta_t_seconds=float(frozen["delta_t_seconds"]),
-            frames_per_bin=int(frozen["frames_per_bin"]),
+            frames_per_bin=frames_per_bin,
             max_bins=int(frozen["max_bins"]),
             fixed_num_frames=None,
             fixed_num_bins=None,
@@ -378,10 +401,17 @@ def _sampling_plan_for_record(record: dict[str, Any], video_path: str | Path, sa
         "first_sampled_timestamp_seconds": plan[0]["source_timestamps"][0] if plan else None,
         "last_sampled_timestamp_seconds": plan[-1]["source_timestamps"][-1] if plan else None,
         "frozen_policy_source": record.get("_sampling_policy_json"),
+        "frames_per_bin_override": frames_per_bin_override,
     }
 
 
-def _frame_batch_from_sampling_plan(example, record: dict[str, Any], mp4_dir: str | None, sampling_mode: str):
+def _frame_batch_from_sampling_plan(
+    example,
+    record: dict[str, Any],
+    mp4_dir: str | None,
+    sampling_mode: str,
+    frames_per_bin_override: int | None = None,
+):
     if mp4_dir is None:
         raise ValueError("--mp4-dir is required for non-dry-run Experiment 1 execution.")
     from src.frame_sampling import FrameBatch
@@ -390,7 +420,12 @@ def _frame_batch_from_sampling_plan(example, record: dict[str, Any], mp4_dir: st
     if segment.is_image:
         raise ValueError(f"{sampling_mode} sampling requires a single video input, got image input.")
     video_path = segment.path_under(mp4_dir)
-    plan, sampling_metadata = _sampling_plan_for_record(record, video_path, sampling_mode)
+    plan, sampling_metadata = _sampling_plan_for_record(
+        record,
+        video_path,
+        sampling_mode,
+        frames_per_bin_override=frames_per_bin_override,
+    )
     indices = [int(index) for item in plan for index in item["source_frame_indices"]]
     frames = _sample_video_indices(video_path, indices)
     timestamps = tuple(float(timestamp) for item in plan for timestamp in item["source_timestamps"])
@@ -435,13 +470,22 @@ def frame_batches_for_example(
     frame_budget_mode: str = "total",
     sampling_mode: str = "legacy",
     manifest_record: dict[str, Any] | None = None,
+    frames_per_bin_override: int | None = None,
 ):
     if sampling_mode != "legacy":
         if manifest_record is None:
             raise ValueError("Experiment 1 v2 sampling requires the manifest record.")
         if len(example.inputs) != 1 or example.inputs[0].is_image:
             raise ValueError(f"{sampling_mode} sampling requires exactly one video input.")
-        return [_frame_batch_from_sampling_plan(example, manifest_record, mp4_dir, sampling_mode)]
+        return [
+            _frame_batch_from_sampling_plan(
+                example,
+                manifest_record,
+                mp4_dir,
+                sampling_mode,
+                frames_per_bin_override=frames_per_bin_override,
+            )
+        ]
 
     if mp4_dir is None:
         raise ValueError("--mp4-dir is required for non-dry-run Experiment 1 execution.")
@@ -517,13 +561,16 @@ def main() -> None:
     git_commit = current_git_commit()
 
     examples_by_id = None
-    qwen_model = None
+    backend_runner = None
     if args.allow_7b_inference and not args.dry_run:
-        from src.experiment1.qwen_execution import run_qwen_relevance_example
-        from src.models.qwen import Qwen25VLWrapper, QwenConfig
+        from src.experiment1.model_backends import create_model_backend
 
         examples_by_id = load_examples_by_id(args.questions_dir, records)
-        qwen_model = Qwen25VLWrapper(QwenConfig(max_new_tokens=args.max_new_tokens))
+        backend_runner = create_model_backend(
+            args.model_backend,
+            checkpoint=args.model_checkpoint,
+            max_new_tokens=args.max_new_tokens,
+        )
 
     for record in records:
         decoder_mask_bins, pre_encoder_mask_bins, keep_bins = intervention_bins(record, args)
@@ -553,6 +600,9 @@ def main() -> None:
                     "num_frames": args.num_frames,
                     "sampling_mode": args.sampling_mode,
                     "sampling_policy_json": args.sampling_policy_json,
+                    "frames_per_bin": args.frames_per_bin,
+                    "model_backend": args.model_backend,
+                    "model_checkpoint": args.model_checkpoint,
                     "frame_budget_mode": args.frame_budget_mode,
                     "resolution": resolution.to_metadata(),
                     "vision_access_through_layer": args.vision_access_through_layer,
@@ -572,7 +622,7 @@ def main() -> None:
             continue
 
         assert examples_by_id is not None
-        assert qwen_model is not None
+        assert backend_runner is not None
         example = example_for_record(examples_by_id[record["question_id"]], record)
         from src.experiment1.profiling import StageProfiler
 
@@ -586,9 +636,9 @@ def main() -> None:
                     args.frame_budget_mode,
                     sampling_mode=args.sampling_mode,
                     manifest_record=record,
+                    frames_per_bin_override=args.frames_per_bin,
                 )
-            artifact = run_qwen_relevance_example(
-                qwen_model,
+            artifact = backend_runner.run_example(
                 example,
                 frame_batches,
                 resolution,
@@ -603,6 +653,8 @@ def main() -> None:
                 profiler=profiler,
             )
             artifact["category"] = record["category"]
+            artifact["model_backend"] = args.model_backend
+            artifact["model_checkpoint"] = backend_runner.checkpoint
             artifact["vision_access_through_layer"] = args.vision_access_through_layer
             artifact["condition"] = condition
             artifact["decoder_direct_access_through_layer"] = decoder_through_layer
@@ -613,6 +665,9 @@ def main() -> None:
                 "num_frames": args.num_frames,
                 "sampling_mode": args.sampling_mode,
                 "sampling_policy_json": args.sampling_policy_json,
+                "frames_per_bin": args.frames_per_bin,
+                "model_backend": args.model_backend,
+                "model_checkpoint": backend_runner.checkpoint,
                 "frame_budget_mode": args.frame_budget_mode,
                 "resolution_config": args.resolution_config,
                 "vision_access_through_layer": args.vision_access_through_layer,
@@ -674,6 +729,9 @@ def main() -> None:
             "num_frames": args.num_frames,
             "sampling_mode": args.sampling_mode,
             "sampling_policy_json": args.sampling_policy_json,
+            "frames_per_bin": args.frames_per_bin,
+            "model_backend": args.model_backend,
+            "model_checkpoint": args.model_checkpoint,
             "frame_budget_mode": args.frame_budget_mode,
             "resolution": resolution.to_metadata(),
             "vision_access_through_layer": args.vision_access_through_layer,
