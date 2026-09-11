@@ -8,6 +8,7 @@ import pytest
 from src.experiment1.resolution import get_resolution_config
 from src.experiment1.vila_execution import (
     PreparedVILAInputs,
+    _official_conversation_token_ids,
     _vila_decoder_attention_modules,
     derive_vila_question_rows,
     expanded_positions_from_image_features,
@@ -91,6 +92,21 @@ def official_like_tokenize_conversation(messages, tokenizer, add_generation_prom
         value = value.replace("What object", "Whatobject")
         rendered += f"<|start_header_id|>{message['from']}<|end_header_id|>\n{value}<|eot_id|>"
     if add_generation_prompt:
+        rendered += "<|start_header_id|>assistant<|end_header_id|>\n"
+    return tokenizer(rendered, add_special_tokens=False)["input_ids"]
+
+
+def mutating_legacy_like_tokenize_conversation(messages, tokenizer, add_generation_prompt=True):
+    rendered = (
+        "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
+        "You are VILA, a helpful vision language assistant.<|eot_id|>"
+    )
+    for message in messages:
+        value = message["value"].strip()
+        value = value.replace("What object", "Whatobject")
+        rendered += f"<|start_header_id|>{message['from']}<|end_header_id|>\n{value}<|eot_id|>"
+    if add_generation_prompt:
+        messages.append({"from": "gpt", "value": None})
         rendered += "<|start_header_id|>assistant<|end_header_id|>\n"
     return tokenizer(rendered, add_special_tokens=False)["input_ids"]
 
@@ -384,6 +400,52 @@ def test_vila_question_rows_support_whitespace_punctuation_and_repeated_words(qu
     expanded_to_base = {expanded: base for base, expanded in base_to_expanded.items()}
     row_tokens = [tokenizer.convert_ids_to_tokens(base_ids[expanded_to_base[row]]) for row in rows]
     assert row_tokens[0] == question.strip().split()[0].strip(",?")
+
+
+def test_official_vila_tokenization_copies_mutating_legacy_conversation():
+    question = "What object will the person interact with next, ignoring ongoing interactions?"
+    tokenizer = OfficialLikeVILATokenizer()
+    prompt = (
+        f"Question: {question}. Answers: (A) apple. (B) bowl. (C) cup. "
+        "(D) dish. (E) egg. Respond with only the letter of the correct answer: "
+    )
+    conversation = [{"from": "human", "value": "<image>" * 8 + "\n" + prompt}]
+    canonical = [dict(item) for item in conversation]
+
+    first_ids = _official_conversation_token_ids(mutating_legacy_like_tokenize_conversation, conversation, tokenizer)
+    second_ids = _official_conversation_token_ids(mutating_legacy_like_tokenize_conversation, conversation, tokenizer)
+
+    assert first_ids == second_ids
+    assert conversation == canonical
+    assert sum(1 for item in conversation if item["from"] == "human") == 1
+    assert all(item["value"] is not None for item in conversation)
+
+    image_token = tokenizer.media_token_ids["image"]
+    feature_lengths = (2, 3, 2, 3, 2, 3, 2, 3)
+    visual_positions, base_to_expanded, image_positions = expanded_positions_from_image_features(
+        first_ids,
+        image_token,
+        feature_lengths=feature_lengths,
+    )
+
+    rows = derive_vila_question_rows(
+        tokenizer,
+        first_ids,
+        base_to_expanded,
+        question,
+        formatted_prompt=prompt,
+        conversation=conversation,
+        tokenize_conversation_fn=mutating_legacy_like_tokenize_conversation,
+        image_token_id=image_token,
+        visual_token_indices=visual_positions,
+        image_positions=image_positions,
+        image_feature_lengths=feature_lengths,
+        expanded_sequence_length=len([idx for idx in first_ids if idx != image_token]) + sum(feature_lengths),
+    )
+
+    assert rows
+    assert conversation == canonical
+    assert all(item["value"] is not None for item in conversation)
 
 
 def test_question_rows_only_and_absolute_mass_is_not_normalized():

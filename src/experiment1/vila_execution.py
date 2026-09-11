@@ -200,6 +200,19 @@ def official_vila_conversation(prompt: str, num_frames: int) -> list[dict[str, s
     return [{"from": "human", "value": media_prompt}]
 
 
+def _copy_vila_conversation(conversation: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"from": item.get("from"), "value": item.get("value")} for item in conversation]
+
+
+def _assert_pristine_vila_conversation(conversation: Sequence[dict[str, Any]], *, label: str) -> None:
+    human_count = sum(1 for item in conversation if item.get("from") == "human")
+    if human_count != 1:
+        raise ValueError(f"{label} must contain exactly one human message, found {human_count}.")
+    none_values = [index for index, item in enumerate(conversation) if item.get("value") is None]
+    if none_values:
+        raise ValueError(f"{label} contains value=None entries at positions {none_values}.")
+
+
 def json_safe_conversation(conversation: Sequence[dict[str, str]]) -> str:
     return "\n".join(f"{item['from']}: {item['value']}" for item in conversation)
 
@@ -321,7 +334,8 @@ def _conversation_with_replaced_text(
     new: str,
     label: str,
 ) -> list[dict[str, str]]:
-    updated = [dict(item) for item in conversation]
+    _assert_pristine_vila_conversation(conversation, label="canonical VILA conversation")
+    updated = _copy_vila_conversation(conversation)
     replaced = False
     for item in updated:
         value = str(item.get("value", ""))
@@ -335,7 +349,18 @@ def _conversation_with_replaced_text(
 
 
 def _official_conversation_token_ids(tokenize_conversation_fn: Any, conversation: Sequence[dict[str, str]], tokenizer: Any) -> list[int]:
-    return _as_sequence(tokenize_conversation_fn(conversation, tokenizer, add_generation_prompt=True))
+    before = _copy_vila_conversation(conversation)
+    _assert_pristine_vila_conversation(before, label="canonical VILA conversation before tokenization")
+    tokenization_input = _copy_vila_conversation(before)
+    token_ids = _as_sequence(tokenize_conversation_fn(tokenization_input, tokenizer, add_generation_prompt=True))
+    after = _copy_vila_conversation(conversation)
+    if after != before:
+        raise RuntimeError(
+            "Official VILA tokenization mutated the canonical conversation. "
+            "All tokenize_conversation calls must receive a fresh copy."
+        )
+    _assert_pristine_vila_conversation(conversation, label="canonical VILA conversation after tokenization")
+    return token_ids
 
 
 def _decode_ids(tokenizer: Any, ids: Sequence[int]) -> str:
@@ -635,8 +660,10 @@ def prepare_vila_inputs_from_decoded_frames(
         raise RuntimeError("Official VILA tokenize_conversation utility is unavailable.") from exc
     images = decoded_rgb_frames_as_pil(frame_batches)
     conversation = official_vila_conversation(prompt, len(images))
-    input_ids = tokenize_conversation(conversation, tokenizer, add_generation_prompt=True).unsqueeze(0)
-    base_ids = _as_sequence(input_ids[0])
+    _assert_pristine_vila_conversation(conversation, label="canonical VILA conversation")
+    base_ids = _official_conversation_token_ids(tokenize_conversation, conversation, tokenizer)
+    _assert_pristine_vila_conversation(conversation, label="canonical VILA conversation")
+    input_ids = torch.as_tensor([base_ids], dtype=torch.long)
     image_tensors = _process_vila_images(images, image_processor, model.config)
     device = getattr(model, "device", None)
     if device is None:
