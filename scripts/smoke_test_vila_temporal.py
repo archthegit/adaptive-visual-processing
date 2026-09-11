@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import subprocess
 import sys
 from pathlib import Path
@@ -13,11 +12,10 @@ import numpy as np
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run VILA temporal backend smoke tests on one 8-bin and one 64-bin example.")
+    parser = argparse.ArgumentParser(description="Run the VILA temporal backend smoke test on one 8-frame example.")
     parser.add_argument("--questions-dir", required=True)
     parser.add_argument("--mp4-dir", required=True)
     parser.add_argument("--manifest", default="outputs/experiment1_v3/primary_manifest.jsonl")
-    parser.add_argument("--sampling-policy-json", default="outputs/experiment1_v3/split_summary.json")
     parser.add_argument("--output-root", default="outputs/experiment1_v3_cross_model/smoke_vila")
     parser.add_argument("--checkpoint", default="Efficient-Large-Model/Llama-3-VILA1.5-8B")
     parser.add_argument("--resolution-config", default="medium")
@@ -31,25 +29,20 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def planned_bins(record: dict[str, Any], policy: dict[str, Any]) -> int:
-    duration = float(record["analyzed_duration_seconds"])
-    desired = math.ceil(duration / float(policy["delta_t_seconds"]))
-    return min(int(policy["max_bins"]), max(int(policy.get("min_bins", 8)), desired))
-
-
-def select_examples(manifest: Path, policy_json: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def select_example(manifest: Path) -> dict[str, Any]:
     records = load_jsonl(manifest)
-    policy_payload = json.loads(policy_json.read_text())
-    policy = policy_payload.get("realtime_sampling_policy", policy_payload)
-    by_bins = {int(bins): record for record in sorted(records, key=lambda item: item["question_id"]) if (bins := planned_bins(record, policy)) in {8, 64}}
-    missing = [bins for bins in (8, 64) if bins not in by_bins]
-    if missing:
-        raise RuntimeError(f"Could not find smoke-test examples with planned bin counts: {missing}")
-    return by_bins[8], by_bins[64]
+    if not records:
+        raise RuntimeError(f"Manifest is empty: {manifest}")
+    durations = sorted(float(record["analyzed_duration_seconds"]) for record in records)
+    median = durations[len(durations) // 2]
+    return min(
+        records,
+        key=lambda record: (abs(float(record["analyzed_duration_seconds"]) - median), record["question_id"]),
+    )
 
 
-def run_example(args: argparse.Namespace, record: dict[str, Any], label: str) -> Path:
-    output_dir = Path(args.output_root) / label
+def run_example(args: argparse.Namespace, record: dict[str, Any]) -> Path:
+    output_dir = Path(args.output_root) / "bins8"
     cmd = [
         sys.executable,
         "scripts/run_experiment1.py",
@@ -60,11 +53,7 @@ def run_example(args: argparse.Namespace, record: dict[str, Any], label: str) ->
         "--manifest",
         args.manifest,
         "--sampling-mode",
-        "realtime",
-        "--sampling-policy-json",
-        args.sampling_policy_json,
-        "--frames-per-bin",
-        "1",
+        "cross_model_8",
         "--model-backend",
         "vila_llama3",
         "--model-checkpoint",
@@ -91,7 +80,23 @@ def run_example(args: argparse.Namespace, record: dict[str, Any], label: str) ->
     return output_dir / f"{record['question_id']}.json"
 
 
-def validate_artifact(path: Path, expected_bins: int) -> dict[str, Any]:
+def _finite_values(payload: Any) -> list[float]:
+    if isinstance(payload, dict):
+        values: list[float] = []
+        for value in payload.values():
+            values.extend(_finite_values(value))
+        return values
+    if isinstance(payload, list):
+        values = []
+        for value in payload:
+            values.extend(_finite_values(value))
+        return values
+    if isinstance(payload, (int, float)):
+        return [float(payload)]
+    return []
+
+
+def validate_artifact(path: Path) -> dict[str, Any]:
     artifact = json.loads(path.read_text())
     metadata = artifact["metadata"]
     scores = np.asarray(artifact["temporal_relevance"]["normalized_temporal_bin_scores"], dtype=np.float64)
@@ -101,23 +106,31 @@ def validate_artifact(path: Path, expected_bins: int) -> dict[str, Any]:
     failures = []
     if metadata.get("truncation_occurred"):
         failures.append("truncation_occurred")
-    if len(frame_indices) != expected_bins:
-        failures.append(f"expected {expected_bins} frames, got {len(frame_indices)}")
+    if len(frame_indices) != 8:
+        failures.append(f"expected 8 frames, got {len(frame_indices)}")
     if len(set(frame_indices)) != len(frame_indices):
         failures.append("duplicate sampled frame indices")
-    if artifact["temporal_relevance"]["metadata"]["num_temporal_bins"] != expected_bins:
+    if artifact["temporal_relevance"]["metadata"]["num_temporal_bins"] != 8:
         failures.append("temporal bin count mismatch")
+    if metadata.get("num_decoder_layers") != 32:
+        failures.append(f"expected 32 decoder layers, got {metadata.get('num_decoder_layers')}")
     if not np.isfinite(scores).all() or not np.isfinite(raw).all():
         failures.append("non-finite temporal scores")
     if not np.allclose(scores.sum(axis=1), np.ones(scores.shape[0]), atol=1e-6):
         failures.append("normalized temporal distributions do not sum to one")
+    if metadata.get("full_attention_tensors_materialized"):
+        failures.append("full attention tensors were materialized")
     if metadata.get("reduced_prefill_unmodified_next_logit_max_abs_diff") is None:
         failures.append("missing reduced/unmodified output-equivalence metric")
     elif float(metadata["reduced_prefill_unmodified_next_logit_max_abs_diff"]) > 1e-5:
         failures.append("reduced/unmodified next-token logits differ by more than 1e-5")
+    if not str(artifact.get("raw_response") or "").strip():
+        failures.append("empty generated response")
     if not token_cells:
         failures.append("missing visual token mapping")
     cell_positions = [int(cell["sample_position"]) for cell in token_cells]
+    if sorted(set(cell_positions)) != list(range(8)):
+        failures.append("visual token mapping does not cover exactly frame positions 0..7")
     if min(cell_positions, default=0) < 0 or max(cell_positions, default=-1) >= len(frame_indices):
         failures.append("visual token maps outside prepared frame range")
     expanded = metadata.get("expanded_sequence_length")
@@ -131,12 +144,25 @@ def validate_artifact(path: Path, expected_bins: int) -> dict[str, Any]:
         failures.append("feature length count does not match frame count")
     if sum(int(item) for item in feature_lengths) != len(token_cells):
         failures.append("feature lengths do not reconstruct visual token count")
+    counts_by_position = {position: cell_positions.count(position) for position in range(8)}
+    if [counts_by_position[position] for position in range(8)] != [int(item) for item in feature_lengths]:
+        failures.append("feature lengths do not match exact frame-to-token mapping")
+    answer_values = _finite_values(artifact.get("answer_choice_scores", {}))
+    if not answer_values or not np.isfinite(answer_values).all():
+        failures.append("answer-choice scores are missing or non-finite")
+    preprocessing = metadata.get("vila_preprocessing") or {}
+    if not preprocessing.get("native_checkpoint_preprocessing") or preprocessing.get("native_image_size") != "384x384":
+        failures.append("missing VILA native 384x384 preprocessing metadata")
+    if metadata.get("cuda_max_memory_allocated_bytes") is None:
+        failures.append("missing peak CUDA memory")
+    if metadata.get("prefill_runtime_seconds") is None:
+        failures.append("missing runtime")
     if failures:
         raise RuntimeError(f"{path} failed VILA smoke validation: {failures}")
     return {
         "artifact": str(path),
         "question_id": artifact["question_id"],
-        "expected_bins": expected_bins,
+        "expected_bins": 8,
         "frames": len(frame_indices),
         "decoder_layers": metadata["num_decoder_layers"],
         "visual_tokens": metadata["actual_num_visual_tokens"],
@@ -151,14 +177,12 @@ def validate_artifact(path: Path, expected_bins: int) -> dict[str, Any]:
 
 def main() -> None:
     args = parse_args()
-    eight, sixty_four = select_examples(Path(args.manifest), Path(args.sampling_policy_json))
-    results = []
-    for record, label, bins in ((eight, "bins8", 8), (sixty_four, "bins64", 64)):
-        artifact_path = Path(args.output_root) / label / f"{record['question_id']}.json"
-        if not args.skip_run:
-            artifact_path = run_example(args, record, label)
-        results.append(validate_artifact(artifact_path, bins))
-    print(json.dumps({"status": "ok", "results": results}, indent=2))
+    record = select_example(Path(args.manifest))
+    artifact_path = Path(args.output_root) / "bins8" / f"{record['question_id']}.json"
+    if not args.skip_run:
+        artifact_path = run_example(args, record)
+    result = validate_artifact(artifact_path)
+    print(json.dumps({"status": "ok", "result": result}, indent=2))
 
 
 if __name__ == "__main__":

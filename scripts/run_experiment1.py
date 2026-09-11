@@ -24,11 +24,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-frames", type=int, default=8)
     parser.add_argument(
         "--sampling-mode",
-        choices=["legacy", "realtime", "fixed_budget"],
+        choices=["legacy", "realtime", "fixed_budget", "cross_model_8"],
         default="legacy",
         help=(
             "legacy uses the historical uniform --num-frames sampler; realtime uses the Experiment 1 adaptive "
-            "full-coverage policy; fixed_budget uses 128 frames, 16 bins, 8 frames per bin."
+            "full-coverage policy; fixed_budget uses 128 frames, 16 bins, 8 frames per bin; cross_model_8 "
+            "uses eight equal temporal bins and one deterministic center frame per bin."
         ),
     )
     parser.add_argument(
@@ -335,6 +336,8 @@ def _sampling_plan_for_record(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from src.experiment1.v2_sampling import (
         TemporalSamplingPolicy,
+        cross_model_8_frame_policy,
+        cross_model_center_frame_bin_plan,
         fixed_budget_bin_plan,
         real_time_bin_plan,
         robustness_policy,
@@ -371,6 +374,16 @@ def _sampling_plan_for_record(
     elif sampling_mode == "fixed_budget":
         policy = robustness_policy()
         plan = fixed_budget_bin_plan(
+            start,
+            end,
+            float(info["fps"]),
+            policy,
+            decord_length=decord_length,
+            ffprobe_frame_count=int(info["num_frames"]),
+        )
+    elif sampling_mode == "cross_model_8":
+        policy = cross_model_8_frame_policy()
+        plan = cross_model_center_frame_bin_plan(
             start,
             end,
             float(info["fps"]),

@@ -191,13 +191,14 @@ from the completed Qwen v3 baseline and does not change the Qwen protocol,
 prompts, sampling policy, token mappings, attention definitions, or artifact
 schema.
 
-The matched replication condition uses the same 77 primary examples from
-`outputs/experiment1_v3/primary_manifest.jsonl` and the same adaptive
-full-coverage temporal bins. For cross-model comparability, it samples exactly
-one deterministic frame per temporal bin by running the realtime policy with
-`--frames-per-bin 1`. This yields 8-64 decoded RGB frames per example. Qwen and
-VILA can therefore be run on identical frame indices and timestamps under the
-matched condition.
+The Qwen primary Experiment 1 protocol remains the adaptive 8-64 temporal-bin
+study described above. The cross-architecture robustness condition is narrower:
+it uses the same 77 primary examples from
+`outputs/experiment1_v3/primary_manifest.jsonl`, partitions each analyzed
+interval into exactly 8 equal temporal bins, and samples one deterministic
+center frame from each bin. This produces exactly 8 decoded RGB frames per
+example. Qwen and VILA must receive these identical frozen frame indices and
+timestamps under the matched cross-model condition.
 
 The VILA path supports three descriptive conditions:
 
@@ -209,7 +210,9 @@ For VILA, the runner uses the official NVLabs/VILA implementation pinned at
 commit `0f1426e8da9181e6e6653e10bc15f62d515fa2f6`. The isolated setup script
 clones that repository, installs its dependencies, and loads
 `Efficient-Large-Model/Llama-3-VILA1.5-8B` through VILA's official model
-builder, tokenizer, image processor, and conversation template.
+builder, tokenizer, image processor, and conversation template. VILA uses the
+checkpoint's native 384x384 preprocessing; Qwen's medium-resolution image-token
+budget does not control VILA preprocessing.
 
 The runner bypasses VILA's MP4 sampler. It passes Experiment 1's already-decoded
 ordered RGB frames directly as image inputs. It constructs the multimodal prompt
@@ -248,7 +251,7 @@ image placeholder insertion, variable image-feature lengths, frame order,
 question-row isolation, and temporal reduction. Real-checkpoint validation is
 still required before interpreting cross-model results: the backend should not
 be treated as empirically runnable until `scripts/smoke_test_vila_temporal.py`
-successfully reaches the checkpoint, preprocesses one 8-frame and one 64-frame
+successfully reaches the checkpoint, preprocesses one representative 8-frame
 example, and validates token mapping, output equivalence, memory and runtime.
 
 ## Preliminary repeated-frame positional control

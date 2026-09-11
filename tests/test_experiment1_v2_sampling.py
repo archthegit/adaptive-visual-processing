@@ -3,6 +3,7 @@ import pytest
 from src.experiment1.v2_sampling import (
     TemporalSamplingPolicy,
     chronological_indices_without_duplicates_when_possible,
+    cross_model_center_frame_bin_plan,
     fixed_budget_bin_plan,
     primary_policy_from_development_durations,
     real_time_bin_plan,
@@ -112,6 +113,23 @@ def test_fixed_budget_plan_adjusts_end_to_decord_boundary():
     assert max(flattened) < 100
     assert plan[-1]["bin_end_seconds"] == 10.0
     assert plan[0]["analyzed_end_adjustment"]["effective_analyzed_end_seconds"] == 10.0
+
+
+def test_cross_model_policy_uses_eight_center_frames_with_full_coverage():
+    plan = cross_model_center_frame_bin_plan(10.0, 18.0, source_fps=10.0, decord_length=200)
+    assert len(plan) == 8
+    assert sum(len(item["source_frame_indices"]) for item in plan) == 8
+    assert [item["source_frame_indices"][0] for item in plan] == [105, 115, 125, 135, 145, 155, 165, 175]
+    assert len({item["source_frame_indices"][0] for item in plan}) == 8
+    assert plan[0]["bin_start_seconds"] == 10.0
+    assert plan[-1]["bin_end_seconds"] == 18.0
+    assert plan[0]["effective_seconds_per_bin"] == 1.0
+    validate_temporal_plan(plan, max_frames=8, decord_length=200)
+
+
+def test_cross_model_policy_rejects_duplicate_center_frames():
+    with pytest.raises(ValueError, match="distinct center frames"):
+        cross_model_center_frame_bin_plan(0.0, 0.1, source_fps=10.0, decord_length=10)
 
 
 def test_reverse_and_repeated_frame_controls_preserve_positions():

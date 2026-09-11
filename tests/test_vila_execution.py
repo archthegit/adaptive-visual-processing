@@ -8,6 +8,7 @@ import pytest
 from src.experiment1.resolution import get_resolution_config
 from src.experiment1.vila_execution import (
     PreparedVILAInputs,
+    _vila_decoder_attention_modules,
     derive_vila_question_rows,
     expanded_positions_from_image_features,
     extract_temporal_scores_from_vila_attentions,
@@ -140,6 +141,59 @@ def frame_batch():
             "sampling": {"mode": "realtime", "num_bins": 3, "policy": {"frames_per_bin": 1}},
         },
     )
+
+
+def test_vila_decoder_discovery_uses_only_llama_self_attention_modules():
+    class FakeVisionAttention:
+        q_proj = object()
+        k_proj = object()
+        v_proj = object()
+
+    class FakeSelfAttention:
+        def __init__(self, layer_idx):
+            self.layer_idx = layer_idx
+            self.forward = lambda *args, **kwargs: None
+
+    class FakeLayer:
+        def __init__(self, layer_idx):
+            self.self_attn = FakeSelfAttention(layer_idx)
+
+    class FakeLLM:
+        def __init__(self):
+            self.model = SimpleNamespace(layers=[FakeLayer(index) for index in range(32)])
+
+    class FakeOfficialVILAModel:
+        def __init__(self):
+            self.vision_tower = SimpleNamespace(attn=FakeVisionAttention())
+            self.llm = FakeLLM()
+
+        def get_llm(self):
+            return self.llm
+
+        def modules(self):
+            yield self
+            yield self.vision_tower.attn
+            for layer in self.llm.model.layers:
+                yield layer.self_attn
+
+    model = FakeOfficialVILAModel()
+    modules = _vila_decoder_attention_modules(model)
+
+    assert [layer_idx for layer_idx, _ in modules] == list(range(32))
+    assert all(module is not model.vision_tower.attn for _, module in modules)
+    assert [module for _, module in modules] == [layer.self_attn for layer in model.llm.model.layers]
+
+
+def test_vila_decoder_discovery_rejects_non_32_layer_models():
+    class FakeLayer:
+        self_attn = object()
+
+    class FakeModel:
+        def get_llm(self):
+            return SimpleNamespace(model=SimpleNamespace(layers=[FakeLayer() for _ in range(31)]))
+
+    with pytest.raises(RuntimeError, match="exactly 32"):
+        _vila_decoder_attention_modules(FakeModel())
 
 
 def test_visual_token_to_bin_mapping_supports_variable_tokens_per_frame():

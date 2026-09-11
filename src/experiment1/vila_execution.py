@@ -453,26 +453,36 @@ _ACTIVE_VILA_CAPTURE: VILAReducedAttentionCapture | None = None
 _ACTIVE_VILA_LAYER: int | None = None
 
 
+def _vila_llama_decoder_layers(model: Any) -> Sequence[Any]:
+    llm = model.get_llm() if hasattr(model, "get_llm") else getattr(model, "llm", None)
+    layers = getattr(getattr(llm, "model", None), "layers", None)
+    if layers is None:
+        raise RuntimeError("Could not locate VILA Llama decoder layers via model.get_llm().model.layers or model.llm.model.layers.")
+    return layers
+
+
 def _vila_decoder_attention_modules(model: Any) -> list[tuple[int, Any]]:
+    layers = list(_vila_llama_decoder_layers(model))
+    if len(layers) != 32:
+        raise RuntimeError(f"Expected exactly 32 VILA/Llama decoder layers, found {len(layers)}.")
     modules: list[tuple[int, Any]] = []
-    for module in model.modules():
-        if not (hasattr(module, "q_proj") and hasattr(module, "k_proj") and hasattr(module, "v_proj")):
-            continue
-        layer_idx = getattr(module, "layer_idx", None)
-        if layer_idx is None:
-            layer_idx = len(modules)
-        modules.append((int(layer_idx), module))
-    if not modules:
-        raise RuntimeError("Could not find VILA/Llama decoder attention modules.")
-    modules.sort(key=lambda item: item[0])
+    for layer_idx, layer in enumerate(layers):
+        attention = getattr(layer, "self_attn", None)
+        if attention is None:
+            raise RuntimeError(f"VILA/Llama decoder layer {layer_idx} does not expose self_attn.")
+        modules.append((layer_idx, attention))
+    layer_ids = [layer_idx for layer_idx, _ in modules]
+    if layer_ids != list(range(32)):
+        raise RuntimeError(f"VILA/Llama decoder layer IDs must be exactly 0..31, got {layer_ids}.")
     return modules
 
 
 def _num_vila_decoder_layers(model: Any) -> int:
-    config = getattr(model, "config", None)
-    if config is not None and hasattr(config, "num_hidden_layers"):
-        return int(config.num_hidden_layers)
-    return len(_vila_decoder_attention_modules(model))
+    modules = _vila_decoder_attention_modules(model)
+    layer_ids = [layer_idx for layer_idx, _ in modules]
+    if layer_ids != list(range(32)):
+        raise RuntimeError(f"VILA/Llama decoder layer IDs must be exactly 0..31, got {layer_ids}.")
+    return len(modules)
 
 
 def _slice_vila_mask(attn_mask: Any, question_rows: Any, q_len: int, key_len: int) -> Any:
@@ -858,13 +868,11 @@ def run_vila_relevance_example(
             reduced_prefill_next_logits = (
                 _to_numpy(outputs.logits[0, -1]) if getattr(outputs, "logits", None) is not None else None
             )
-            missing_layers = [
-                layer for layer in range(expected_layers) if capture.sdpa_calls_by_layer.get(layer, 0) != 1
-            ]
-            if missing_layers:
+            expected_calls = {layer: 1 for layer in range(expected_layers)}
+            if capture.sdpa_calls_by_layer != expected_calls:
                 raise RuntimeError(
                     "VILA reduced SDPA capture did not observe every decoder layer exactly once: "
-                    f"calls={capture.sdpa_calls_by_layer}, expected_layers={expected_layers}."
+                    f"calls={capture.sdpa_calls_by_layer}, expected_calls={expected_calls}."
                 )
             raw_token_scores = capture.ordered_token_scores(expected_layers=expected_layers)
             raw_temporal = np.zeros((raw_token_scores.shape[0], num_bins), dtype=np.float64)
@@ -972,6 +980,14 @@ def run_vila_relevance_example(
             "image_feature_lengths": list(prepared.image_feature_lengths),
             "condition": condition or "baseline",
             "resolution": resolution.to_metadata(),
+            "vila_preprocessing": {
+                "native_checkpoint_preprocessing": True,
+                "native_image_size": "384x384",
+                "processor_source": "official NVLabs/VILA image processor",
+                "qwen_resolution_config_controls_vila": False,
+                "runner_resolution_config_recorded_for_schema_only": resolution.to_metadata(),
+            },
+            "full_attention_tensors_materialized": bool(getattr(model, "allow_full_attention_test_fallback", False)),
             "prefill_runtime_seconds": time.time() - started,
             "source_video_paths": [str(batch.video_path) if batch.video_path else None for batch in controlled_batches],
             "attention_extraction": attention_extraction,

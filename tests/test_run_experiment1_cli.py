@@ -6,6 +6,7 @@ import pytest
 
 from scripts.run_experiment1 import (
     _load_realtime_sampling_policy,
+    _sampling_plan_for_record,
     condition_for_record,
     completed_question_ids,
     decoder_direct_access_through_layer,
@@ -180,6 +181,22 @@ def test_realtime_sampling_frames_per_bin_override_uses_one_frame_per_bin(monkey
     assert all(len(item["source_frame_indices"]) == 1 for item in plan)
     assert metadata["policy"]["frames_per_bin"] == 1
     assert metadata["frames_per_bin_override"] == 1
+
+
+def test_cross_model_8_sampling_uses_eight_center_frames(monkeypatch):
+    from scripts import run_experiment1
+
+    monkeypatch.setattr(run_experiment1, "_probe_video_for_sampling", lambda path: {"fps": 10.0, "num_frames": 1000})
+    monkeypatch.setattr(run_experiment1, "_decord_video_length", lambda path: 1000)
+    record = {"analyzed_start_seconds": 10.0, "analyzed_end_seconds": 18.0}
+
+    plan, metadata = _sampling_plan_for_record(record, "video.mp4", "cross_model_8")
+
+    assert len(plan) == 8
+    assert [item["source_frame_indices"] for item in plan] == [[105], [115], [125], [135], [145], [155], [165], [175]]
+    assert metadata["mode"] == "cross_model_8"
+    assert metadata["policy"]["name"] == "cross_model_8_bins_1_center_frame"
+    assert metadata["num_bins"] == 8
 
 
 def test_v2_sampling_mode_requires_manifest_record():
