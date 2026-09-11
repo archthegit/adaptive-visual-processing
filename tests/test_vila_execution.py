@@ -19,6 +19,62 @@ from src.experiment1.vila_execution import (
 from src.frame_sampling import FrameBatch
 
 
+class OffsetTokenizer:
+    media_token_ids = {"image": -200}
+
+    def __init__(self):
+        self.vocab = {"<image>": -200}
+        self.inverse = {-200: "<image>"}
+
+    def _id(self, token):
+        if token not in self.vocab:
+            self.vocab[token] = len(self.vocab) + 100
+            self.inverse[self.vocab[token]] = token
+        return self.vocab[token]
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+        rendered = ""
+        for message in messages:
+            role = message.get("role") or message.get("from")
+            rendered += f"<|{role}|>\n{message.get('content') or message.get('value')}"
+        if add_generation_prompt:
+            rendered += "\n<|assistant|>\n"
+        if tokenize:
+            return self(rendered, add_special_tokens=False)["input_ids"]
+        return rendered
+
+    def __call__(self, text, add_special_tokens=False, return_offsets_mapping=False):
+        tokens = []
+        offsets = []
+        idx = 0
+        while idx < len(text):
+            if text.startswith("<image>", idx):
+                token = "<image>"
+                start = idx
+                idx += len(token)
+            elif text[idx].isspace():
+                idx += 1
+                continue
+            elif text[idx].isalnum() or text[idx] in {"_", "-"}:
+                start = idx
+                while idx < len(text) and (text[idx].isalnum() or text[idx] in {"_", "-"}):
+                    idx += 1
+                token = text[start:idx]
+            else:
+                start = idx
+                token = text[idx]
+                idx += 1
+            tokens.append(self._id(token))
+            offsets.append((start, idx))
+        payload = {"input_ids": tokens}
+        if return_offsets_mapping:
+            payload["offset_mapping"] = offsets
+        return payload
+
+    def convert_ids_to_tokens(self, token_id):
+        return self.inverse.get(int(token_id), str(token_id))
+
+
 class FakeTokenizer:
     def __call__(self, text, add_special_tokens=False):
         letter_ids = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
@@ -224,6 +280,64 @@ def test_vila_style_image_placeholders_expand_to_actual_feature_lengths_and_ques
             raise AssertionError(text)
 
     assert derive_vila_question_rows(QuestionTokenizer(), base_ids, base_to_expanded, "question") == (7, 8, 9)
+
+
+def _question_rows_for_rendered_vila_prompt(question):
+    tokenizer = OffsetTokenizer()
+    prompt = f"Question: {question}. Answers: (A) apple. (B) bowl. (C) cup. (D) dish. (E) egg. Respond with only the letter of the correct answer: "
+    content = "<image>" * 8 + "\n" + prompt
+    rendered = tokenizer.apply_chat_template([{"role": "user", "content": content}], tokenize=False, add_generation_prompt=True)
+    base_ids = tokenizer(rendered, add_special_tokens=False)["input_ids"]
+    image_token = tokenizer.media_token_ids["image"]
+    visual_positions, base_to_expanded, image_positions = expanded_positions_from_image_features(
+        base_ids,
+        image_token,
+        feature_lengths=(2, 3, 2, 3, 2, 3, 2, 3),
+    )
+    rows = derive_vila_question_rows(
+        tokenizer,
+        base_ids,
+        base_to_expanded,
+        question,
+        rendered_prompt=rendered,
+        formatted_prompt=prompt,
+        image_token_id=image_token,
+        visual_token_indices=visual_positions,
+        image_positions=image_positions,
+        image_feature_lengths=(2, 3, 2, 3, 2, 3, 2, 3),
+        expanded_sequence_length=len([idx for idx in base_ids if idx != image_token]) + 20,
+    )
+    return tokenizer, base_ids, base_to_expanded, visual_positions, rows
+
+
+def test_vila_question_rows_support_gaze_537_punctuation_and_template_spacing():
+    question = "What object will the person interact with next, ignoring ongoing interactions?"
+    tokenizer, base_ids, base_to_expanded, visual_positions, rows = _question_rows_for_rendered_vila_prompt(question)
+
+    assert rows
+    assert not (set(rows) & set(visual_positions))
+    expanded_to_base = {expanded: base for base, expanded in base_to_expanded.items()}
+    row_tokens = [tokenizer.convert_ids_to_tokens(base_ids[expanded_to_base[row]]) for row in rows]
+    assert row_tokens[:4] == ["What", "object", "will", "the"]
+    assert row_tokens[-1] == "?"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "  Which bowl, bowl, is moved next?",
+        "What is the thing that is on the table, and what is it touching?",
+        "Repeat repeat words, then repeat?",
+    ],
+)
+def test_vila_question_rows_support_whitespace_punctuation_and_repeated_words(question):
+    tokenizer, base_ids, base_to_expanded, visual_positions, rows = _question_rows_for_rendered_vila_prompt(question)
+
+    assert rows
+    assert not (set(rows) & set(visual_positions))
+    expanded_to_base = {expanded: base for base, expanded in base_to_expanded.items()}
+    row_tokens = [tokenizer.convert_ids_to_tokens(base_ids[expanded_to_base[row]]) for row in rows]
+    assert row_tokens[0] == question.strip().split()[0].strip(",?")
 
 
 def test_question_rows_only_and_absolute_mass_is_not_normalized():

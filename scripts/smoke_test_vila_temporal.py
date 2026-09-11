@@ -77,6 +77,20 @@ def run_example(args: argparse.Namespace, record: dict[str, Any]) -> Path:
         "--resume",
     ]
     subprocess.run(cmd, check=True)
+    records_path = output_dir / "records.jsonl"
+    if records_path.exists():
+        with records_path.open("r") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                if payload.get("question_id") != record["question_id"]:
+                    continue
+                if payload.get("status") == "failed":
+                    raise RuntimeError(
+                        "VILA smoke run failed inside run_experiment1.py: "
+                        f"question_id={record['question_id']}, error={payload.get('error')}"
+                    )
     return output_dir / f"{record['question_id']}.json"
 
 
