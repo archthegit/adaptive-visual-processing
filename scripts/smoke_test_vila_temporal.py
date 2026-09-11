@@ -79,6 +79,7 @@ def run_example(args: argparse.Namespace, record: dict[str, Any]) -> Path:
     subprocess.run(cmd, check=True)
     records_path = output_dir / "records.jsonl"
     if records_path.exists():
+        last_match = None
         with records_path.open("r") as handle:
             for line in handle:
                 if not line.strip():
@@ -86,11 +87,12 @@ def run_example(args: argparse.Namespace, record: dict[str, Any]) -> Path:
                 payload = json.loads(line)
                 if payload.get("question_id") != record["question_id"]:
                     continue
-                if payload.get("status") == "failed":
-                    raise RuntimeError(
-                        "VILA smoke run failed inside run_experiment1.py: "
-                        f"question_id={record['question_id']}, error={payload.get('error')}"
-                    )
+                last_match = payload
+        if last_match and last_match.get("status") == "failed":
+            raise RuntimeError(
+                "VILA smoke run failed inside run_experiment1.py: "
+                f"question_id={record['question_id']}, error={last_match.get('error')}"
+            )
     return output_dir / f"{record['question_id']}.json"
 
 

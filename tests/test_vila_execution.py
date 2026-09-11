@@ -75,6 +75,26 @@ class OffsetTokenizer:
         return self.inverse.get(int(token_id), str(token_id))
 
 
+class OfficialLikeVILATokenizer(OffsetTokenizer):
+    def decode(self, ids, skip_special_tokens=False):
+        return " ".join(self.convert_ids_to_tokens(item) for item in ids)
+
+
+def official_like_tokenize_conversation(messages, tokenizer, add_generation_prompt=True):
+    rendered = (
+        "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
+        "You are VILA, a helpful vision language assistant.<|eot_id|>"
+    )
+    for message in messages:
+        value = str(message["value"])
+        # Reproduce the observed boundary pathology from the real smoke logs.
+        value = value.replace("What object", "Whatobject")
+        rendered += f"<|start_header_id|>{message['from']}<|end_header_id|>\n{value}<|eot_id|>"
+    if add_generation_prompt:
+        rendered += "<|start_header_id|>assistant<|end_header_id|>\n"
+    return tokenizer(rendered, add_special_tokens=False)["input_ids"]
+
+
 class FakeTokenizer:
     def __call__(self, text, add_special_tokens=False):
         letter_ids = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
@@ -282,43 +302,69 @@ def test_vila_style_image_placeholders_expand_to_actual_feature_lengths_and_ques
     assert derive_vila_question_rows(QuestionTokenizer(), base_ids, base_to_expanded, "question") == (7, 8, 9)
 
 
-def _question_rows_for_rendered_vila_prompt(question):
-    tokenizer = OffsetTokenizer()
+def _question_rows_for_official_like_prompt(question):
+    tokenizer = OfficialLikeVILATokenizer()
     prompt = f"Question: {question}. Answers: (A) apple. (B) bowl. (C) cup. (D) dish. (E) egg. Respond with only the letter of the correct answer: "
-    content = "<image>" * 8 + "\n" + prompt
-    rendered = tokenizer.apply_chat_template([{"role": "user", "content": content}], tokenize=False, add_generation_prompt=True)
-    base_ids = tokenizer(rendered, add_special_tokens=False)["input_ids"]
+    conversation = [{"from": "human", "value": "<image>" * 8 + "\n" + prompt}]
+    base_ids = official_like_tokenize_conversation(conversation, tokenizer, add_generation_prompt=True)
     image_token = tokenizer.media_token_ids["image"]
+    feature_lengths = (2, 3, 2, 3, 2, 3, 2, 3)
     visual_positions, base_to_expanded, image_positions = expanded_positions_from_image_features(
         base_ids,
         image_token,
-        feature_lengths=(2, 3, 2, 3, 2, 3, 2, 3),
+        feature_lengths=feature_lengths,
     )
     rows = derive_vila_question_rows(
         tokenizer,
         base_ids,
         base_to_expanded,
         question,
-        rendered_prompt=rendered,
         formatted_prompt=prompt,
+        conversation=conversation,
+        tokenize_conversation_fn=official_like_tokenize_conversation,
         image_token_id=image_token,
         visual_token_indices=visual_positions,
         image_positions=image_positions,
-        image_feature_lengths=(2, 3, 2, 3, 2, 3, 2, 3),
-        expanded_sequence_length=len([idx for idx in base_ids if idx != image_token]) + 20,
+        image_feature_lengths=feature_lengths,
+        expanded_sequence_length=len([idx for idx in base_ids if idx != image_token]) + sum(feature_lengths),
     )
     return tokenizer, base_ids, base_to_expanded, visual_positions, rows
 
 
-def test_vila_question_rows_support_gaze_537_punctuation_and_template_spacing():
+def test_vila_question_rows_use_official_differential_for_gaze_537_boundary_behavior():
     question = "What object will the person interact with next, ignoring ongoing interactions?"
-    tokenizer, base_ids, base_to_expanded, visual_positions, rows = _question_rows_for_rendered_vila_prompt(question)
+    tokenizer = OfficialLikeVILATokenizer()
+    prompt = f"Question: {question}. Answers: (A) apple. (B) bowl. (C) cup. (D) dish. (E) egg. Respond with only the letter of the correct answer: "
+    conversation = [{"from": "human", "value": "<image>" * 8 + "\n" + prompt}]
+    base_ids = official_like_tokenize_conversation(conversation, tokenizer, add_generation_prompt=True)
+    image_token = tokenizer.media_token_ids["image"]
+    feature_lengths = (2, 3, 2, 3, 2, 3, 2, 3)
+    visual_positions, base_to_expanded, image_positions = expanded_positions_from_image_features(
+        base_ids,
+        image_token,
+        feature_lengths=feature_lengths,
+    )
+
+    rows = derive_vila_question_rows(
+        tokenizer,
+        base_ids,
+        base_to_expanded,
+        question,
+        formatted_prompt=prompt,
+        conversation=conversation,
+        tokenize_conversation_fn=official_like_tokenize_conversation,
+        image_token_id=image_token,
+        visual_token_indices=visual_positions,
+        image_positions=image_positions,
+        image_feature_lengths=feature_lengths,
+        expanded_sequence_length=len([idx for idx in base_ids if idx != image_token]) + sum(feature_lengths),
+    )
 
     assert rows
     assert not (set(rows) & set(visual_positions))
     expanded_to_base = {expanded: base for base, expanded in base_to_expanded.items()}
     row_tokens = [tokenizer.convert_ids_to_tokens(base_ids[expanded_to_base[row]]) for row in rows]
-    assert row_tokens[:4] == ["What", "object", "will", "the"]
+    assert row_tokens[:3] == ["Whatobject", "will", "the"]
     assert row_tokens[-1] == "?"
 
 
@@ -331,7 +377,7 @@ def test_vila_question_rows_support_gaze_537_punctuation_and_template_spacing():
     ],
 )
 def test_vila_question_rows_support_whitespace_punctuation_and_repeated_words(question):
-    tokenizer, base_ids, base_to_expanded, visual_positions, rows = _question_rows_for_rendered_vila_prompt(question)
+    tokenizer, base_ids, base_to_expanded, visual_positions, rows = _question_rows_for_official_like_prompt(question)
 
     assert rows
     assert not (set(rows) & set(visual_positions))

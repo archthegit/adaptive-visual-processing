@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Mapping
 from collections import defaultdict
@@ -203,37 +204,6 @@ def json_safe_conversation(conversation: Sequence[dict[str, str]]) -> str:
     return "\n".join(f"{item['from']}: {item['value']}" for item in conversation)
 
 
-def _conversation_for_hf_chat_template(conversation: Sequence[dict[str, str]]) -> list[dict[str, str]]:
-    role_map = {"human": "user", "gpt": "assistant", "user": "user", "assistant": "assistant"}
-    return [
-        {
-            "role": role_map.get(str(item.get("from", "user")), str(item.get("from", "user"))),
-            "content": str(item["value"]),
-        }
-        for item in conversation
-    ]
-
-
-def render_vila_conversation_text(
-    tokenizer: Any,
-    conversation: Sequence[dict[str, str]],
-    add_generation_prompt: bool = True,
-) -> str:
-    if hasattr(tokenizer, "apply_chat_template"):
-        for messages in (list(conversation), _conversation_for_hf_chat_template(conversation)):
-            try:
-                rendered = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=add_generation_prompt,
-                )
-            except Exception:
-                continue
-            if isinstance(rendered, str) and rendered:
-                return rendered
-    return json_safe_conversation(conversation)
-
-
 def _tensor_to_device(value: Any, device: Any, dtype: Any | None = None) -> Any:
     if hasattr(value, "to"):
         kwargs = {"device": device}
@@ -315,6 +285,99 @@ def _find_subsequence(sequence: Sequence[int], subsequence: Sequence[int]) -> tu
     return tuple()
 
 
+def _longest_common_prefix_length(left: Sequence[int], right: Sequence[int]) -> int:
+    count = 0
+    for left_item, right_item in zip(left, right):
+        if int(left_item) != int(right_item):
+            break
+        count += 1
+    return count
+
+
+def _longest_common_suffix_length(left: Sequence[int], right: Sequence[int], prefix_limit: int) -> int:
+    count = 0
+    max_count = min(len(left), len(right)) - prefix_limit
+    while count < max_count and int(left[len(left) - 1 - count]) == int(right[len(right) - 1 - count]):
+        count += 1
+    return count
+
+
+def _differential_token_span(actual_ids: Sequence[int], alternate_ids: Sequence[int]) -> tuple[int, int]:
+    prefix = _longest_common_prefix_length(actual_ids, alternate_ids)
+    suffix = _longest_common_suffix_length(actual_ids, alternate_ids, prefix)
+    return prefix, len(actual_ids) - suffix
+
+
+def _replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise ValueError(f"Expected exactly one {label} occurrence before VILA differential tokenization, found {count}.")
+    return text.replace(old, new, 1)
+
+
+def _conversation_with_replaced_text(
+    conversation: Sequence[dict[str, str]],
+    old: str,
+    new: str,
+    label: str,
+) -> list[dict[str, str]]:
+    updated = [dict(item) for item in conversation]
+    replaced = False
+    for item in updated:
+        value = str(item.get("value", ""))
+        if old in value:
+            item["value"] = _replace_once(value, old, new, label)
+            replaced = True
+            break
+    if not replaced:
+        raise ValueError(f"Could not find {label} in official VILA conversation value.")
+    return updated
+
+
+def _official_conversation_token_ids(tokenize_conversation_fn: Any, conversation: Sequence[dict[str, str]], tokenizer: Any) -> list[int]:
+    return _as_sequence(tokenize_conversation_fn(conversation, tokenizer, add_generation_prompt=True))
+
+
+def _decode_ids(tokenizer: Any, ids: Sequence[int]) -> str:
+    if hasattr(tokenizer, "decode"):
+        try:
+            return str(tokenizer.decode([int(item) for item in ids], skip_special_tokens=False))
+        except TypeError:
+            return str(tokenizer.decode([int(item) for item in ids]))
+        except Exception:
+            pass
+    if hasattr(tokenizer, "convert_ids_to_tokens"):
+        return "".join(str(tokenizer.convert_ids_to_tokens(int(item))) for item in ids)
+    return " ".join(str(int(item)) for item in ids)
+
+
+def _trim_span_to_question_text(
+    tokenizer: Any,
+    ids: Sequence[int],
+    start: int,
+    end: int,
+    question_text: str,
+) -> tuple[int, int]:
+    question = " ".join(question_text.split())
+
+    def contains_question(span_start: int, span_end: int) -> bool:
+        decoded = " ".join(_decode_ids(tokenizer, ids[span_start:span_end]).split())
+        return question in decoded
+
+    if not contains_question(start, end):
+        return start, end
+    changed = True
+    while changed:
+        changed = False
+        if end - start > 1 and contains_question(start + 1, end):
+            start += 1
+            changed = True
+        if end - start > 1 and contains_question(start, end - 1):
+            end -= 1
+            changed = True
+    return start, end
+
+
 def _extract_question_from_formatted_prompt(prompt: str) -> str | None:
     prefix = "Question: "
     suffix = ". Answers: "
@@ -339,54 +402,6 @@ def _question_text_candidates(question_text: str, formatted_prompt: str | None =
             if candidate and candidate not in candidates:
                 candidates.append(candidate)
     return tuple(candidates)
-
-
-def _find_question_char_span(rendered_prompt: str, candidates: Sequence[str]) -> tuple[int, int, str] | None:
-    for candidate in candidates:
-        start = rendered_prompt.find(candidate)
-        if start >= 0:
-            return start, start + len(candidate), candidate
-    return None
-
-
-def _offset_to_base_index_map(offset_ids: Sequence[int], base_ids: Sequence[int]) -> dict[int, int]:
-    offset_ids = tuple(int(item) for item in offset_ids)
-    base_ids = tuple(int(item) for item in base_ids)
-    if offset_ids == base_ids:
-        return {idx: idx for idx in range(len(base_ids))}
-    base_in_offset = _find_subsequence(offset_ids, base_ids)
-    if base_in_offset:
-        start = int(base_in_offset[0])
-        return {start + idx: idx for idx in range(len(base_ids))}
-    offset_in_base = _find_subsequence(base_ids, offset_ids)
-    if offset_in_base:
-        start = int(offset_in_base[0])
-        return {idx: start + idx for idx in range(len(offset_ids))}
-    return {}
-
-
-def _base_positions_from_rendered_span(
-    tokenizer: Any,
-    rendered_prompt: str,
-    base_input_ids: Sequence[int],
-    char_start: int,
-    char_end: int,
-    image_token_id: int | None,
-) -> tuple[int, ...]:
-    offset_ids, offsets = _tokenize_with_offsets(tokenizer, rendered_prompt)
-    offset_to_base = _offset_to_base_index_map(offset_ids, base_input_ids)
-    if not offset_to_base:
-        return tuple()
-    positions: list[int] = []
-    for offset_index, (token_start, token_end) in enumerate(offsets):
-        if token_end <= token_start:
-            continue
-        if token_start < char_end and token_end > char_start and offset_index in offset_to_base:
-            base_index = int(offset_to_base[offset_index])
-            if image_token_id is not None and int(base_input_ids[base_index]) == int(image_token_id):
-                continue
-            positions.append(base_index)
-    return tuple(positions)
 
 
 def _decode_token_window(tokenizer: Any, token_ids: Sequence[int], center: int | None, radius: int = 8) -> list[dict[str, Any]]:
@@ -422,27 +437,26 @@ def _vila_question_span_diagnostics(
     expected_char_span: tuple[int, int, str] | None = None,
 ) -> dict[str, Any]:
     center = None
-    if expected_char_span is not None and rendered_prompt is not None:
-        try:
-            offset_ids, offsets = _tokenize_with_offsets(tokenizer, rendered_prompt)
-            offset_to_base = _offset_to_base_index_map(offset_ids, base_input_ids)
-            for offset_index, (start, end) in enumerate(offsets):
-                if start < expected_char_span[1] and end > expected_char_span[0] and offset_index in offset_to_base:
-                    center = offset_to_base[offset_index]
-                    break
-        except Exception:
-            center = None
     boundaries: list[dict[str, Any]] = []
-    for image_position, feature_length in zip(image_positions, image_feature_lengths):
-        expanded_start = base_to_expanded.get(int(image_position))
-        boundaries.append(
-            {
-                "base_image_token_position": int(image_position),
-                "feature_length": int(feature_length),
-                "expanded_start": expanded_start,
-                "expanded_end": None if expanded_start is None else int(expanded_start) + int(feature_length),
-            }
-        )
+    cursor = 0
+    feature_cursor = 0
+    image_feature_lengths = tuple(int(item) for item in image_feature_lengths)
+    image_position_set = {int(item) for item in image_positions}
+    for base_index, token_id in enumerate(base_input_ids):
+        if base_index in image_position_set:
+            feature_length = image_feature_lengths[feature_cursor] if feature_cursor < len(image_feature_lengths) else 0
+            boundaries.append(
+                {
+                    "base_image_token_position": int(base_index),
+                    "feature_length": int(feature_length),
+                    "expanded_start": int(cursor),
+                    "expanded_end": int(cursor) + int(feature_length),
+                }
+            )
+            cursor += int(feature_length)
+            feature_cursor += 1
+        else:
+            cursor += 1
     return {
         "rendered_prompt": rendered_prompt,
         "question_text": question_text,
@@ -463,8 +477,9 @@ def derive_vila_question_rows(
     base_to_expanded: dict[int, int],
     question_text: str,
     *,
-    rendered_prompt: str | None = None,
     formatted_prompt: str | None = None,
+    conversation: Sequence[dict[str, str]] | None = None,
+    tokenize_conversation_fn: Any | None = None,
     image_token_id: int | None = None,
     visual_token_indices: Sequence[int] = (),
     image_positions: Sequence[int] = (),
@@ -473,21 +488,65 @@ def derive_vila_question_rows(
 ) -> tuple[int, ...]:
     base_ids = [int(item) for item in base_input_ids]
     candidates = _question_text_candidates(question_text, formatted_prompt)
-    question_ids = _tokenizer_ids(tokenizer(candidates[0], add_special_tokens=False)) if candidates else []
-    span = _find_question_char_span(rendered_prompt, candidates) if rendered_prompt else None
+    selected_question = candidates[-1] if candidates else question_text
+    question_ids = _tokenizer_ids(tokenizer(selected_question, add_special_tokens=False))
     base_question_positions: tuple[int, ...] = tuple()
-    if span is not None and rendered_prompt is not None:
-        try:
-            base_question_positions = _base_positions_from_rendered_span(
-                tokenizer,
-                rendered_prompt,
-                base_ids,
-                span[0],
-                span[1],
-                image_token_id,
+    question_span: tuple[int, int] | None = None
+    question_label_span: tuple[int, int] | None = None
+    answers_label_span: tuple[int, int] | None = None
+    if conversation is not None and tokenize_conversation_fn is not None and formatted_prompt is not None:
+        if selected_question not in formatted_prompt:
+            extracted = _extract_question_from_formatted_prompt(formatted_prompt)
+            selected_question = extracted or selected_question
+        _replace_once(formatted_prompt, selected_question, "__VILA_CHECK__", "question text in formatted prompt")
+        sentinel_digest = hashlib.sha1(selected_question.encode("utf-8")).hexdigest()[:16]
+        sentinel = f"__VILA_Q_SENTINEL_{sentinel_digest}__"
+        question_conversation = _conversation_with_replaced_text(
+            conversation,
+            selected_question,
+            sentinel,
+            "question text",
+        )
+        actual_ids = _official_conversation_token_ids(tokenize_conversation_fn, conversation, tokenizer)
+        sentinel_ids = _official_conversation_token_ids(tokenize_conversation_fn, question_conversation, tokenizer)
+        if actual_ids != base_ids:
+            raise ValueError(
+                "Official VILA question-span mapping received base_input_ids that do not match "
+                "tokenize_conversation(conversation)."
             )
-        except Exception:
+        start, end = _differential_token_span(actual_ids, sentinel_ids)
+        start, end = _trim_span_to_question_text(tokenizer, actual_ids, start, end, selected_question)
+        question_span = (start, end)
+        base_question_positions = tuple(range(start, end))
+
+        question_label_conversation = _conversation_with_replaced_text(
+            conversation,
+            "Question:",
+            "__VILA_QUESTION_LABEL_SENTINEL__",
+            "Question: label",
+        )
+        answers_label_conversation = _conversation_with_replaced_text(
+            conversation,
+            "Answers:",
+            "__VILA_ANSWERS_LABEL_SENTINEL__",
+            "Answers: label",
+        )
+        question_label_span = _differential_token_span(
+            actual_ids,
+            _official_conversation_token_ids(tokenize_conversation_fn, question_label_conversation, tokenizer),
+        )
+        answers_label_span = _differential_token_span(
+            actual_ids,
+            _official_conversation_token_ids(tokenize_conversation_fn, answers_label_conversation, tokenizer),
+        )
+        if not base_question_positions:
             base_question_positions = tuple()
+        if base_question_positions and not (base_question_positions[0] >= question_label_span[1] and base_question_positions[-1] < answers_label_span[0]):
+            raise ValueError(
+                "Derived VILA question span is outside the official-tokenized Question/Answers region: "
+                f"question_span={question_span}, question_label_span={question_label_span}, answers_label_span={answers_label_span}."
+            )
+
     if not base_question_positions:
         for candidate in candidates:
             candidate_ids = _tokenizer_ids(tokenizer(candidate, add_special_tokens=False))
@@ -498,7 +557,7 @@ def derive_vila_question_rows(
     if not base_question_positions:
         diagnostics = _vila_question_span_diagnostics(
             tokenizer,
-            rendered_prompt,
+            None,
             question_text,
             base_ids,
             base_to_expanded,
@@ -506,8 +565,12 @@ def derive_vila_question_rows(
             image_positions=image_positions,
             image_feature_lengths=image_feature_lengths,
             expanded_sequence_length=expanded_sequence_length,
-            expected_char_span=span,
+            expected_char_span=None,
         )
+        diagnostics["question_span"] = question_span
+        diagnostics["question_label_span"] = question_label_span
+        diagnostics["answers_label_span"] = answers_label_span
+        diagnostics["official_conversation"] = list(conversation or ())
         raise ValueError(
             "Could not locate question tokens in official VILA prompt tokenization. "
             f"diagnostics={diagnostics}"
@@ -516,7 +579,7 @@ def derive_vila_question_rows(
     if missing:
         diagnostics = _vila_question_span_diagnostics(
             tokenizer,
-            rendered_prompt,
+            None,
             question_text,
             base_ids,
             base_to_expanded,
@@ -524,7 +587,7 @@ def derive_vila_question_rows(
             image_positions=image_positions,
             image_feature_lengths=image_feature_lengths,
             expanded_sequence_length=expanded_sequence_length,
-            expected_char_span=span,
+            expected_char_span=None,
         )
         raise ValueError(f"Question token positions overlap VILA image placeholders: {missing}. diagnostics={diagnostics}")
     mapped = tuple(int(base_to_expanded[pos]) for pos in base_question_positions)
@@ -534,7 +597,7 @@ def derive_vila_question_rows(
     if not mapped or visual_overlap or out_of_bounds:
         diagnostics = _vila_question_span_diagnostics(
             tokenizer,
-            rendered_prompt,
+            None,
             question_text,
             base_ids,
             base_to_expanded,
@@ -542,8 +605,12 @@ def derive_vila_question_rows(
             image_positions=image_positions,
             image_feature_lengths=image_feature_lengths,
             expanded_sequence_length=expanded_sequence_length,
-            expected_char_span=span,
+            expected_char_span=None,
         )
+        diagnostics["question_span"] = question_span
+        diagnostics["question_label_span"] = question_label_span
+        diagnostics["answers_label_span"] = answers_label_span
+        diagnostics["official_conversation"] = list(conversation or ())
         raise ValueError(
             "Derived invalid VILA question rows: "
             f"mapped={mapped}, visual_overlap={visual_overlap}, out_of_bounds={out_of_bounds}. diagnostics={diagnostics}"
@@ -609,14 +676,14 @@ def prepare_vila_inputs_from_decoded_frames(
             "Pinned VILA expanded sequence length mismatch: "
             f"reconstructed={reconstructed_expanded_length}, actual={actual_expanded_length}."
         )
-    rendered_prompt = render_vila_conversation_text(tokenizer, conversation, add_generation_prompt=True)
     question_rows = derive_vila_question_rows(
         tokenizer,
         base_ids,
         base_to_expanded,
         example.question,
-        rendered_prompt=rendered_prompt,
         formatted_prompt=prompt,
+        conversation=conversation,
+        tokenize_conversation_fn=tokenize_conversation,
         image_token_id=image_token_id,
         visual_token_indices=visual_positions,
         image_positions=image_positions,
@@ -637,7 +704,7 @@ def prepare_vila_inputs_from_decoded_frames(
     }
     return PreparedVILAInputs(
         model_inputs=model_inputs,
-        rendered_prompt=rendered_prompt,
+        rendered_prompt="reconstructed_conversation_for_diagnostics_only:\n" + json_safe_conversation(conversation),
         input_ids=tuple(base_ids),
         question_token_indices=question_rows,
         visual_token_indices=tuple(int(item) for item in visual_positions),
@@ -668,26 +735,6 @@ def _tokenizer_ids(tokenizer_output: Any) -> list[int]:
     if hasattr(tokenizer_output, "input_ids"):
         return _as_sequence(tokenizer_output.input_ids)
     return _as_sequence(tokenizer_output)
-
-
-def _mapping_value(payload: Any, key: str, default: Any = None) -> Any:
-    if isinstance(payload, Mapping):
-        return payload.get(key, default)
-    return getattr(payload, key, default)
-
-
-def _tokenize_with_offsets(tokenizer: Any, text: str) -> tuple[list[int], list[tuple[int, int]]]:
-    encoded = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
-    offsets = _mapping_value(encoded, "offset_mapping")
-    if offsets is None:
-        raise ValueError("Tokenizer did not return offset_mapping.")
-    if hasattr(offsets, "detach"):
-        offsets = offsets.detach().cpu()
-    if hasattr(offsets, "tolist"):
-        offsets = offsets.tolist()
-    if offsets and isinstance(offsets[0], list) and offsets[0] and isinstance(offsets[0][0], list):
-        offsets = offsets[0]
-    return _tokenizer_ids(encoded), [(int(start), int(end)) for start, end in offsets]
 
 
 def _to_numpy(value: Any) -> np.ndarray:
