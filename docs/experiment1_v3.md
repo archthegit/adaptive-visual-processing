@@ -246,13 +246,22 @@ mass, absolute visual mass, and per-example Spearman correlation, and reports
 paired bootstrap confidence intervals clustered by source video. Baseline,
 repeated-frame, and reversed-video conditions are analyzed separately.
 
-The current repository implementation includes CPU regression tests for VILA-style
-image placeholder insertion, variable image-feature lengths, frame order,
-question-row isolation, and temporal reduction. Real-checkpoint validation is
-still required before interpreting cross-model results: the backend should not
-be treated as empirically runnable until `scripts/smoke_test_vila_temporal.py`
-successfully reaches the checkpoint, preprocesses one representative 8-frame
-example, and validates token mapping, output equivalence, memory and runtime.
+The real-checkpoint smoke test and the VILA baseline run have now completed.
+The baseline contains 71 completed source videos. Six frozen examples were
+sampling-ineligible under the fixed-eight center-frame policy because their
+annotated intervals did not yield eight distinct decodable center frames; these
+are excluded from VILA denominators rather than treated as inference failures.
+
+The VILA baseline is summarized in
+[experiment1_v3_vila_baseline.md](experiment1_v3_vila_baseline.md). Its main
+descriptive finding is that VILA decoder temporal attention is strongly
+nonuniform and final-bin-dominant from the first decoder layer onward. This
+supports the broad cross-architecture observation that decoder temporal
+nonuniformity occurs in both Qwen and VILA, but the positional pattern does not
+yet match Qwen's adaptive baseline. Qwen used adaptive 8-64 bins with two frames
+per bin, whereas VILA used exactly eight bins with one center frame per bin. An
+identical fixed-eight-frame Qwen run on the same 71 VILA-completed videos is
+required for a controlled quantitative cross-model comparison.
 
 ## Preliminary repeated-frame positional control
 
