@@ -469,6 +469,65 @@ python scripts/plot_temporal_experiment1.py \
   --plot-dir outputs/experiment1_temporal_engineering_f32/temporal_plots
 ```
 
+### Development-Set Route-Reuse Causal Pilot
+
+Generate the development-only route-reuse manifests from existing dense fixed-8
+Qwen and VILA baselines. This uses only
+`outputs/experiment1_v3_cross_model/manifests/dev_eligible_8frame.jsonl`; the
+56 matched non-development examples are not included.
+
+```bash
+python scripts/create_route_reuse_pilot_manifests.py \
+  --qwen-dir outputs/experiment1_v3_cross_model/runs/qwen/baseline \
+  --vila-dir outputs/experiment1_v3_cross_model/runs/vila_baseline \
+  --dev-manifest outputs/experiment1_v3_cross_model/manifests/dev_eligible_8frame.jsonl \
+  --output-dir outputs/experiment1_v3_cross_model/manifests/route_reuse_pilot \
+  --seed 20260913
+```
+
+Run a Qwen route-reuse condition:
+
+```bash
+python scripts/run_experiment1.py \
+  --questions-dir /path/to/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir /path/to/hd_epic_mp4 \
+  --manifest outputs/experiment1_v3_cross_model/manifests/route_reuse_pilot/qwen/route_reuse_gap4_top50.jsonl \
+  --model-backend qwen \
+  --sampling-mode cross_model_8 \
+  --resolution-config medium \
+  --query-scope question \
+  --attention-extraction reduced_sdpa \
+  --condition route_reuse_gap4_top50 \
+  --output-dir outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap4_top50_dev \
+  --resume \
+  --allow-7b-inference
+```
+
+Run a VILA route-reuse condition:
+
+```bash
+python scripts/run_experiment1.py \
+  --questions-dir /path/to/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir /path/to/hd_epic_mp4 \
+  --manifest outputs/experiment1_v3_cross_model/manifests/route_reuse_pilot/vila/route_reuse_gap4_top50.jsonl \
+  --model-backend vila_llama3 \
+  --model-checkpoint Efficient-Large-Model/Llama-3-VILA1.5-8B \
+  --sampling-mode cross_model_8 \
+  --resolution-config medium \
+  --query-scope question \
+  --attention-extraction reduced_sdpa \
+  --condition route_reuse_gap4_top50 \
+  --output-dir outputs/experiment1_v3_cross_model/runs/vila/route_reuse_gap4_top50_dev \
+  --resume \
+  --allow-7b-inference
+```
+
+Replace `route_reuse_gap4_top50` with `random_reuse_gap4_top50` or
+`uniform_reuse_gap4_top50` and use the corresponding generated manifest and
+output directory for the two controls. Anchor layers stay dense; only the three
+layers following each anchor route text-token attention to the retained visual
+bins.
+
 ## Download Manifest Videos
 
 HD-EPIC MP4s are not stored in the annotation repository. To fetch only the videos referenced by a manifest:

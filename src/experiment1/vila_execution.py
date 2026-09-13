@@ -16,6 +16,7 @@ from src.models.base import format_multiple_choice_prompt, parse_choice_response
 
 from .answer_scoring import score_answer_choices_from_outputs
 from .resolution import ResolutionConfig
+from .route_reuse import LayerRouteMask, route_mask_summary
 from .temporal import (
     TemporalLayerStats,
     TemporalRelevance,
@@ -810,6 +811,7 @@ class VILAReducedAttentionCapture:
 
 _ACTIVE_VILA_CAPTURE: VILAReducedAttentionCapture | None = None
 _ACTIVE_VILA_LAYER: int | None = None
+_ACTIVE_VILA_ROUTE_MASK: LayerRouteMask | None = None
 
 
 def _vila_llama_decoder_layers(model: Any) -> Sequence[Any]:
@@ -881,22 +883,152 @@ def _repeat_kv_to_query_heads(key: Any, query_heads: int) -> Any:
     return key.repeat_interleave(repeat, dim=-3)
 
 
+def _vila_visual_tokens_by_bin(prepared: PreparedVILAInputs, visual_token_bins: Sequence[int]) -> dict[int, tuple[int, ...]]:
+    by_bin: dict[int, list[int]] = {}
+    for token_index, bin_index in zip(prepared.visual_token_indices, visual_token_bins):
+        by_bin.setdefault(int(bin_index), []).append(int(token_index))
+    return {key: tuple(sorted(values)) for key, values in by_bin.items()}
+
+
+def _vila_query_sequence_positions(query: Any, key: Any) -> list[int]:
+    q_len = int(query.shape[-2])
+    key_len = int(key.shape[-2])
+    return list(range(key_len - q_len, key_len))
+
+
+def _vila_route_reuse_block_mask(query: Any, key: Any) -> Any | None:
+    route_mask = _ACTIVE_VILA_ROUTE_MASK
+    layer = _ACTIVE_VILA_LAYER
+    if route_mask is None or layer is None:
+        return None
+    key_len = int(key.shape[-2])
+    blocked_indices = route_mask.blocked_indices_for_layer(int(layer), key_len)
+    if not blocked_indices:
+        return None
+    visual_set = set(route_mask.all_visual_token_indices)
+    blocked_rows = [
+        row_idx
+        for row_idx, absolute_pos in enumerate(_vila_query_sequence_positions(query, key))
+        if absolute_pos not in visual_set
+    ]
+    if not blocked_rows:
+        return None
+    import torch
+
+    mask = torch.zeros((1, 1, int(query.shape[-2]), key_len), dtype=query.dtype, device=query.device)
+    blocked_value = torch.finfo(query.dtype).min
+    for row_idx in blocked_rows:
+        mask[:, :, row_idx, list(blocked_indices)] = blocked_value
+    return mask
+
+
+def _combine_vila_attention_mask(attn_mask: Any, query: Any, key: Any) -> Any:
+    route_mask = _vila_route_reuse_block_mask(query, key)
+    if route_mask is None:
+        return attn_mask
+    return route_mask if attn_mask is None else attn_mask + route_mask
+
+
 @contextmanager
-def vila_reduced_sdpa_context(model: Any, prepared: PreparedVILAInputs) -> Iterator[VILAReducedAttentionCapture]:
+def vila_masked_sdpa_context(
+    model: Any,
+    prepared: PreparedVILAInputs,
+    route_reuse_spec: dict[str, Any] | None = None,
+    visual_token_bins: Sequence[int] | None = None,
+) -> Iterator[None]:
+    import torch.nn.functional as F
+
+    global _ACTIVE_VILA_LAYER, _ACTIVE_VILA_ROUTE_MASK
+    previous_layer = _ACTIVE_VILA_LAYER
+    previous_route_mask = _ACTIVE_VILA_ROUTE_MASK
+    previous_configs = _set_vila_attention_backend(model, "sdpa")
+    modules = _vila_decoder_attention_modules(model)
+    original_forwards: list[tuple[Any, Any]] = []
+    original_sdpa = F.scaled_dot_product_attention
+    _ACTIVE_VILA_ROUTE_MASK = LayerRouteMask.from_route_spec(
+        route_reuse_spec,
+        _vila_visual_tokens_by_bin(prepared, visual_token_bins or ()),
+        prepared.visual_token_indices,
+    )
+
+    def make_forward(layer_idx: int, original_forward: Any) -> Any:
+        def wrapped_forward(*args: Any, **kwargs: Any) -> Any:
+            global _ACTIVE_VILA_LAYER
+            previous = _ACTIVE_VILA_LAYER
+            _ACTIVE_VILA_LAYER = int(layer_idx)
+            try:
+                return original_forward(*args, **kwargs)
+            finally:
+                _ACTIVE_VILA_LAYER = previous
+
+        return wrapped_forward
+
+    def masked_sdpa(
+        query: Any,
+        key: Any,
+        value: Any,
+        attn_mask: Any = None,
+        dropout_p: float = 0.0,
+        is_causal: bool = False,
+        scale: float | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        return original_sdpa(
+            query,
+            key,
+            value,
+            attn_mask=_combine_vila_attention_mask(attn_mask, query, key),
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            scale=scale,
+            *args,
+            **kwargs,
+        )
+
+    try:
+        for layer_idx, module in modules:
+            original_forwards.append((module, module.forward))
+            module.forward = make_forward(layer_idx, module.forward)
+        F.scaled_dot_product_attention = masked_sdpa
+        yield
+    finally:
+        F.scaled_dot_product_attention = original_sdpa
+        for module, original_forward in original_forwards:
+            module.forward = original_forward
+        _ACTIVE_VILA_LAYER = previous_layer
+        _ACTIVE_VILA_ROUTE_MASK = previous_route_mask
+        for config, previous_implementation in previous_configs:
+            config._attn_implementation = previous_implementation
+
+
+@contextmanager
+def vila_reduced_sdpa_context(
+    model: Any,
+    prepared: PreparedVILAInputs,
+    route_reuse_spec: dict[str, Any] | None = None,
+    visual_token_bins: Sequence[int] | None = None,
+) -> Iterator[VILAReducedAttentionCapture]:
     import torch
     import torch.nn.functional as F
 
-    global _ACTIVE_VILA_CAPTURE, _ACTIVE_VILA_LAYER
+    global _ACTIVE_VILA_CAPTURE, _ACTIVE_VILA_LAYER, _ACTIVE_VILA_ROUTE_MASK
     capture = VILAReducedAttentionCapture(
         question_token_indices=tuple(prepared.question_token_indices),
         visual_token_indices=tuple(prepared.visual_token_indices),
     )
     previous_capture = _ACTIVE_VILA_CAPTURE
     previous_layer = _ACTIVE_VILA_LAYER
+    previous_route_mask = _ACTIVE_VILA_ROUTE_MASK
     previous_configs = _set_vila_attention_backend(model, "sdpa")
     modules = _vila_decoder_attention_modules(model)
     original_forwards: list[tuple[Any, Any]] = []
     original_sdpa = F.scaled_dot_product_attention
+    _ACTIVE_VILA_ROUTE_MASK = LayerRouteMask.from_route_spec(
+        route_reuse_spec,
+        _vila_visual_tokens_by_bin(prepared, visual_token_bins or ()),
+        prepared.visual_token_indices,
+    )
 
     def make_forward(layer_idx: int, original_forward: Any) -> Any:
         def wrapped_forward(*args: Any, **kwargs: Any) -> Any:
@@ -921,11 +1053,12 @@ def vila_reduced_sdpa_context(model: Any, prepared: PreparedVILAInputs) -> Itera
         *args: Any,
         **kwargs: Any,
     ) -> Any:
+        combined_attn_mask = _combine_vila_attention_mask(attn_mask, query, key)
         output = original_sdpa(
             query,
             key,
             value,
-            attn_mask=attn_mask,
+            attn_mask=combined_attn_mask,
             dropout_p=dropout_p,
             is_causal=is_causal,
             scale=scale,
@@ -949,7 +1082,7 @@ def vila_reduced_sdpa_context(model: Any, prepared: PreparedVILAInputs) -> Itera
                 key_for_logits = _repeat_kv_to_query_heads(key, int(query.shape[-3]))
                 logits = torch.matmul(query_rows, key_for_logits.transpose(-2, -1))
                 logits = logits * (float(scale) if scale is not None else (float(query.shape[-1]) ** -0.5))
-                reduced_mask = _slice_vila_mask(attn_mask, question_rows, q_len, key_len)
+                reduced_mask = _slice_vila_mask(combined_attn_mask, question_rows, q_len, key_len)
                 causal_mask = _causal_mask_for_question_rows(query, key, question_rows, is_causal)
                 for candidate in (reduced_mask, causal_mask):
                     if candidate is not None:
@@ -974,6 +1107,7 @@ def vila_reduced_sdpa_context(model: Any, prepared: PreparedVILAInputs) -> Itera
             module.forward = original_forward
         _ACTIVE_VILA_CAPTURE = previous_capture
         _ACTIVE_VILA_LAYER = previous_layer
+        _ACTIVE_VILA_ROUTE_MASK = previous_route_mask
         for config, previous_implementation in previous_configs:
             config._attn_implementation = previous_implementation
 
@@ -1175,13 +1309,14 @@ def run_vila_relevance_example(
     decoder_direct_access_through_layer: int | None = None,
     pre_encoder_remove_temporal_bins: tuple[int, ...] = (),
     pre_encoder_keep_temporal_bins: tuple[int, ...] = (),
+    route_reuse_spec: dict[str, Any] | None = None,
     condition: str | None = None,
     profiler: Any | None = None,
 ) -> dict[str, Any]:
     if query_scope != "question":
         raise ValueError("VILA cross-model replication currently supports query_scope='question' only.")
     if decoder_direct_access_mask_temporal_bins or pre_encoder_remove_temporal_bins or pre_encoder_keep_temporal_bins:
-        raise ValueError("VILA replication currently supports descriptive controls, not causal interventions.")
+        raise ValueError("VILA route-reuse pilot supports route_reuse_spec only, not legacy causal interventions.")
     if attention_extraction not in {"reduced_sdpa", "full"}:
         raise ValueError("attention_extraction must be 'full' or 'reduced_sdpa'.")
     if vision_access_through_layer not in {None, "none"}:
@@ -1202,6 +1337,7 @@ def run_vila_relevance_example(
         validate_prepared_vila_mapping(prepared, controlled_batches)
     visual_bins = visual_token_analysis_bins(prepared, controlled_batches[0])
     num_bins = max(visual_bins) + 1
+    route_intervention_active = bool(route_reuse_spec)
 
     with stage_fn("vila_decoder_prefill_attention_extraction"):
         target_model = getattr(model, "_model", model)
@@ -1222,7 +1358,12 @@ def run_vila_relevance_example(
             )
         else:
             expected_layers = _num_vila_decoder_layers(target_model)
-            with vila_reduced_sdpa_context(target_model, prepared) as capture:
+            with vila_reduced_sdpa_context(
+                target_model,
+                prepared,
+                route_reuse_spec=route_reuse_spec,
+                visual_token_bins=visual_bins,
+            ) as capture:
                 outputs = model.forward(prepared, output_attentions=False)
             reduced_prefill_next_logits = (
                 _to_numpy(outputs.logits[0, -1]) if getattr(outputs, "logits", None) is not None else None
@@ -1256,8 +1397,18 @@ def run_vila_relevance_example(
             "topk": 3,
         },
     )
+    intervention_answer_choice_scores: dict[str, Any] = {}
     with stage_fn("vila_answer_scoring"):
-        scoring_outputs = model.forward(prepared, output_attentions=False)
+        if route_intervention_active:
+            with vila_masked_sdpa_context(
+                target_model,
+                prepared,
+                route_reuse_spec=route_reuse_spec,
+                visual_token_bins=visual_bins,
+            ):
+                scoring_outputs = model.forward(prepared, output_attentions=False)
+        else:
+            scoring_outputs = model.forward(prepared, output_attentions=False)
         scoring_next_logits = (
             _to_numpy(scoring_outputs.logits[0, -1]) if getattr(scoring_outputs, "logits", None) is not None else None
         )
@@ -1271,8 +1422,19 @@ def run_vila_relevance_example(
             example.correct_idx,
             len(example.choices),
         )
+        if route_intervention_active:
+            intervention_answer_choice_scores = answer_choice_scores
     with stage_fn("vila_generation"):
-        output_ids = model.generate(prepared)
+        if route_intervention_active:
+            with vila_masked_sdpa_context(
+                target_model,
+                prepared,
+                route_reuse_spec=route_reuse_spec,
+                visual_token_bins=visual_bins,
+            ):
+                output_ids = model.generate(prepared)
+        else:
+            output_ids = model.generate(prepared)
         raw_response = model.decode_new_tokens(output_ids, len(prepared.input_ids))
     predicted_idx = parse_choice_response(raw_response, len(example.choices))
 
@@ -1298,7 +1460,7 @@ def run_vila_relevance_example(
         "predicted_idx": predicted_idx,
         "correct": predicted_idx == example.correct_idx,
         "answer_choice_scores": answer_choice_scores,
-        "intervention_answer_choice_scores": {},
+        "intervention_answer_choice_scores": intervention_answer_choice_scores,
         "sampled_frame_indices": [batch.frame_indices for batch in controlled_batches],
         "sampled_timestamps": [batch.timestamps for batch in controlled_batches],
         "frame_bin_mappings": [batch.metadata.get("frame_bin_mapping", []) for batch in controlled_batches],
@@ -1350,7 +1512,16 @@ def run_vila_relevance_example(
             "prefill_runtime_seconds": time.time() - started,
             "source_video_paths": [str(batch.video_path) if batch.video_path else None for batch in controlled_batches],
             "attention_extraction": attention_extraction,
-            "answer_choice_score_source": "separate_unmodified_vila_prefill_forward",
+            "route_reuse": (
+                route_mask_summary(route_reuse_spec, _vila_visual_tokens_by_bin(prepared, visual_bins))
+                if route_reuse_spec
+                else None
+            ),
+            "answer_choice_score_source": (
+                "same_artifact_route_reuse_masked_prefill_forward"
+                if route_intervention_active
+                else "separate_unmodified_vila_prefill_forward"
+            ),
             "reduced_prefill_unmodified_next_logit_max_abs_diff": prefill_equivalence,
             **_profile_memory(),
         },

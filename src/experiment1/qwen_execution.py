@@ -25,9 +25,14 @@ from .qwen_reduced_attention import (
     reduced_attention_context,
     sdpa_attention_context,
 )
+from .route_reuse import route_mask_summary
 from .relevance import aggregate_question_to_visual_attention
 from .resolution import ResolutionConfig
-from .temporal import build_temporal_relevance_from_token_scores, represented_sampled_frames
+from .temporal import (
+    build_temporal_relevance_from_token_scores,
+    qwen_temporal_to_analysis_weights,
+    represented_sampled_frames,
+)
 from .token_layout import build_token_layout
 from .v2_metrics import (
     adjacent_nonadjacent_far_similarity,
@@ -258,6 +263,19 @@ def visual_token_cell_metadata(layout: Any, frame_batches: list[FrameBatch]) -> 
     return records
 
 
+def visual_tokens_by_analysis_bin(layout: Any, frame_batches: list[FrameBatch], input_index: int = 0) -> dict[int, tuple[int, ...]]:
+    by_bin: dict[int, list[int]] = {}
+    if input_index >= len(frame_batches):
+        return by_bin
+    batch = frame_batches[input_index]
+    for cell in layout.visual_cells:
+        if cell.modality != "video" or cell.input_index != input_index:
+            continue
+        for analysis_bin in qwen_temporal_to_analysis_weights(batch, cell.temporal_index, cell.grid_t):
+            by_bin.setdefault(int(analysis_bin), []).append(int(cell.token_index))
+    return {key: tuple(sorted(set(values))) for key, values in by_bin.items()}
+
+
 def next_token_topk_from_outputs(outputs: Any, k: int = 10) -> list[dict[str, float | int]]:
     logits = getattr(outputs, "logits", None)
     if logits is None:
@@ -397,6 +415,7 @@ def run_qwen_relevance_example(
     decoder_direct_access_through_layer: int | None = None,
     pre_encoder_remove_temporal_bins: tuple[int, ...] | None = None,
     pre_encoder_keep_temporal_bins: tuple[int, ...] | None = None,
+    route_reuse_spec: dict[str, Any] | None = None,
     condition: str | None = None,
     profiler: Any | None = None,
 ) -> dict[str, Any]:
@@ -529,6 +548,7 @@ def run_qwen_relevance_example(
         query_scope=query_scope,
         user_prompt_text=prompt,
     )
+    route_visual_tokens_by_bin = visual_tokens_by_analysis_bin(layout, frame_batches)
 
     def vision_attention_context(encoder_capture: Any):
         if not video_grid_thw:
@@ -548,7 +568,12 @@ def run_qwen_relevance_example(
     decoder_mask_bins = tuple(decoder_direct_access_mask_temporal_bins or ())
     pre_encoder_bins = tuple(pre_encoder_remove_temporal_bins or ())
     keep_bins = tuple(pre_encoder_keep_temporal_bins or ())
-    decoder_intervention_active = bool(decoder_mask_bins) or vision_access_through_layer not in {None, "none"}
+    route_intervention_active = bool(route_reuse_spec)
+    decoder_intervention_active = (
+        bool(decoder_mask_bins)
+        or vision_access_through_layer not in {None, "none"}
+        or route_intervention_active
+    )
     decoder_tensor_shapes: dict[str, Any] = {}
     with stage("decoder_prefill_attention_extraction"):
         if attention_extraction == "full":
@@ -559,8 +584,10 @@ def run_qwen_relevance_example(
                     vision_access_through_layer,
                     decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
                     decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+                    route_reuse_spec=route_reuse_spec,
+                    route_visual_tokens_by_bin=route_visual_tokens_by_bin,
                 )
-                if vision_access_through_layer not in {None, "none"} or decoder_mask_bins
+                if vision_access_through_layer not in {None, "none"} or decoder_mask_bins or route_intervention_active
                 else None
             )
             if context is None:
@@ -608,6 +635,8 @@ def run_qwen_relevance_example(
                 vision_access_through_layer,
                 decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
                 decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+                route_reuse_spec=route_reuse_spec,
+                route_visual_tokens_by_bin=route_visual_tokens_by_bin,
             ) as capture:
                 with vision_temporal_capture_context(
                     model._model,
@@ -657,6 +686,8 @@ def run_qwen_relevance_example(
                 vision_access_through_layer,
                 decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
                 decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+                route_reuse_spec=route_reuse_spec,
+                route_visual_tokens_by_bin=route_visual_tokens_by_bin,
             ):
                 with torch.inference_mode():
                     intervention_scoring_outputs = model._model(**inputs, output_attentions=False, use_cache=False)
@@ -683,6 +714,8 @@ def run_qwen_relevance_example(
                     vision_access_through_layer,
                     decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
                     decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+                    route_reuse_spec=route_reuse_spec,
+                    route_visual_tokens_by_bin=route_visual_tokens_by_bin,
                 ):
                     with torch.inference_mode():
                         output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
@@ -697,6 +730,8 @@ def run_qwen_relevance_example(
                 vision_access_through_layer,
                 decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
                 decoder_direct_access_through_layer=decoder_direct_access_through_layer,
+                route_reuse_spec=route_reuse_spec,
+                route_visual_tokens_by_bin=route_visual_tokens_by_bin,
             ):
                 with torch.inference_mode():
                     output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
@@ -735,6 +770,11 @@ def run_qwen_relevance_example(
     encoder_temporal = remap_encoder_temporal_representations_to_analysis_bins(
         encoder_capture.to_json_dict(),
         frame_batches[0],
+    )
+    route_reuse_summary = (
+        route_mask_summary(route_reuse_spec, route_visual_tokens_by_bin)
+        if route_reuse_spec
+        else None
     )
 
     return {
@@ -786,6 +826,7 @@ def run_qwen_relevance_example(
             "vision_access_through_layer": vision_access_through_layer or "none",
             "decoder_direct_access_mask_temporal_bins": list(decoder_mask_bins),
             "decoder_direct_access_through_layer": decoder_direct_access_through_layer,
+            "route_reuse": route_reuse_summary,
             "pre_encoder_removed_temporal_bins": list(pre_encoder_bins),
             "pre_encoder_kept_temporal_bins": list(keep_bins),
             "pre_encoder_masked_sample_positions": [

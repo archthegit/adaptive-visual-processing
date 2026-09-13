@@ -7,6 +7,7 @@ from typing import Any, Iterator
 import numpy as np
 
 from .masking import cutoff_alias_to_layer
+from .route_reuse import LayerRouteMask, visual_tokens_by_temporal_bin_from_cells
 from .token_layout import TokenLayout
 
 
@@ -16,6 +17,7 @@ MASKED_SDPA_IMPLEMENTATION = "qwen_relevance_masked_sdpa"
 _ACTIVE_CAPTURE: "ReducedAttentionCapture | None" = None
 _ACTIVE_VISUAL_ACCESS: "VisualAccessIntervention | None" = None
 _ACTIVE_DECODER_DIRECT_ACCESS_MASK: "DecoderDirectAccessMask | None" = None
+_ACTIVE_ROUTE_REUSE_MASK: "LayerRouteMask | None" = None
 
 
 def _repeat_kv(hidden_states: Any, n_rep: int) -> Any:
@@ -159,13 +161,16 @@ def reduced_attention_context(
     vision_access_through_layer: str | int | None = None,
     decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
     decoder_direct_access_through_layer: int | None = None,
+    route_reuse_spec: dict[str, Any] | None = None,
+    route_visual_tokens_by_bin: dict[int, tuple[int, ...]] | None = None,
 ) -> Iterator[ReducedAttentionCapture]:
-    global _ACTIVE_CAPTURE, _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    global _ACTIVE_CAPTURE, _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK, _ACTIVE_ROUTE_REUSE_MASK
     register_reduced_attention()
     capture = ReducedAttentionCapture.from_layout(layout)
     previous_capture = _ACTIVE_CAPTURE
     previous_intervention = _ACTIVE_VISUAL_ACCESS
     previous_direct_access_mask = _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    previous_route_reuse_mask = _ACTIVE_ROUTE_REUSE_MASK
     _ACTIVE_VISUAL_ACCESS = VisualAccessIntervention.from_layout(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
@@ -173,6 +178,11 @@ def reduced_attention_context(
         layout,
         decoder_direct_access_mask_temporal_bins,
         through_layer=decoder_direct_access_through_layer,
+    )
+    _ACTIVE_ROUTE_REUSE_MASK = LayerRouteMask.from_route_spec(
+        route_reuse_spec,
+        route_visual_tokens_by_bin or visual_tokens_by_temporal_bin_from_cells(layout.visual_cells),
+        layout.visual_token_indices,
     )
     previous_configs = _set_attention_implementation(model, ATTENTION_IMPLEMENTATION)
     _ACTIVE_CAPTURE = capture
@@ -182,6 +192,7 @@ def reduced_attention_context(
         _ACTIVE_CAPTURE = previous_capture
         _ACTIVE_VISUAL_ACCESS = previous_intervention
         _ACTIVE_DECODER_DIRECT_ACCESS_MASK = previous_direct_access_mask
+        _ACTIVE_ROUTE_REUSE_MASK = previous_route_reuse_mask
         for config, previous_implementation in previous_configs:
             config._attn_implementation = previous_implementation
 
@@ -203,11 +214,14 @@ def masked_sdpa_attention_context(
     vision_access_through_layer: str | int | None,
     decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
     decoder_direct_access_through_layer: int | None = None,
+    route_reuse_spec: dict[str, Any] | None = None,
+    route_visual_tokens_by_bin: dict[int, tuple[int, ...]] | None = None,
 ) -> Iterator[None]:
-    global _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    global _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK, _ACTIVE_ROUTE_REUSE_MASK
     register_reduced_attention()
     previous_intervention = _ACTIVE_VISUAL_ACCESS
     previous_direct_access_mask = _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    previous_route_reuse_mask = _ACTIVE_ROUTE_REUSE_MASK
     _ACTIVE_VISUAL_ACCESS = VisualAccessIntervention.from_layout(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
@@ -216,12 +230,18 @@ def masked_sdpa_attention_context(
         decoder_direct_access_mask_temporal_bins,
         through_layer=decoder_direct_access_through_layer,
     )
+    _ACTIVE_ROUTE_REUSE_MASK = LayerRouteMask.from_route_spec(
+        route_reuse_spec,
+        route_visual_tokens_by_bin or visual_tokens_by_temporal_bin_from_cells(layout.visual_cells),
+        layout.visual_token_indices,
+    )
     previous_configs = _set_attention_implementation(model, MASKED_SDPA_IMPLEMENTATION)
     try:
         yield
     finally:
         _ACTIVE_VISUAL_ACCESS = previous_intervention
         _ACTIVE_DECODER_DIRECT_ACCESS_MASK = previous_direct_access_mask
+        _ACTIVE_ROUTE_REUSE_MASK = previous_route_reuse_mask
         for config, previous_implementation in previous_configs:
             config._attn_implementation = previous_implementation
 
@@ -233,11 +253,14 @@ def masked_eager_attention_context(
     vision_access_through_layer: str | int | None,
     decoder_direct_access_mask_temporal_bins: tuple[int, ...] | None = None,
     decoder_direct_access_through_layer: int | None = None,
+    route_reuse_spec: dict[str, Any] | None = None,
+    route_visual_tokens_by_bin: dict[int, tuple[int, ...]] | None = None,
 ) -> Iterator[None]:
-    global _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    global _ACTIVE_VISUAL_ACCESS, _ACTIVE_DECODER_DIRECT_ACCESS_MASK, _ACTIVE_ROUTE_REUSE_MASK
     register_reduced_attention()
     previous_intervention = _ACTIVE_VISUAL_ACCESS
     previous_direct_access_mask = _ACTIVE_DECODER_DIRECT_ACCESS_MASK
+    previous_route_reuse_mask = _ACTIVE_ROUTE_REUSE_MASK
     _ACTIVE_VISUAL_ACCESS = VisualAccessIntervention.from_layout(
         layout, vision_access_through_layer, _num_decoder_layers(model)
     )
@@ -246,12 +269,18 @@ def masked_eager_attention_context(
         decoder_direct_access_mask_temporal_bins,
         through_layer=decoder_direct_access_through_layer,
     )
+    _ACTIVE_ROUTE_REUSE_MASK = LayerRouteMask.from_route_spec(
+        route_reuse_spec,
+        route_visual_tokens_by_bin or visual_tokens_by_temporal_bin_from_cells(layout.visual_cells),
+        layout.visual_token_indices,
+    )
     previous_configs = _set_attention_implementation(model, MASKED_EAGER_IMPLEMENTATION)
     try:
         yield
     finally:
         _ACTIVE_VISUAL_ACCESS = previous_intervention
         _ACTIVE_DECODER_DIRECT_ACCESS_MASK = previous_direct_access_mask
+        _ACTIVE_ROUTE_REUSE_MASK = previous_route_reuse_mask
         for config, previous_implementation in previous_configs:
             config._attn_implementation = previous_implementation
 
@@ -326,10 +355,37 @@ def _decoder_direct_access_block_mask(module: Any, query: Any, key_states: Any) 
     return mask
 
 
+def _route_reuse_block_mask(module: Any, query: Any, key_states: Any) -> Any | None:
+    route_mask = _ACTIVE_ROUTE_REUSE_MASK
+    if route_mask is None:
+        return None
+    key_len = int(key_states.shape[2])
+    blocked_indices = route_mask.blocked_indices_for_layer(int(module.layer_idx), key_len)
+    if not blocked_indices:
+        return None
+    visual_set = set(route_mask.all_visual_token_indices)
+    query_positions = _query_sequence_positions(query, key_states)
+    blocked_rows = [
+        row_idx
+        for row_idx, absolute_pos in enumerate(query_positions)
+        if absolute_pos not in visual_set
+    ]
+    if not blocked_rows:
+        return None
+    import torch
+
+    mask = torch.zeros((1, 1, int(query.shape[2]), key_len), dtype=query.dtype, device=query.device)
+    blocked_value = torch.finfo(query.dtype).min
+    for row_idx in blocked_rows:
+        mask[:, :, row_idx, list(blocked_indices)] = blocked_value
+    return mask
+
+
 def _apply_experiment1_blocks(attention_mask: Any, module: Any, query: Any, key_states: Any, position_ids: Any | None) -> Any:
     block = _visual_access_block_mask(module, query, key_states, position_ids)
     temporal_block = _decoder_direct_access_block_mask(module, query, key_states)
-    for candidate in (block, temporal_block):
+    route_reuse_block = _route_reuse_block_mask(module, query, key_states)
+    for candidate in (block, temporal_block, route_reuse_block):
         if candidate is not None:
             attention_mask = candidate if attention_mask is None else attention_mask + candidate
     return attention_mask

@@ -217,6 +217,15 @@ def decoder_direct_access_through_layer(record: dict[str, Any], args: argparse.N
     return None if value is None else int(value)
 
 
+def route_reuse_spec(record: dict[str, Any]) -> dict[str, Any] | None:
+    value = record.get("route_reuse")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("route_reuse manifest entry must be an object.")
+    return value
+
+
 def records_filename(shard_index: int, num_shards: int) -> str:
     return "records.jsonl" if num_shards == 1 else f"records_shard-{shard_index:05d}-of-{num_shards:05d}.jsonl"
 
@@ -588,6 +597,7 @@ def main() -> None:
     for record in records:
         decoder_mask_bins, pre_encoder_mask_bins, keep_bins = intervention_bins(record, args)
         decoder_through_layer = decoder_direct_access_through_layer(record, args)
+        route_spec = route_reuse_spec(record)
         condition = condition_for_record(record, args.condition)
         if record["question_id"] in complete_on_resume:
             append_jsonl(
@@ -623,6 +633,7 @@ def main() -> None:
                     "decoder_direct_access_through_layer": decoder_through_layer,
                     "pre_encoder_mask_temporal_bins": list(pre_encoder_mask_bins),
                     "pre_encoder_keep_temporal_bins": list(keep_bins),
+                    "route_reuse": route_spec,
                     "condition": condition,
                     "query_scope": args.query_scope,
                     "attention_extraction": args.attention_extraction,
@@ -662,6 +673,7 @@ def main() -> None:
                 decoder_direct_access_through_layer=decoder_through_layer,
                 pre_encoder_remove_temporal_bins=pre_encoder_mask_bins,
                 pre_encoder_keep_temporal_bins=keep_bins,
+                route_reuse_spec=route_spec,
                 condition=condition,
                 profiler=profiler,
             )
@@ -671,6 +683,8 @@ def main() -> None:
             artifact["vision_access_through_layer"] = args.vision_access_through_layer
             artifact["condition"] = condition
             artifact["decoder_direct_access_through_layer"] = decoder_through_layer
+            if route_spec:
+                artifact["route_reuse"] = route_spec
             if record.get("intervention"):
                 artifact["intervention"] = record["intervention"]
             artifact["run_config"] = {
@@ -688,6 +702,7 @@ def main() -> None:
                 "decoder_direct_access_through_layer": decoder_through_layer,
                 "pre_encoder_mask_temporal_bins": list(pre_encoder_mask_bins),
                 "pre_encoder_keep_temporal_bins": list(keep_bins),
+                "route_reuse": route_spec,
                 "intervention": record.get("intervention"),
                 "condition": condition,
                 "query_scope": args.query_scope,
