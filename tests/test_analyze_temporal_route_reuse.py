@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from scripts.analyze_temporal_route_reuse import (
-    build_static_priors,
+    LAYER_GAPS,
+    RETENTION_RATIOS,
     captured_mass,
     jensen_shannon_divergence,
     route_reuse_rows,
@@ -17,7 +15,7 @@ from scripts.analyze_temporal_route_reuse import (
 )
 
 
-def _artifact(question_id: str, video_id: str, layers: int = 10, shift: int = 0) -> dict:
+def _artifact(question_id: str, video_id: str, layers: int = 12, shift: int = 0) -> dict:
     rows = []
     for layer in range(layers):
         hot = (layer + shift) % 8
@@ -36,19 +34,35 @@ def _artifact(question_id: str, video_id: str, layers: int = 10, shift: int = 0)
     }
 
 
-def _manifest(question_ids: list[str]) -> dict[str, dict]:
+def _manifest(records: list[tuple[str, str, str]]) -> dict[str, dict]:
     output = {}
-    for index, question_id in enumerate(question_ids):
+    for index, (question_id, video_id, split) in enumerate(records):
         output[question_id] = {
             "question_id": question_id,
-            "source_video_id": f"P{index:02d}-video",
-            "participant_id": f"P{index:02d}",
+            "source_video_id": video_id,
+            "participant_id": video_id.split("-", 1)[0],
             "category": "fine_grained",
             "question_type": "fine_grained_action_recognition",
             "duration_group": "short" if index % 2 == 0 else "long",
-            "split": "dev" if index == 0 else "test",
+            "split": split,
         }
     return output
+
+
+def _fixtures():
+    records = [
+        ("q-dev-a", "P00-video-a", "dev"),
+        ("q-dev-b", "P01-video-b", "dev"),
+        ("q-dev-c", "P02-video-c", "dev"),
+        ("q-test-a", "P03-video-d", "test"),
+        ("q-test-b", "P04-video-e", "test"),
+    ]
+    artifacts = {
+        question_id: _artifact(question_id, video_id, shift=index)
+        for index, (question_id, video_id, _split) in enumerate(records)
+    }
+    manifest = _manifest(records)
+    return artifacts, artifacts.copy(), manifest, {"q-dev-a", "q-dev-b", "q-dev-c"}
 
 
 def test_route_reuse_metric_primitives():
@@ -64,50 +78,79 @@ def test_route_reuse_metric_primitives():
     assert captured_mass(right, (2, 3)) == pytest.approx(0.7)
 
 
-def test_route_reuse_rows_include_dynamic_and_static_without_dev_leakage():
-    qwen = {
-        "q-dev": _artifact("q-dev", "P00-video", shift=0),
-        "q-test-a": _artifact("q-test-a", "P01-video", shift=1),
-        "q-test-b": _artifact("q-test-b", "P02-video", shift=2),
-    }
-    vila = {
-        "q-dev": _artifact("q-dev", "P00-video", shift=0),
-        "q-test-a": _artifact("q-test-a", "P01-video", shift=1),
-        "q-test-b": _artifact("q-test-b", "P02-video", shift=2),
-    }
-    manifest = _manifest(["q-dev", "q-test-a", "q-test-b"])
+def test_route_reuse_rows_are_development_only_and_record_held_out_ids():
+    qwen, vila, manifest, dev_ids = _fixtures()
 
-    rows, diagnostics = route_reuse_rows(qwen, vila, manifest, {"q-dev"})
+    rows, diagnostics = route_reuse_rows(qwen, vila, manifest, dev_ids)
 
-    assert diagnostics["dev_examples_used_for_static_prior"] == ["q-dev"]
-    assert diagnostics["static_prior_evaluation_examples"] == ["q-test-a", "q-test-b"]
+    assert diagnostics["development_examples_analyzed"] == ["q-dev-a", "q-dev-b", "q-dev-c"]
+    assert diagnostics["non_development_examples_held_out"] == ["q-test-a", "q-test-b"]
+    assert diagnostics["non_development_examples_held_out_count"] == 2
     assert rows
-    assert {row["selection_method"] for row in rows} == {
-        "dynamic_source_layer_topk",
-        "static_dev_prior_topk",
-    }
-    assert all(row["question_id"] != "q-dev" for row in rows)
-    assert all(row["is_static_prior_dev_example"] is False for row in rows)
+    assert {row["question_id"] for row in rows} == dev_ids
+    assert all(row["is_static_prior_dev_example"] is True for row in rows)
     assert {row["model"] for row in rows} == {"qwen", "vila"}
-    assert {row["layer_gap"] for row in rows} == {1, 2, 4, 8}
-    assert {row["retention_ratio"] for row in rows} == {0.25, 0.5, 0.75}
-    assert all(0.0 <= row["reused_captured_mass"] <= 1.0 for row in rows)
-    assert all(0.0 <= row["oracle_captured_mass"] <= 1.0 for row in rows)
-    assert all(row["reuse_efficiency"] <= 1.0 + 1e-12 for row in rows)
+    assert {row["retention_ratio"] for row in rows} == set(RETENTION_RATIOS)
 
 
-def test_static_prior_requires_matched_dev_examples_and_never_uses_test_only():
-    qwen = {"q-test": _artifact("q-test", "P01-video")}
-    vila = {"q-test": _artifact("q-test", "P01-video")}
+def test_lopo_static_prior_excludes_held_out_participant_and_source_video():
+    qwen, vila, manifest, dev_ids = _fixtures()
 
-    with pytest.raises(ValueError, match="No development examples"):
-        build_static_priors({"qwen": qwen, "vila": vila}, {"q-dev"}, {"q-test"})
+    rows, _diagnostics = route_reuse_rows(qwen, vila, manifest, dev_ids)
+    static_rows = [row for row in rows if row["selection_method"] == "static_dev_prior_lopo"]
+
+    assert static_rows
+    for row in static_rows:
+        assert row["layer_gap"] is None
+        assert row["source_layer"] is None
+        assert row["participant_id"] not in row["static_prior_training_participant_ids"]
+        assert row["source_video_id"] not in row["static_prior_training_source_video_ids"]
+        assert row["question_id"] not in row["static_prior_training_question_ids"]
+        assert row["static_prior_training_question_ids"]
 
 
-def test_static_prior_evaluation_requires_non_dev_examples():
-    qwen = {"q-dev": _artifact("q-dev", "P00-video")}
-    vila = {"q-dev": _artifact("q-dev", "P00-video")}
-    manifest = _manifest(["q-dev"])
+def test_dynamic_gaps_use_identical_target_layer_sets():
+    qwen, vila, manifest, dev_ids = _fixtures()
 
-    with pytest.raises(ValueError, match="No matched non-development examples"):
-        route_reuse_rows(qwen, vila, manifest, {"q-dev"})
+    rows, _diagnostics = route_reuse_rows(qwen, vila, manifest, dev_ids)
+    dynamic_rows = [row for row in rows if row["selection_method"] == "dynamic_source_layer_topk"]
+    expected_targets = {8, 9, 10, 11}
+
+    for model in ("qwen", "vila"):
+        for question_id in dev_ids:
+            for ratio in RETENTION_RATIOS:
+                by_gap = {
+                    gap: {
+                        row["target_layer"]
+                        for row in dynamic_rows
+                        if row["model"] == model
+                        and row["question_id"] == question_id
+                        and row["retention_ratio"] == ratio
+                        and row["layer_gap"] == gap
+                    }
+                    for gap in LAYER_GAPS
+                }
+                assert set(by_gap) == set(LAYER_GAPS)
+                assert all(targets == expected_targets for targets in by_gap.values())
+
+
+def test_static_prior_rows_are_not_duplicated_by_gap():
+    qwen, vila, manifest, dev_ids = _fixtures()
+
+    rows, _diagnostics = route_reuse_rows(qwen, vila, manifest, dev_ids)
+    static_rows = [row for row in rows if row["selection_method"] == "static_dev_prior_lopo"]
+
+    assert static_rows
+    assert {row["layer_gap"] for row in static_rows} == {None}
+    for model in ("qwen", "vila"):
+        for question_id in dev_ids:
+            for ratio in RETENTION_RATIOS:
+                subset = [
+                    row
+                    for row in static_rows
+                    if row["model"] == model
+                    and row["question_id"] == question_id
+                    and row["retention_ratio"] == ratio
+                ]
+                assert len(subset) == 4
+                assert {row["target_layer"] for row in subset} == {8, 9, 10, 11}

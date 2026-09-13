@@ -191,6 +191,12 @@ def retention_to_k(ratio: float, num_bins: int = 8) -> int:
     return int(round(float(ratio) * num_bins))
 
 
+def comparable_target_layers(num_layers: int) -> tuple[int, ...]:
+    if num_layers <= max(LAYER_GAPS):
+        raise ValueError(f"Need more than {max(LAYER_GAPS)} decoder layers for comparable layer-gap analysis, got {num_layers}.")
+    return tuple(range(max(LAYER_GAPS), num_layers))
+
+
 def build_static_priors(
     artifacts_by_model: dict[str, dict[str, dict[str, Any]]],
     dev_ids: set[str],
@@ -231,10 +237,11 @@ def dynamic_route_rows(
     metadata: dict[str, Any],
 ) -> list[dict[str, Any]]:
     scores = normalized_distributions(artifact)
+    target_layers = comparable_target_layers(scores.shape[0])
     rows = []
     for gap in LAYER_GAPS:
-        for source_layer in range(0, scores.shape[0] - gap):
-            target_layer = source_layer + gap
+        for target_layer in target_layers:
+            source_layer = target_layer - gap
             source = scores[source_layer]
             target = scores[target_layer]
             source_top_by_ratio = {ratio: topk_indices(source, retention_to_k(ratio)) for ratio in RETENTION_RATIOS}
@@ -263,6 +270,9 @@ def dynamic_route_rows(
                         "reuse_efficiency": reused / oracle if oracle > 0 else 0.0,
                         "selected_bins": list(source_top),
                         "oracle_bins": list(target_top),
+                        "static_prior_training_question_ids": [],
+                        "static_prior_training_participant_ids": [],
+                        "static_prior_training_source_video_ids": [],
                     }
                 )
     return rows
@@ -274,43 +284,77 @@ def static_prior_rows(
     artifact: dict[str, Any],
     metadata: dict[str, Any],
     prior: np.ndarray,
+    training_metadata: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     scores = normalized_distributions(artifact)
     if prior.shape != scores.shape:
         raise ValueError(f"{model} static prior shape {prior.shape} does not match target scores shape {scores.shape}.")
+    target_layers = comparable_target_layers(scores.shape[0])
+    training_question_ids = sorted(item["question_id"] for item in training_metadata)
+    training_participant_ids = sorted({item["participant_id"] for item in training_metadata})
+    training_source_video_ids = sorted({item["source_video_id"] for item in training_metadata})
     rows = []
-    for gap in LAYER_GAPS:
-        for source_layer in range(0, scores.shape[0] - gap):
-            target_layer = source_layer + gap
-            target = scores[target_layer]
-            prior_distribution = prior[target_layer]
-            for ratio in RETENTION_RATIOS:
-                prior_top = topk_indices(prior_distribution, retention_to_k(ratio))
-                target_top = topk_indices(target, retention_to_k(ratio))
-                reused = captured_mass(target, prior_top)
-                oracle = captured_mass(target, target_top)
-                rows.append(
-                    {
-                        **metadata,
-                        "model": model,
-                        "selection_method": "static_dev_prior_topk",
-                        "source_layer": source_layer,
-                        "target_layer": target_layer,
-                        "layer_gap": gap,
-                        "retention_ratio": ratio,
-                        "k": retention_to_k(ratio),
-                        "spearman": spearman_correlation(prior_distribution, target),
-                        "jensen_shannon_divergence": jensen_shannon_divergence(prior_distribution, target),
-                        "topk_jaccard": topk_jaccard(prior_top, target_top),
-                        "reused_captured_mass": reused,
-                        "oracle_captured_mass": oracle,
-                        "random_expected_captured_mass": ratio,
-                        "reuse_efficiency": reused / oracle if oracle > 0 else 0.0,
-                        "selected_bins": list(prior_top),
-                        "oracle_bins": list(target_top),
-                    }
-                )
+    for target_layer in target_layers:
+        target = scores[target_layer]
+        prior_distribution = prior[target_layer]
+        for ratio in RETENTION_RATIOS:
+            prior_top = topk_indices(prior_distribution, retention_to_k(ratio))
+            target_top = topk_indices(target, retention_to_k(ratio))
+            reused = captured_mass(target, prior_top)
+            oracle = captured_mass(target, target_top)
+            rows.append(
+                {
+                    **metadata,
+                    "model": model,
+                    "selection_method": "static_dev_prior_lopo",
+                    "source_layer": None,
+                    "target_layer": target_layer,
+                    "layer_gap": None,
+                    "retention_ratio": ratio,
+                    "k": retention_to_k(ratio),
+                    "spearman": spearman_correlation(prior_distribution, target),
+                    "jensen_shannon_divergence": jensen_shannon_divergence(prior_distribution, target),
+                    "topk_jaccard": topk_jaccard(prior_top, target_top),
+                    "reused_captured_mass": reused,
+                    "oracle_captured_mass": oracle,
+                    "random_expected_captured_mass": ratio,
+                    "reuse_efficiency": reused / oracle if oracle > 0 else 0.0,
+                    "selected_bins": list(prior_top),
+                    "oracle_bins": list(target_top),
+                    "static_prior_training_question_ids": training_question_ids,
+                    "static_prior_training_participant_ids": training_participant_ids,
+                    "static_prior_training_source_video_ids": training_source_video_ids,
+                }
+            )
     return rows
+
+
+def build_lopo_static_prior(
+    model: str,
+    artifacts: dict[str, dict[str, Any]],
+    dev_ids: set[str],
+    manifest: dict[str, dict[str, Any]],
+    held_out_metadata: dict[str, Any],
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
+    training_metadata = []
+    arrays = []
+    for question_id in sorted(dev_ids & set(artifacts)):
+        metadata = _record_metadata(question_id, artifacts[question_id], manifest)
+        if metadata["participant_id"] == held_out_metadata["participant_id"]:
+            continue
+        if metadata["source_video_id"] == held_out_metadata["source_video_id"]:
+            continue
+        training_metadata.append(metadata)
+        arrays.append(normalized_distributions(artifacts[question_id]))
+    if not arrays:
+        raise ValueError(
+            f"No development examples remain to build {model} static prior with participant "
+            f"{held_out_metadata['participant_id']} held out."
+        )
+    layer_counts = {array.shape[0] for array in arrays}
+    if len(layer_counts) != 1:
+        raise ValueError(f"{model} LOP training artifacts have inconsistent decoder layer counts: {sorted(layer_counts)}")
+    return np.mean(np.stack(arrays), axis=0), training_metadata
 
 
 def route_reuse_rows(
@@ -321,32 +365,44 @@ def route_reuse_rows(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     matched_ids = set(qwen_artifacts) & set(vila_artifacts) & set(manifest)
     artifacts_by_model = {"qwen": qwen_artifacts, "vila": vila_artifacts}
-    priors = build_static_priors(artifacts_by_model, dev_ids, matched_ids)
-    eval_ids = matched_ids - dev_ids
-    if not eval_ids:
-        raise ValueError("No matched non-development examples are available for static-prior evaluation.")
-    leakage = sorted(dev_ids & eval_ids)
-    if leakage:
-        raise ValueError(f"Development examples leaked into static-prior evaluation: {leakage}")
+    matched_dev_ids = dev_ids & matched_ids
+    matched_non_dev_ids = matched_ids - dev_ids
+    if not matched_dev_ids:
+        raise ValueError("No matched development examples are available for route-reuse analysis.")
 
     rows: list[dict[str, Any]] = []
     for model, artifacts in artifacts_by_model.items():
-        for question_id in sorted(eval_ids & set(artifacts)):
+        for question_id in sorted(matched_dev_ids & set(artifacts)):
             metadata = _record_metadata(question_id, artifacts[question_id], manifest)
-            metadata["is_static_prior_dev_example"] = False
+            metadata["is_static_prior_dev_example"] = True
             rows.extend(dynamic_route_rows(model, question_id, artifacts[question_id], metadata))
-            rows.extend(static_prior_rows(model, question_id, artifacts[question_id], metadata, priors[model]))
+            prior, training_metadata = build_lopo_static_prior(model, artifacts, matched_dev_ids, manifest, metadata)
+            rows.extend(static_prior_rows(model, question_id, artifacts[question_id], metadata, prior, training_metadata))
+    participants = {
+        _record_metadata(question_id, qwen_artifacts[question_id], manifest)["participant_id"]
+        for question_id in matched_dev_ids & set(qwen_artifacts)
+    }
     diagnostics = {
         "matched_complete_examples": len(matched_ids),
-        "dev_examples_used_for_static_prior": sorted(dev_ids & matched_ids),
-        "static_prior_evaluation_examples": sorted(eval_ids),
+        "development_examples_analyzed": sorted(matched_dev_ids),
+        "non_development_examples_held_out": sorted(matched_non_dev_ids),
+        "non_development_examples_held_out_count": len(matched_non_dev_ids),
+        "development_participants": sorted(participants),
         "models": {
-            "qwen": {"complete_artifacts": len(qwen_artifacts), "layers": int(priors["qwen"].shape[0])},
-            "vila": {"complete_artifacts": len(vila_artifacts), "layers": int(priors["vila"].shape[0])},
+            "qwen": {
+                "complete_artifacts": len(qwen_artifacts),
+                "layers": int(normalized_distributions(qwen_artifacts[sorted(matched_dev_ids & set(qwen_artifacts))[0]]).shape[0]),
+            },
+            "vila": {
+                "complete_artifacts": len(vila_artifacts),
+                "layers": int(normalized_distributions(vila_artifacts[sorted(matched_dev_ids & set(vila_artifacts))[0]]).shape[0]),
+            },
         },
         "layer_gaps": list(LAYER_GAPS),
+        "comparable_target_layers_start": max(LAYER_GAPS),
         "retention_ratios": list(RETENTION_RATIOS),
-        "static_prior_rule": "Per model and target layer, average normalized 8-bin distributions over matched development examples only, then select top-k prior bins.",
+        "dynamic_route_rule": "Development examples only; compare every layer gap on identical target layers from 8 through the final decoder layer.",
+        "static_prior_rule": "Leave-one-participant-out within the 15-example development set; per model and target layer, average normalized 8-bin distributions over other development participants only, excluding the evaluated source video, then select top-k prior bins.",
     }
     return rows, diagnostics
 
@@ -472,14 +528,20 @@ def save_metric_plot(summary: dict[str, Any], metric: str, path: Path, *, ylabel
 def save_static_vs_dynamic_plot(summary: dict[str, Any], path: Path, *, ratio: float = 0.5) -> None:
     plt = _plt()
     fig, ax = plt.subplots(figsize=(8.4, 5.0))
-    styles = {
-        ("qwen", "dynamic_source_layer_topk"): ("tab:blue", "o", "Qwen dynamic"),
-        ("qwen", "static_dev_prior_topk"): ("tab:blue", "^", "Qwen static prior"),
-        ("vila", "dynamic_source_layer_topk"): ("tab:orange", "s", "VILA dynamic"),
-        ("vila", "static_dev_prior_topk"): ("tab:orange", "v", "VILA static prior"),
+    dynamic_styles = {
+        "qwen": ("tab:blue", "o", "Qwen dynamic"),
+        "vila": ("tab:orange", "s", "VILA dynamic"),
     }
-    for (model, method), (color, marker, label) in styles.items():
-        groups = [group for group in _filter_summary(summary, method=method, ratio=ratio) if group["model"] == model]
+    static_styles = {
+        "qwen": ("tab:blue", "Qwen LOP static prior"),
+        "vila": ("tab:orange", "VILA LOP static prior"),
+    }
+    for model, (color, marker, label) in dynamic_styles.items():
+        groups = [
+            group
+            for group in _filter_summary(summary, method="dynamic_source_layer_topk", ratio=ratio)
+            if group["model"] == model
+        ]
         groups.sort(key=lambda group: int(group["layer_gap"]))
         if not groups:
             continue
@@ -488,10 +550,23 @@ def save_static_vs_dynamic_plot(summary: dict[str, Any], path: Path, *, ratio: f
         low = np.asarray([group["metrics"]["reused_captured_mass"]["ci95"][0] for group in groups], dtype=np.float64)
         high = np.asarray([group["metrics"]["reused_captured_mass"]["ci95"][1] for group in groups], dtype=np.float64)
         ax.errorbar(x, mean, yerr=np.vstack([mean - low, high - mean]), marker=marker, capsize=3, color=color, label=label)
+    for model, (color, label) in static_styles.items():
+        groups = [
+            group
+            for group in _filter_summary(summary, method="static_dev_prior_lopo", ratio=ratio)
+            if group["model"] == model
+        ]
+        if not groups:
+            continue
+        group = groups[0]
+        mean = group["metrics"]["reused_captured_mass"]["mean"]
+        low, high = group["metrics"]["reused_captured_mass"]["ci95"]
+        ax.axhline(mean, color=color, linestyle=":", linewidth=1.6, label=label)
+        ax.fill_between([min(LAYER_GAPS), max(LAYER_GAPS)], [low, low], [high, high], color=color, alpha=0.10)
     ax.axhline(ratio, color="0.5", linestyle="--", linewidth=1.0, label="random expectation")
     ax.set_xlabel("Layer gap")
     ax.set_ylabel("Target-layer captured mass")
-    ax.set_title(f"Static prior vs dynamic route reuse (retention={ratio:.0%})")
+    ax.set_title(f"LOP static prior vs dynamic route reuse (retention={ratio:.0%})")
     ax.set_xticks(list(LAYER_GAPS))
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -520,10 +595,10 @@ def main() -> None:
             f"Expected {args.expected_matched_examples} matched complete examples, "
             f"found {diagnostics['matched_complete_examples']}."
         )
-    if len(diagnostics["dev_examples_used_for_static_prior"]) != args.expected_dev_examples:
+    if len(diagnostics["development_examples_analyzed"]) != args.expected_dev_examples:
         raise ValueError(
-            f"Expected {args.expected_dev_examples} matched development examples for the static prior, "
-            f"found {len(diagnostics['dev_examples_used_for_static_prior'])}."
+            f"Expected {args.expected_dev_examples} matched development examples for method-selection analysis, "
+            f"found {len(diagnostics['development_examples_analyzed'])}."
         )
     write_jsonl(output_dir / "route_reuse_metrics.jsonl", rows)
     summary = {
