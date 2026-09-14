@@ -211,8 +211,9 @@ def test_route_mask_preserves_text_text_and_visual_visual_attention():
 
     assert mask is not None
     blocked = torch.finfo(query.dtype).min
-    assert torch.all(mask[:, :, [8, 9], [1, 3, 4, 6]] == blocked)
-    assert torch.all(mask[:, :, [8, 9], [8, 9]] == 0)
+    text_rows = mask[:, :, [8, 9], :]
+    assert torch.all(text_rows[:, :, :, [1, 3, 4, 6]] == blocked)
+    assert torch.all(text_rows[:, :, :, [8, 9]] == 0)
     assert torch.all(mask[:, :, list(range(8)), :] == 0)
 
 
