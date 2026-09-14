@@ -102,7 +102,7 @@ def manifest_rows_for_model(
             git_commit=git_commit,
         )
         row["intervention"] = {
-            "type": "causal_route_reuse",
+            "type": "baseline_derived_causal_route_replay",
             "condition": condition,
             "model": model,
             "baseline_artifact": str(artifact_path),
