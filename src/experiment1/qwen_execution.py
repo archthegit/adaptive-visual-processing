@@ -276,6 +276,14 @@ def visual_tokens_by_analysis_bin(layout: Any, frame_batches: list[FrameBatch], 
     return {key: tuple(sorted(set(values))) for key, values in by_bin.items()}
 
 
+def decoder_generation_requires_masked_context(
+    vision_access_through_layer: str | int | None,
+    decoder_mask_bins: tuple[int, ...],
+    route_reuse_spec: dict[str, Any] | None,
+) -> bool:
+    return bool(decoder_mask_bins) or bool(route_reuse_spec) or vision_access_through_layer not in {None, "none"}
+
+
 def next_token_topk_from_outputs(outputs: Any, k: int = 10) -> list[dict[str, float | int]]:
     logits = getattr(outputs, "logits", None)
     if logits is None:
@@ -706,24 +714,7 @@ def run_qwen_relevance_example(
 
     gen_started = time.time()
     with stage("generation"):
-        if vision_access_through_layer in {None, "none"}:
-            if decoder_mask_bins:
-                with masked_sdpa_attention_context(
-                    model._model,
-                    layout,
-                    vision_access_through_layer,
-                    decoder_direct_access_mask_temporal_bins=decoder_mask_bins,
-                    decoder_direct_access_through_layer=decoder_direct_access_through_layer,
-                    route_reuse_spec=route_reuse_spec,
-                    route_visual_tokens_by_bin=route_visual_tokens_by_bin,
-                ):
-                    with torch.inference_mode():
-                        output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
-            else:
-                with sdpa_attention_context(model._model):
-                    with torch.inference_mode():
-                        output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
-        else:
+        if decoder_generation_requires_masked_context(vision_access_through_layer, decoder_mask_bins, route_reuse_spec):
             with masked_sdpa_attention_context(
                 model._model,
                 layout,
@@ -733,6 +724,10 @@ def run_qwen_relevance_example(
                 route_reuse_spec=route_reuse_spec,
                 route_visual_tokens_by_bin=route_visual_tokens_by_bin,
             ):
+                with torch.inference_mode():
+                    output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
+        else:
+            with sdpa_attention_context(model._model):
                 with torch.inference_mode():
                     output_ids = model._model.generate(**inputs, max_new_tokens=model.config.max_new_tokens)
     raw_response = model._processor.batch_decode(

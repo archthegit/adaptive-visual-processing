@@ -873,6 +873,22 @@ def _causal_mask_for_question_rows(query: Any, key: Any, question_rows: Any, is_
     return mask
 
 
+def _causal_mask_for_all_rows(query: Any, key: Any, is_causal: bool) -> Any | None:
+    if not is_causal:
+        return None
+    import torch
+
+    q_len = int(query.shape[-2])
+    key_len = int(key.shape[-2])
+    query_positions = torch.arange(key_len - q_len, key_len, device=query.device).view(-1, 1)
+    key_positions = torch.arange(key_len, device=query.device).view(1, -1)
+    blocked = key_positions > query_positions
+    mask = torch.zeros((1, 1, q_len, key_len), dtype=query.dtype, device=query.device)
+    blocked_value = torch.finfo(query.dtype).min
+    mask[:, :, :, :] = torch.where(blocked.view(1, 1, q_len, key_len), blocked_value, 0.0)
+    return mask
+
+
 def _repeat_kv_to_query_heads(key: Any, query_heads: int) -> Any:
     key_heads = int(key.shape[-3])
     if key_heads == query_heads:
@@ -922,11 +938,15 @@ def _vila_route_reuse_block_mask(query: Any, key: Any) -> Any | None:
     return mask
 
 
-def _combine_vila_attention_mask(attn_mask: Any, query: Any, key: Any) -> Any:
+def _combine_vila_attention_mask(attn_mask: Any, query: Any, key: Any, is_causal: bool = False) -> tuple[Any, bool]:
+    combined = attn_mask
+    causal_mask = _causal_mask_for_all_rows(query, key, is_causal)
+    if causal_mask is not None:
+        combined = causal_mask if combined is None else combined + causal_mask
     route_mask = _vila_route_reuse_block_mask(query, key)
-    if route_mask is None:
-        return attn_mask
-    return route_mask if attn_mask is None else attn_mask + route_mask
+    if route_mask is not None:
+        combined = route_mask if combined is None else combined + route_mask
+    return combined, False if combined is not None else is_causal
 
 
 @contextmanager
@@ -974,13 +994,14 @@ def vila_masked_sdpa_context(
         *args: Any,
         **kwargs: Any,
     ) -> Any:
+        combined_mask, combined_is_causal = _combine_vila_attention_mask(attn_mask, query, key, is_causal)
         return original_sdpa(
             query,
             key,
             value,
-            attn_mask=_combine_vila_attention_mask(attn_mask, query, key),
+            attn_mask=combined_mask,
             dropout_p=dropout_p,
-            is_causal=is_causal,
+            is_causal=combined_is_causal,
             scale=scale,
             *args,
             **kwargs,
@@ -1053,14 +1074,14 @@ def vila_reduced_sdpa_context(
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        combined_attn_mask = _combine_vila_attention_mask(attn_mask, query, key)
+        combined_attn_mask, combined_is_causal = _combine_vila_attention_mask(attn_mask, query, key, is_causal)
         output = original_sdpa(
             query,
             key,
             value,
             attn_mask=combined_attn_mask,
             dropout_p=dropout_p,
-            is_causal=is_causal,
+            is_causal=combined_is_causal,
             scale=scale,
             *args,
             **kwargs,

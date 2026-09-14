@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.experiment1.route_reuse import (
     ROUTE_REUSE_SEED,
+    assert_matched_condition_budgets,
     current_git_commit,
     read_jsonl,
     route_spec_from_baseline_artifact,
@@ -130,8 +131,9 @@ def main() -> None:
         "outputs": [],
     }
     for model, baseline_dir in (("qwen", args.qwen_dir), ("vila", args.vila_dir)):
+        rows_by_condition = {}
         for condition in CONDITIONS:
-            rows = manifest_rows_for_model(
+            rows_by_condition[condition] = manifest_rows_for_model(
                 model=model,
                 baseline_dir=baseline_dir,
                 dev_records=dev_records,
@@ -139,6 +141,16 @@ def main() -> None:
                 seed=args.seed,
                 git_commit=git_commit,
             )
+        for question_id in [str(record["question_id"]) for record in dev_records]:
+            assert_matched_condition_budgets(
+                [
+                    next(row for row in rows_by_condition[condition] if str(row["question_id"]) == question_id)[
+                        "route_reuse"
+                    ]
+                    for condition in CONDITIONS
+                ]
+            )
+        for condition, rows in rows_by_condition.items():
             path = output_dir / model / f"{condition}.jsonl"
             write_jsonl(path, rows)
             summary["outputs"].append(

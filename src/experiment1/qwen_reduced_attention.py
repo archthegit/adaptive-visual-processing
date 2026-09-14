@@ -7,7 +7,7 @@ from typing import Any, Iterator
 import numpy as np
 
 from .masking import cutoff_alias_to_layer
-from .route_reuse import LayerRouteMask, visual_tokens_by_temporal_bin_from_cells
+from .route_reuse import LayerRouteMask
 from .token_layout import TokenLayout
 
 
@@ -181,7 +181,7 @@ def reduced_attention_context(
     )
     _ACTIVE_ROUTE_REUSE_MASK = LayerRouteMask.from_route_spec(
         route_reuse_spec,
-        route_visual_tokens_by_bin or visual_tokens_by_temporal_bin_from_cells(layout.visual_cells),
+        route_visual_tokens_by_bin,
         layout.visual_token_indices,
     )
     previous_configs = _set_attention_implementation(model, ATTENTION_IMPLEMENTATION)
@@ -232,7 +232,7 @@ def masked_sdpa_attention_context(
     )
     _ACTIVE_ROUTE_REUSE_MASK = LayerRouteMask.from_route_spec(
         route_reuse_spec,
-        route_visual_tokens_by_bin or visual_tokens_by_temporal_bin_from_cells(layout.visual_cells),
+        route_visual_tokens_by_bin,
         layout.visual_token_indices,
     )
     previous_configs = _set_attention_implementation(model, MASKED_SDPA_IMPLEMENTATION)
@@ -271,7 +271,7 @@ def masked_eager_attention_context(
     )
     _ACTIVE_ROUTE_REUSE_MASK = LayerRouteMask.from_route_spec(
         route_reuse_spec,
-        route_visual_tokens_by_bin or visual_tokens_by_temporal_bin_from_cells(layout.visual_cells),
+        route_visual_tokens_by_bin,
         layout.visual_token_indices,
     )
     previous_configs = _set_attention_implementation(model, MASKED_EAGER_IMPLEMENTATION)

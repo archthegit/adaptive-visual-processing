@@ -469,10 +469,10 @@ python scripts/plot_temporal_experiment1.py \
   --plot-dir outputs/experiment1_temporal_engineering_f32/temporal_plots
 ```
 
-### Development-Set Route-Reuse Causal Pilot
+### Development-Set Baseline-Derived Causal Route Replay Pilot
 
-Generate the development-only route-reuse manifests from existing dense fixed-8
-Qwen and VILA baselines. This uses only
+Generate the development-only baseline-derived causal route replay manifests
+from existing dense fixed-8 Qwen and VILA baselines. This uses only
 `outputs/experiment1_v3_cross_model/manifests/dev_eligible_8frame.jsonl`; the
 56 matched non-development examples are not included.
 
@@ -485,7 +485,7 @@ python scripts/create_route_reuse_pilot_manifests.py \
   --seed 20260913
 ```
 
-Run a Qwen route-reuse condition:
+Run a Qwen route-replay condition:
 
 ```bash
 python scripts/run_experiment1.py \
@@ -503,7 +503,7 @@ python scripts/run_experiment1.py \
   --allow-7b-inference
 ```
 
-Run a VILA route-reuse condition:
+Run a VILA route-replay condition:
 
 ```bash
 python scripts/run_experiment1.py \
@@ -526,7 +526,8 @@ Replace `route_reuse_gap4_top50` with `random_reuse_gap4_top50` or
 `uniform_reuse_gap4_top50` and use the corresponding generated manifest and
 output directory for the two controls. Anchor layers stay dense; only the three
 layers following each anchor route text-token attention to the retained visual
-bins.
+native visual routing units. The selected routes are replayed from dense
+baseline artifacts; this is not online routing and does not measure speedup.
 
 ## Download Manifest Videos
 
