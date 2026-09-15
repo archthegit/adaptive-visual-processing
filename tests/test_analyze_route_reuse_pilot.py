@@ -25,6 +25,8 @@ def _route(condition: str, commit: str = "abc123") -> dict:
             "omitted_analysis_bins": [4, 5, 6, 7],
             "allowed_visual_token_indices": [0, 1, 2, 3],
             "blocked_visual_token_indices": [4, 5, 6, 7],
+            "num_allowed_visual_tokens": 4,
+            "num_blocked_visual_tokens": 4,
             "actual_retained_visual_token_fraction": 0.5,
         }
     return {
@@ -74,13 +76,20 @@ def _routed_artifact(question_id: str, index: int, condition: str, delta: float)
     artifact = _base_artifact(question_id, index)
     artifact["predicted_idx"] = (index + (0 if condition == "route_reuse_gap4_top50" else 1)) % 5
     artifact["correct"] = artifact["predicted_idx"] == artifact["correct_idx"]
+    route = _route(condition, commit="manifest456")
     artifact["metadata"] = {
-        "route_reuse": _route(condition),
+        "route_reuse": {
+            "type": route["type"],
+            "condition": route["condition"],
+            "routing_unit_type": route["routing_unit_type"],
+            "mean_actual_retained_visual_token_fraction": route["mean_actual_retained_visual_token_fraction"],
+        },
         "prefill_runtime_seconds": 1.0,
         "answer_scoring_runtime_seconds": 0.5,
         "generation_runtime_seconds": 0.25,
     }
-    artifact["route_reuse"] = artifact["metadata"]["route_reuse"]
+    artifact["route_reuse"] = route
+    artifact["run_config"] = {"git_commit": "exec123"}
     artifact["answer_choice_scores"] = {
         "correct_choice_log_probability": 99.0,
         "correct_vs_best_incorrect_margin": 99.0,
@@ -167,7 +176,9 @@ def test_route_reuse_pilot_analyzer_uses_intervention_scores_and_writes_outputs(
         seed=11,
     )
 
-    assert summary["validation"]["code_commits"] == ["abc123"]
+    assert summary["validation"]["code_commits"] == ["exec123"]
+    assert summary["validation"]["execution_code_commits"] == ["exec123"]
+    assert summary["validation"]["route_manifest_commits"] == ["manifest456"]
     assert summary["validation"]["conditions"]["adaptive"]["num_examples"] == 15
     assert summary["causal_gate"]["status"] == "PASS"
     for filename in (
@@ -225,3 +236,47 @@ def test_route_reuse_pilot_analyzer_requires_intervention_scores(tmp_path: Path)
             bootstrap_samples=5,
             seed=11,
         )
+
+
+def test_route_reuse_pilot_analyzer_prefers_complete_top_level_route_spec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    baseline_dir, dirs, manifest, question_ids = _fixtures(tmp_path)
+    monkeypatch.setattr(pilot, "save_bar_plot", lambda _rows, _field, output, _ylabel, _title: Path(output).write_bytes(b"png"))
+    monkeypatch.setattr(pilot, "save_accuracy_flip_plot", lambda _rows, output: Path(output).write_bytes(b"png"))
+    artifacts = {
+        question_id: _routed_artifact(question_id, index, CONDITIONS["random"], 0.05)
+        for index, question_id in enumerate(question_ids)
+    }
+    for artifact in artifacts.values():
+        artifact["metadata"]["route_reuse"].pop("mean_actual_retained_visual_token_fraction")
+    _write_run(dirs["random"], artifacts)
+
+    summary = analyze(
+        baseline_dir=baseline_dir,
+        condition_dirs=dirs,
+        dev_manifest=manifest,
+        output_dir=tmp_path / "analysis",
+        bootstrap_samples=5,
+        seed=11,
+    )
+
+    assert summary["validation"]["conditions"]["random"]["num_examples"] == 15
+
+
+def test_instrumentation_runtime_supports_profile_stage_list_and_dict():
+    artifact = {
+        "metadata": {
+            "profiling": {
+                "stages": [
+                    {"name": "prefill", "elapsed_seconds": 1.25},
+                    {"name": "scoring", "elapsed_seconds": 2.75},
+                ]
+            }
+        }
+    }
+    assert pilot.instrumentation_runtime_seconds(artifact) == pytest.approx(4.0)
+
+    artifact["metadata"]["profiling"]["stages"] = {
+        "prefill": {"elapsed_seconds": 1.5},
+        "scoring": {"elapsed_seconds": 2.5},
+    }
+    assert pilot.instrumentation_runtime_seconds(artifact) == pytest.approx(4.0)

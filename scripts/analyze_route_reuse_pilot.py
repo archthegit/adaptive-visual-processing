@@ -170,7 +170,7 @@ def sampling_signature(artifact: dict[str, Any]) -> dict[str, Any]:
 
 
 def route_summary(artifact: dict[str, Any]) -> dict[str, Any]:
-    route = (artifact.get("metadata") or {}).get("route_reuse") or artifact.get("route_reuse")
+    route = artifact.get("route_reuse") or (artifact.get("metadata") or {}).get("route_reuse")
     if not isinstance(route, dict):
         raise RuntimeError(f"{artifact.get('question_id')}: missing route_reuse metadata.")
     return route
@@ -189,14 +189,34 @@ def validate_route_summary(artifact: dict[str, Any], expected_condition: str) ->
         raise RuntimeError(f"{artifact.get('question_id')}: expected four Qwen native routing units, found {len(units)}.")
     if int(route.get("retained_native_units", -1)) != 2:
         raise RuntimeError(f"{artifact.get('question_id')}: expected two retained native routing units.")
+    native_unit_ids = {int(unit.get("unit_id")) for unit in units}
+    if native_unit_ids != {0, 1, 2, 3}:
+        raise RuntimeError(f"{artifact.get('question_id')}: native unit IDs must be exactly 0,1,2,3.")
+    all_visual_tokens = {
+        int(token)
+        for unit in units
+        for token in unit.get("visual_token_indices", ())
+    }
     layers = sorted(int(layer) for layer in (route.get("layer_routes") or {}))
     if tuple(layers) != EXPECTED_ROUTED_LAYERS:
         raise RuntimeError(f"{artifact.get('question_id')}: routed layers differ from expected: {layers}")
     for layer, layer_route in (route.get("layer_routes") or {}).items():
+        selected_units = {int(item) for item in layer_route.get("selected_native_unit_ids", ())}
+        omitted_units = {int(item) for item in layer_route.get("omitted_native_unit_ids", ())}
+        if selected_units & omitted_units:
+            raise RuntimeError(f"{artifact.get('question_id')}: selected/omitted native unit overlap at layer {layer}.")
+        if selected_units | omitted_units != native_unit_ids:
+            raise RuntimeError(f"{artifact.get('question_id')}: selected/omitted native units do not partition all units at layer {layer}.")
         allowed = set(int(item) for item in layer_route.get("allowed_visual_token_indices", ()))
         blocked = set(int(item) for item in layer_route.get("blocked_visual_token_indices", ()))
         if allowed & blocked:
             raise RuntimeError(f"{artifact.get('question_id')}: allowed/blocked token overlap at layer {layer}.")
+        if allowed | blocked != all_visual_tokens:
+            raise RuntimeError(f"{artifact.get('question_id')}: allowed/blocked tokens do not partition all visual tokens at layer {layer}.")
+        if "num_allowed_visual_tokens" in layer_route and int(layer_route["num_allowed_visual_tokens"]) != len(allowed):
+            raise RuntimeError(f"{artifact.get('question_id')}: recorded allowed token count is wrong at layer {layer}.")
+        if "num_blocked_visual_tokens" in layer_route and int(layer_route["num_blocked_visual_tokens"]) != len(blocked):
+            raise RuntimeError(f"{artifact.get('question_id')}: recorded blocked token count is wrong at layer {layer}.")
         if abs(float(layer_route.get("actual_retained_visual_token_fraction")) - 0.5) > 1e-9:
             raise RuntimeError(f"{artifact.get('question_id')}: retained token fraction is not 0.5 at layer {layer}.")
     return route
@@ -210,8 +230,9 @@ def validate_inputs(
     dev_ids = set(dev_records)
     if not dev_ids <= set(baseline):
         raise RuntimeError(f"Baseline is missing development IDs: {sorted(dev_ids - set(baseline))}")
-    commits = set()
-    validation = {"conditions": {}, "code_commits": []}
+    execution_commits = set()
+    manifest_commits = set()
+    validation = {"conditions": {}, "execution_code_commits": [], "route_manifest_commits": []}
     for label, artifacts in condition_artifacts.items():
         qids = set(artifacts)
         if qids != dev_ids:
@@ -229,14 +250,20 @@ def validate_inputs(
             if sampling_signature(artifact) != sampling_signature(base):
                 raise RuntimeError(f"{qid}/{label}: prompt/frame/sampling signature differs from baseline.")
             route = validate_route_summary(artifact, expected_condition)
-            commit = route.get("git_commit") or (artifact.get("run_config") or {}).get("git_commit")
-            if commit:
-                commits.add(str(commit))
+            execution_commit = (artifact.get("run_config") or {}).get("git_commit")
+            if not execution_commit:
+                raise RuntimeError(f"{qid}/{label}: missing run_config.git_commit execution commit.")
+            execution_commits.add(str(execution_commit))
+            manifest_commit = route.get("git_commit")
+            if manifest_commit:
+                manifest_commits.add(str(manifest_commit))
             if not artifact.get("intervention_answer_choice_scores"):
                 raise RuntimeError(f"{qid}/{label}: missing intervention_answer_choice_scores.")
-    if len(commits) != 1:
-        raise RuntimeError(f"Intervention runs must use one code commit, got {sorted(commits)}")
-    validation["code_commits"] = sorted(commits)
+    if len(execution_commits) != 1:
+        raise RuntimeError(f"Intervention runs must use one execution commit, got {sorted(execution_commits)}")
+    validation["execution_code_commits"] = sorted(execution_commits)
+    validation["route_manifest_commits"] = sorted(manifest_commits)
+    validation["code_commits"] = sorted(execution_commits)
     return validation
 
 
@@ -250,7 +277,8 @@ def instrumentation_runtime_seconds(artifact: dict[str, Any]) -> float | None:
     if all(value is None for value in values):
         profiling = metadata.get("profiling") or {}
         stages = profiling.get("stages") or {}
-        total = sum(float(stage.get("elapsed_seconds", 0.0)) for stage in stages.values())
+        stage_items = stages.values() if isinstance(stages, dict) else stages
+        total = sum(float(stage.get("elapsed_seconds", 0.0)) for stage in stage_items if isinstance(stage, dict))
         return total if total > 0 else None
     return float(sum(float(value or 0.0) for value in values))
 
