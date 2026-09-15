@@ -133,8 +133,8 @@ def _write_dev_manifest(path: Path, question_ids: list[str]) -> None:
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
 
 
-def _fixtures(tmp_path: Path):
-    question_ids = [f"q{index:02d}" for index in range(15)]
+def _fixtures(tmp_path: Path, count: int = 15):
+    question_ids = [f"q{index:02d}" for index in range(count)]
     manifest = tmp_path / "dev.jsonl"
     _write_dev_manifest(manifest, question_ids)
     baseline_dir = tmp_path / "baseline"
@@ -197,6 +197,8 @@ def test_route_reuse_pilot_analyzer_uses_intervention_scores_and_writes_outputs(
     adaptive_q00 = next(row for row in rows if row["question_id"] == "q00" and row["condition_label"] == "adaptive")
     assert float(adaptive_q00["routed_correct_choice_log_probability"]) == pytest.approx(-1.8)
     assert float(adaptive_q00["routed_correct_choice_log_probability"]) != pytest.approx(99.0)
+    assert summary["cohort_label"] == "development"
+    assert summary["expected_examples"] == 15
 
 
 def test_route_reuse_pilot_analyzer_rejects_held_out_artifact_rows(tmp_path: Path):
@@ -207,7 +209,7 @@ def test_route_reuse_pilot_analyzer_rejects_held_out_artifact_rows(tmp_path: Pat
     adaptive_records[extra_id] = extra_artifact
     _write_run(dirs["adaptive"], adaptive_records)
 
-    with pytest.raises(RuntimeError, match="expected exactly the 15 dev IDs"):
+    with pytest.raises(RuntimeError, match="expected exactly the development IDs"):
         analyze(
             baseline_dir=baseline_dir,
             condition_dirs=dirs,
@@ -215,6 +217,67 @@ def test_route_reuse_pilot_analyzer_rejects_held_out_artifact_rows(tmp_path: Pat
             output_dir=tmp_path / "analysis",
             bootstrap_samples=5,
             seed=11,
+        )
+
+
+def test_route_reuse_pilot_analyzer_supports_explicit_heldout_cohort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    baseline_dir, dirs, manifest, _question_ids = _fixtures(tmp_path, count=56)
+    monkeypatch.setattr(pilot, "save_bar_plot", lambda _rows, _field, output, _ylabel, _title: Path(output).write_bytes(b"png"))
+    monkeypatch.setattr(pilot, "save_accuracy_flip_plot", lambda _rows, output: Path(output).write_bytes(b"png"))
+
+    summary = analyze(
+        baseline_dir=baseline_dir,
+        condition_dirs=dirs,
+        dev_manifest=manifest,
+        output_dir=tmp_path / "analysis",
+        bootstrap_samples=5,
+        seed=11,
+        expected_examples=56,
+        cohort_label="heldout_confirmatory",
+    )
+
+    assert summary["cohort_label"] == "heldout_confirmatory"
+    assert summary["expected_examples"] == 56
+    assert summary["validation"]["conditions"]["adaptive"]["num_examples"] == 56
+    assert "56-example heldout_confirmatory" in (tmp_path / "analysis" / "report.md").read_text()
+
+
+def test_route_reuse_pilot_analyzer_wrong_expected_count_fails(tmp_path: Path):
+    baseline_dir, dirs, manifest, _question_ids = _fixtures(tmp_path, count=15)
+
+    with pytest.raises(RuntimeError, match="Expected 56 heldout_confirmatory records"):
+        analyze(
+            baseline_dir=baseline_dir,
+            condition_dirs=dirs,
+            dev_manifest=manifest,
+            output_dir=tmp_path / "analysis",
+            bootstrap_samples=5,
+            seed=11,
+            expected_examples=56,
+            cohort_label="heldout_confirmatory",
+        )
+
+
+def test_route_reuse_pilot_analyzer_rejects_extra_ids_for_explicit_cohort(tmp_path: Path):
+    baseline_dir, dirs, manifest, question_ids = _fixtures(tmp_path, count=56)
+    extra_id = "q-heldout-extra"
+    adaptive_records = {
+        question_id: _routed_artifact(question_id, index, CONDITIONS["adaptive"], 0.2)
+        for index, question_id in enumerate(question_ids)
+    }
+    adaptive_records[extra_id] = _routed_artifact(extra_id, 99, CONDITIONS["adaptive"], 0.1)
+    _write_run(dirs["adaptive"], adaptive_records)
+
+    with pytest.raises(RuntimeError, match="expected exactly the heldout_confirmatory IDs"):
+        analyze(
+            baseline_dir=baseline_dir,
+            condition_dirs=dirs,
+            dev_manifest=manifest,
+            output_dir=tmp_path / "analysis",
+            bootstrap_samples=5,
+            seed=11,
+            expected_examples=56,
+            cohort_label="heldout_confirmatory",
         )
 
 

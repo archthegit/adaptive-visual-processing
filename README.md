@@ -529,6 +529,22 @@ layers following each anchor route text-token attention to the retained visual
 native visual routing units. The selected routes are replayed from dense
 baseline artifacts; this is not online routing and does not measure speedup.
 
+Analyze the held-out confirmatory Qwen route-replay cohort after all three
+equal-budget conditions complete:
+
+```bash
+python scripts/analyze_route_reuse_pilot.py \
+  --baseline-dir outputs/experiment1_v3_cross_model/runs/qwen/baseline \
+  --route-reuse-dir outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap4_top50_test \
+  --random-dir outputs/experiment1_v3_cross_model/runs/qwen/random_reuse_gap4_top50_test \
+  --uniform-dir outputs/experiment1_v3_cross_model/runs/qwen/uniform_reuse_gap4_top50_test \
+  --dev-manifest outputs/experiment1_v3_cross_model/manifests/heldout_eligible_8frame.jsonl \
+  --expected-examples 56 \
+  --cohort-label heldout_confirmatory \
+  --output-dir outputs/experiment1_v3_cross_model/analysis/qwen_route_reuse_heldout \
+  --bootstrap-samples 10000
+```
+
 ## Download Manifest Videos
 
 HD-EPIC MP4s are not stored in the annotation repository. To fetch only the videos referenced by a manifest:

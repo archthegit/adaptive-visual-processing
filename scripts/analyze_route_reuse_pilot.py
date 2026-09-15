@@ -23,7 +23,8 @@ CONDITIONS = {
     "uniform": "uniform_reuse_gap4_top50",
 }
 EXPECTED_ROUTED_LAYERS = tuple(list(range(9, 12)) + list(range(13, 16)) + list(range(17, 20)) + list(range(21, 24)) + list(range(25, 28)))
-EXPECTED_DEV_EXAMPLES = 15
+DEFAULT_EXPECTED_EXAMPLES = 15
+DEFAULT_COHORT_LABEL = "development"
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--uniform-dir", default="outputs/experiment1_v3_cross_model/runs/qwen/uniform_reuse_gap4_top50_dev")
     parser.add_argument("--dev-manifest", default="outputs/experiment1_v3_cross_model/manifests/dev_eligible_8frame.jsonl")
     parser.add_argument("--output-dir", default="outputs/experiment1_v3_cross_model/analysis/qwen_route_reuse_dev")
+    parser.add_argument("--expected-examples", type=int, default=DEFAULT_EXPECTED_EXAMPLES)
+    parser.add_argument("--cohort-label", default=DEFAULT_COHORT_LABEL)
     parser.add_argument("--bootstrap-samples", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=20260915)
     return parser.parse_args()
@@ -83,10 +86,15 @@ def load_latest_complete_artifacts(output_dir: str | Path) -> dict[str, dict[str
     return artifacts
 
 
-def dev_manifest_by_id(path: str | Path) -> dict[str, dict[str, Any]]:
+def dev_manifest_by_id(
+    path: str | Path,
+    *,
+    expected_examples: int = DEFAULT_EXPECTED_EXAMPLES,
+    cohort_label: str = DEFAULT_COHORT_LABEL,
+) -> dict[str, dict[str, Any]]:
     records = {str(record["question_id"]): record for record in read_jsonl(path)}
-    if len(records) != EXPECTED_DEV_EXAMPLES:
-        raise RuntimeError(f"Expected {EXPECTED_DEV_EXAMPLES} development records, found {len(records)} in {path}.")
+    if len(records) != expected_examples:
+        raise RuntimeError(f"Expected {expected_examples} {cohort_label} records, found {len(records)} in {path}.")
     return records
 
 
@@ -226,6 +234,8 @@ def validate_inputs(
     baseline: dict[str, dict[str, Any]],
     condition_artifacts: dict[str, dict[str, dict[str, Any]]],
     dev_records: dict[str, dict[str, Any]],
+    *,
+    cohort_label: str,
 ) -> dict[str, Any]:
     dev_ids = set(dev_records)
     if not dev_ids <= set(baseline):
@@ -238,7 +248,7 @@ def validate_inputs(
         if qids != dev_ids:
             extra = sorted(qids - dev_ids)
             missing = sorted(dev_ids - qids)
-            raise RuntimeError(f"{label}: expected exactly the 15 dev IDs; extra={extra}, missing={missing}")
+            raise RuntimeError(f"{label}: expected exactly the {cohort_label} IDs; extra={extra}, missing={missing}")
         validation["conditions"][label] = {"num_examples": len(artifacts), "question_ids": sorted(qids)}
         expected_condition = CONDITIONS[label]
         for qid, artifact in artifacts.items():
@@ -506,10 +516,12 @@ def save_accuracy_flip_plot(rows: Sequence[dict[str, Any]], output: Path) -> Non
 
 def write_report(path: Path, summary: dict[str, Any]) -> None:
     gate = summary["causal_gate"]
+    cohort_label = str(summary["cohort_label"])
+    expected_examples = int(summary["expected_examples"])
     lines = [
-        "# Qwen Development Route-Replay Pilot",
+        f"# Qwen {cohort_label.replace('_', ' ').title()} Route-Replay Analysis",
         "",
-        "This is a 15-example development kill test. Routes were replayed from dense baseline artifacts.",
+        f"This is a {expected_examples}-example {cohort_label} route-replay analysis. Routes were replayed from dense baseline artifacts.",
         "It does not establish online routing and does not measure actual latency savings; runtimes are instrumentation runtimes.",
         "Category breakdowns are exploratory because the cells are small.",
         "",
@@ -550,16 +562,22 @@ def analyze(
     output_dir: str | Path,
     bootstrap_samples: int,
     seed: int,
+    expected_examples: int = DEFAULT_EXPECTED_EXAMPLES,
+    cohort_label: str = DEFAULT_COHORT_LABEL,
 ) -> dict[str, Any]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    dev_records = dev_manifest_by_id(dev_manifest)
+    dev_records = dev_manifest_by_id(
+        dev_manifest,
+        expected_examples=expected_examples,
+        cohort_label=cohort_label,
+    )
     baseline = load_latest_complete_artifacts(baseline_dir)
     condition_artifacts = {
         label: load_latest_complete_artifacts(path)
         for label, path in condition_dirs.items()
     }
-    validation = validate_inputs(baseline, condition_artifacts, dev_records)
+    validation = validate_inputs(baseline, condition_artifacts, dev_records, cohort_label=cohort_label)
     rows = per_example_rows(baseline, condition_artifacts, dev_records)
     write_csv(output / "per_example.csv", rows)
     summary = {
@@ -570,6 +588,8 @@ def analyze(
         },
         "bootstrap_samples": bootstrap_samples,
         "seed": seed,
+        "expected_examples": expected_examples,
+        "cohort_label": cohort_label,
         "validation": validation,
         "conditions": {
             label: summarize_condition_rows([row for row in rows if row["condition_label"] == label], bootstrap_samples, seed + index * 1000)
@@ -601,6 +621,8 @@ def main() -> None:
         output_dir=args.output_dir,
         bootstrap_samples=args.bootstrap_samples,
         seed=args.seed,
+        expected_examples=args.expected_examples,
+        cohort_label=args.cohort_label,
     )
     print(json.dumps({"output_dir": args.output_dir, "causal_gate": summary["causal_gate"]}, indent=2))
 
