@@ -88,10 +88,10 @@ def normalized_entropy(distribution: Sequence[float]) -> float:
     values = values[values > 0]
     if values.size == 0:
         return 0.0
-    return float(-(values * np.log(values)).sum() / math.log(8))
+    return float(-(values * np.log(values)).sum() / math.log(len(distribution)))
 
 
-def topk_indices(distribution: Sequence[float], k: int = 4) -> tuple[int, ...]:
+def topk_indices(distribution: Sequence[float], k: int) -> tuple[int, ...]:
     values = np.asarray(distribution, dtype=np.float64)
     return tuple(int(index) for index in np.argsort(-values, kind="mergesort")[:k])
 
@@ -131,6 +131,18 @@ def selected_analysis_bins(route: dict[str, Any], layer_route: dict[str, Any]) -
     return tuple(sorted(index for index in bins if 0 <= index <= 7))
 
 
+def native_unit_masses(route: dict[str, Any], layer_route: dict[str, Any], distribution: Sequence[float]) -> list[float]:
+    values = [float(value) for value in distribution]
+    masses = []
+    for unit_id in sorted(int(unit.get("unit_id")) for unit in route.get("native_routing_units") or []):
+        bins = unit_analysis_bins(route, layer_route, unit_id)
+        masses.append(float(sum(values[index] for index in bins)))
+    total = sum(masses)
+    if total <= 0:
+        return [0.0 for _ in masses]
+    return [mass / total for mass in masses]
+
+
 def route_layer_metrics(
     qid: str,
     cohort: str,
@@ -148,13 +160,16 @@ def route_layer_metrics(
         selected_bins = selected_analysis_bins(route, layer_route)
         source_distribution = scores[source_layer]
         target_distribution = scores[target_layer]
-        oracle_bins = topk_indices(target_distribution, 4)
-        retained_mass = float(sum(target_distribution[index] for index in selected_bins))
-        oracle_mass = float(sum(target_distribution[index] for index in oracle_bins))
-        source_top = set(topk_indices(source_distribution, 4))
-        target_top = set(oracle_bins)
+        source_native = native_unit_masses(route, layer_route, source_distribution)
+        target_native = native_unit_masses(route, layer_route, target_distribution)
+        oracle_units = topk_indices(target_native, 2)
+        retained_mass = float(sum(target_native[index] for index in selected_units))
+        oracle_mass = float(sum(target_native[index] for index in oracle_units))
+        source_top = set(topk_indices(source_native, 2))
+        target_top = set(oracle_units)
         jaccard = len(source_top & target_top) / len(source_top | target_top)
         coverage_span = ((max(selected_units) - min(selected_units) + 1) / 4.0) if selected_units else 0.0
+        descriptive_top4_bins = topk_indices(target_distribution, 4)
         rows.append(
             {
                 "cohort": cohort,
@@ -166,18 +181,21 @@ def route_layer_metrics(
                 "anchor_layer": source_layer,
                 "target_layer": target_layer,
                 "distance_from_anchor": target_layer - source_layer,
-                "anchor_temporal_entropy": normalized_entropy(source_distribution),
-                "retained_target_layer_mass": retained_mass,
-                "oracle_top50_target_layer_mass": oracle_mass,
+                "anchor_native_temporal_entropy": normalized_entropy(source_native),
+                "native_retained_target_layer_mass": retained_mass,
+                "native_oracle_top50_target_layer_mass": oracle_mass,
                 "reuse_efficiency": retained_mass / oracle_mass if oracle_mass > 0 else 0.0,
-                "source_target_topk_jaccard": jaccard,
-                "source_target_spearman": spearman_correlation(source_distribution, target_distribution),
+                "native_source_target_top2_jaccard": jaccard,
+                "native_source_target_spearman": spearman_correlation(source_native, target_native),
                 "selected_native_unit_ids": " ".join(str(item) for item in selected_units),
                 "selected_analysis_bins": " ".join(str(item) for item in selected_bins),
                 "selected_units_adjacent": bool(len(selected_units) > 1 and max(selected_units) - min(selected_units) + 1 == len(selected_units)),
                 "normalized_temporal_coverage_span": coverage_span,
                 "contains_first_unit": 0 in selected_units,
                 "contains_last_unit": 3 in selected_units,
+                "descriptive_eight_bin_anchor_entropy": normalized_entropy(source_distribution),
+                "descriptive_eight_bin_retained_mass": float(sum(target_distribution[index] for index in selected_bins)),
+                "descriptive_eight_bin_top4_oracle_mass": float(sum(target_distribution[index] for index in descriptive_top4_bins)),
             }
         )
     return rows
@@ -301,14 +319,17 @@ def build_rows_for_cohort(
 
 def aggregate_layer_diagnostics(rows: Sequence[dict[str, Any]]) -> dict[str, float]:
     fields = {
-        "mean_anchor_temporal_entropy": "anchor_temporal_entropy",
-        "mean_retained_target_layer_mass": "retained_target_layer_mass",
-        "mean_oracle_top50_target_layer_mass": "oracle_top50_target_layer_mass",
+        "mean_anchor_native_temporal_entropy": "anchor_native_temporal_entropy",
+        "mean_native_retained_target_layer_mass": "native_retained_target_layer_mass",
+        "mean_native_oracle_top50_target_layer_mass": "native_oracle_top50_target_layer_mass",
         "mean_reuse_efficiency": "reuse_efficiency",
-        "mean_source_target_topk_jaccard": "source_target_topk_jaccard",
-        "mean_source_target_spearman": "source_target_spearman",
+        "mean_native_source_target_top2_jaccard": "native_source_target_top2_jaccard",
+        "mean_native_source_target_spearman": "native_source_target_spearman",
         "mean_normalized_temporal_coverage_span": "normalized_temporal_coverage_span",
-        "mean_distance_from_anchor": "distance_from_anchor",
+        "mean_distance_from_anchor_descriptive_only": "distance_from_anchor",
+        "mean_descriptive_eight_bin_anchor_entropy": "descriptive_eight_bin_anchor_entropy",
+        "mean_descriptive_eight_bin_retained_mass": "descriptive_eight_bin_retained_mass",
+        "mean_descriptive_eight_bin_top4_oracle_mass": "descriptive_eight_bin_top4_oracle_mass",
     }
     output = {}
     for out_field, row_field in fields.items():
@@ -344,55 +365,117 @@ def clustered_bootstrap_ci(rows: Sequence[dict[str, Any]], field: str, samples: 
     }
 
 
-def median_split_effect(rows: Sequence[dict[str, Any]], feature: str, outcome: str) -> dict[str, Any]:
+def participant_bootstrap_stat(
+    rows: Sequence[dict[str, Any]],
+    stat_fn,
+    samples: int,
+    seed: int,
+) -> dict[str, Any]:
+    if not rows:
+        return {"estimate": None, "ci95": [None, None], "n": 0}
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row["participant_id"])].append(dict(row))
+    participants = sorted(grouped)
+    estimate = stat_fn(list(rows))
+    if len(participants) < 2:
+        return {"estimate": estimate, "ci95": [estimate, estimate], "n": len(rows)}
+    rng = np.random.default_rng(seed)
+    estimates = []
+    for _ in range(samples):
+        selected = []
+        for idx in rng.integers(0, len(participants), size=len(participants)):
+            selected.extend(grouped[participants[int(idx)]])
+        estimates.append(stat_fn(selected))
+    return {
+        "estimate": estimate,
+        "ci95": [float(np.percentile(estimates, 2.5)), float(np.percentile(estimates, 97.5))],
+        "n": len(rows),
+    }
+
+
+def median_split_value(rows: Sequence[dict[str, Any]], feature: str, outcome: str) -> float | None:
     values = [float(row[feature]) for row in rows]
     if not values:
-        return {"threshold": None, "high_mean": None, "low_mean": None, "high_minus_low": None}
+        return None
     threshold = float(np.median(values))
     high = [float(row[outcome]) for row in rows if float(row[feature]) >= threshold]
     low = [float(row[outcome]) for row in rows if float(row[feature]) < threshold]
     high_mean = float(np.mean(high)) if high else None
     low_mean = float(np.mean(low)) if low else None
+    return (high_mean - low_mean) if high_mean is not None and low_mean is not None else None
+
+
+def median_split_effect(rows: Sequence[dict[str, Any]], feature: str, outcome: str, samples: int, seed: int) -> dict[str, Any]:
+    values = [float(row[feature]) for row in rows]
+    if not values:
+        return {"threshold": None, "high_mean": None, "low_mean": None, "high_minus_low": None, "ci95": [None, None], "n": 0}
+    threshold = float(np.median(values))
+    high = [float(row[outcome]) for row in rows if float(row[feature]) >= threshold]
+    low = [float(row[outcome]) for row in rows if float(row[feature]) < threshold]
+    high_mean = float(np.mean(high)) if high else None
+    low_mean = float(np.mean(low)) if low else None
+    boot = participant_bootstrap_stat(rows, lambda sample: median_split_value(sample, feature, outcome) or 0.0, samples, seed)
     return {
         "threshold": threshold,
         "high_mean": high_mean,
         "low_mean": low_mean,
         "high_minus_low": (high_mean - low_mean) if high_mean is not None and low_mean is not None else None,
+        "ci95": boot["ci95"],
+        "n": len(rows),
     }
 
 
-def correlation(rows: Sequence[dict[str, Any]], feature: str, outcome: str) -> float | None:
+def spearman_association_value(rows: Sequence[dict[str, Any]], feature: str, outcome: str) -> float | None:
     if len(rows) < 2:
         return None
     x = np.asarray([float(row[feature]) for row in rows], dtype=np.float64)
     y = np.asarray([float(row[outcome]) for row in rows], dtype=np.float64)
     if float(np.std(x)) == 0.0 or float(np.std(y)) == 0.0:
         return 0.0
-    return float(np.corrcoef(x, y)[0, 1])
+    return spearman_correlation(x, y)
 
 
-def stable_route_harm(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def association_summary(rows: Sequence[dict[str, Any]], feature: str, outcome: str, samples: int, seed: int) -> dict[str, Any]:
+    boot = participant_bootstrap_stat(
+        rows,
+        lambda sample: spearman_association_value(sample, feature, outcome) or 0.0,
+        samples,
+        seed,
+    )
+    return {
+        "spearman": boot["estimate"],
+        "spearman_ci95": boot["ci95"],
+        "median_split": median_split_effect(rows, feature, outcome, samples, seed + 17),
+    }
+
+
+def stable_route_harm(rows: Sequence[dict[str, Any]], samples: int = 1000, seed: int = 0) -> dict[str, Any]:
     if not rows:
-        return {"num_stable_examples": 0, "mean_logp_delta": None, "mean_margin_delta": None}
+        return {"num_stable_examples": 0, "mean_logp_delta": None, "mean_margin_delta": None, "logp_ci95": [None, None], "margin_ci95": [None, None]}
     thresholds = {
-        "mean_anchor_temporal_entropy": float(np.median([row["mean_anchor_temporal_entropy"] for row in rows])),
-        "mean_retained_target_layer_mass": float(np.median([row["mean_retained_target_layer_mass"] for row in rows])),
+        "mean_anchor_native_temporal_entropy": float(np.median([row["mean_anchor_native_temporal_entropy"] for row in rows])),
+        "mean_native_retained_target_layer_mass": float(np.median([row["mean_native_retained_target_layer_mass"] for row in rows])),
         "mean_normalized_temporal_coverage_span": float(np.median([row["mean_normalized_temporal_coverage_span"] for row in rows])),
-        "mean_source_target_spearman": float(np.median([row["mean_source_target_spearman"] for row in rows])),
+        "mean_native_source_target_spearman": float(np.median([row["mean_native_source_target_spearman"] for row in rows])),
     }
     stable = [
         row
         for row in rows
-        if row["mean_anchor_temporal_entropy"] < thresholds["mean_anchor_temporal_entropy"]
-        and row["mean_retained_target_layer_mass"] >= thresholds["mean_retained_target_layer_mass"]
+        if row["mean_anchor_native_temporal_entropy"] < thresholds["mean_anchor_native_temporal_entropy"]
+        and row["mean_native_retained_target_layer_mass"] >= thresholds["mean_native_retained_target_layer_mass"]
         and row["mean_normalized_temporal_coverage_span"] >= thresholds["mean_normalized_temporal_coverage_span"]
-        and row["mean_source_target_spearman"] >= thresholds["mean_source_target_spearman"]
+        and row["mean_native_source_target_spearman"] >= thresholds["mean_native_source_target_spearman"]
     ]
+    logp = clustered_bootstrap_ci(stable, "adaptive_minus_dense_correct_answer_log_probability", samples, seed) if stable else {"mean": None, "ci95": [None, None]}
+    margin = clustered_bootstrap_ci(stable, "adaptive_minus_dense_answer_margin", samples, seed + 23) if stable else {"mean": None, "ci95": [None, None]}
     return {
         "thresholds": thresholds,
         "num_stable_examples": len(stable),
-        "mean_logp_delta": float(np.mean([row["adaptive_minus_dense_correct_answer_log_probability"] for row in stable])) if stable else None,
-        "mean_margin_delta": float(np.mean([row["adaptive_minus_dense_answer_margin"] for row in stable])) if stable else None,
+        "mean_logp_delta": logp["mean"],
+        "logp_ci95": logp["ci95"],
+        "mean_margin_delta": margin["mean"],
+        "margin_ci95": margin["ci95"],
     }
 
 
@@ -402,54 +485,62 @@ def hypothesis_summary(rows: Sequence[dict[str, Any]], samples: int, seed: int) 
     for outcome in outcomes:
         output[outcome] = {
             "overall": clustered_bootstrap_ci(rows, outcome, samples, seed),
-            "H1_entropy": {
-                "median_split": median_split_effect(rows, "mean_anchor_temporal_entropy", outcome),
-                "correlation": correlation(rows, "mean_anchor_temporal_entropy", outcome),
-            },
-            "H1_retained_mass": {
-                "median_split": median_split_effect(rows, "mean_retained_target_layer_mass", outcome),
-                "correlation": correlation(rows, "mean_retained_target_layer_mass", outcome),
-            },
-            "H2_adjacent_selection": {
-                "median_split": median_split_effect(rows, "fraction_adjacent_selections", outcome),
-                "correlation": correlation(rows, "fraction_adjacent_selections", outcome),
-            },
-            "H2_temporal_coverage": {
-                "median_split": median_split_effect(rows, "mean_normalized_temporal_coverage_span", outcome),
-                "correlation": correlation(rows, "mean_normalized_temporal_coverage_span", outcome),
-            },
-            "H3_anchor_distance": {
-                "median_split": median_split_effect(rows, "mean_distance_from_anchor", outcome),
-                "correlation": correlation(rows, "mean_distance_from_anchor", outcome),
-            },
-            "H3_route_agreement": {
-                "median_split": median_split_effect(rows, "mean_source_target_spearman", outcome),
-                "correlation": correlation(rows, "mean_source_target_spearman", outcome),
-            },
+            "H1_entropy": association_summary(rows, "mean_anchor_native_temporal_entropy", outcome, samples, seed + 101),
+            "H1_retained_mass": association_summary(rows, "mean_native_retained_target_layer_mass", outcome, samples, seed + 202),
+            "H2_adjacent_selection": association_summary(rows, "fraction_adjacent_selections", outcome, samples, seed + 303),
+            "H2_temporal_coverage": association_summary(rows, "mean_normalized_temporal_coverage_span", outcome, samples, seed + 404),
+            "H3_route_agreement": association_summary(rows, "mean_native_source_target_spearman", outcome, samples, seed + 505),
         }
-    output["H4_stable_high_mass_well_covered_routes"] = stable_route_harm(rows)
+    output["H4_stable_high_mass_well_covered_routes"] = stable_route_harm(rows, samples, seed + 606)
     return output
 
 
+def ci_excludes_zero(ci: Sequence[float | None]) -> bool:
+    if ci[0] is None or ci[1] is None:
+        return False
+    return float(ci[0]) > 0.0 or float(ci[1]) < 0.0
+
+
+def same_nonzero_direction(dev_value: float | None, heldout_value: float | None) -> bool:
+    if dev_value is None or heldout_value is None:
+        return False
+    return (dev_value > 0 and heldout_value > 0) or (dev_value < 0 and heldout_value < 0)
+
+
+def mechanism_supported(summary: dict[str, Any], hypothesis: str, expected_direction: int) -> bool:
+    dev = summary["cohorts"].get("development", {}).get("hypotheses", {}).get("adaptive_minus_dense_correct_answer_log_probability", {}).get(hypothesis, {})
+    heldout = summary["cohorts"].get("heldout", {}).get("hypotheses", {}).get("adaptive_minus_dense_correct_answer_log_probability", {}).get(hypothesis, {})
+    dev_value = dev.get("spearman")
+    heldout_value = heldout.get("spearman")
+    ci = heldout.get("spearman_ci95") or [None, None]
+    if not same_nonzero_direction(dev_value, heldout_value):
+        return False
+    if expected_direction < 0 and not (heldout_value is not None and heldout_value < 0):
+        return False
+    if expected_direction > 0 and not (heldout_value is not None and heldout_value > 0):
+        return False
+    return ci_excludes_zero(ci)
+
+
 def choose_recommendation(summary: dict[str, Any]) -> str:
-    heldout = summary["cohorts"].get("heldout", {})
-    hypotheses = heldout.get("hypotheses") or summary["cohorts"].get("development", {}).get("hypotheses") or {}
-    logp = hypotheses.get("adaptive_minus_dense_correct_answer_log_probability") or {}
-    h4 = hypotheses.get("H4_stable_high_mass_well_covered_routes") or {}
-    h1_entropy = (logp.get("H1_entropy") or {}).get("correlation")
-    h1_mass = (logp.get("H1_retained_mass") or {}).get("correlation")
-    h2_coverage = (logp.get("H2_temporal_coverage") or {}).get("correlation")
-    h3_agreement = (logp.get("H3_route_agreement") or {}).get("correlation")
-    h3_distance = (logp.get("H3_anchor_distance") or {}).get("correlation")
-    if h4.get("mean_logp_delta") is not None and h4["mean_logp_delta"] < 0:
+    h4 = summary["cohorts"].get("heldout", {}).get("hypotheses", {}).get("H4_stable_high_mass_well_covered_routes", {})
+    dev_h4 = summary["cohorts"].get("development", {}).get("hypotheses", {}).get("H4_stable_high_mass_well_covered_routes", {})
+    if (
+        h4.get("num_stable_examples", 0) >= 10
+        and h4.get("mean_logp_delta") is not None
+        and dev_h4.get("mean_logp_delta") is not None
+        and h4["mean_logp_delta"] < 0
+        and dev_h4["mean_logp_delta"] < 0
+        and ci_excludes_zero(h4.get("logp_ci95") or [None, None])
+    ):
         return "compression instead of deletion"
-    if h2_coverage is not None and h2_coverage > 0:
+    if mechanism_supported(summary, "H2_temporal_coverage", expected_direction=1):
         return "coverage-constrained routing"
-    if h3_distance is not None and h3_distance < 0 or h3_agreement is not None and h3_agreement > 0:
+    if mechanism_supported(summary, "H3_route_agreement", expected_direction=1):
         return "shorter/dynamic refresh"
-    if h1_entropy is not None and h1_entropy < 0 or h1_mass is not None and h1_mass > 0:
+    if mechanism_supported(summary, "H1_entropy", expected_direction=-1) or mechanism_supported(summary, "H1_retained_mass", expected_direction=1):
         return "variable-budget routing"
-    return "abandon temporal routing"
+    return "diagnosis inconclusive; run a targeted discriminating pilot"
 
 
 def summarize_rows(per_example: Sequence[dict[str, Any]], per_layer: Sequence[dict[str, Any]], samples: int, seed: int) -> dict[str, Any]:
@@ -525,6 +616,36 @@ def save_bar(rows: Sequence[dict[str, Any]], group_field: str, output: Path, tit
     plt.close(fig)
 
 
+def save_route_stability_by_anchor_distance(rows: Sequence[dict[str, Any]], output: Path) -> None:
+    plt = _plt()
+    metrics = [
+        ("native_retained_target_layer_mass", "retained mass"),
+        ("reuse_efficiency", "reuse efficiency"),
+        ("native_source_target_top2_jaccard", "native Jaccard"),
+        ("native_source_target_spearman", "native Spearman"),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(9.0, 6.4), sharex=True)
+    for ax, (field, title) in zip(axes.flat, metrics):
+        for cohort, color in (("development", "#4477AA"), ("heldout", "#CC6677")):
+            xs = []
+            ys = []
+            for distance in (1, 2, 3):
+                subset = [row for row in rows if row["cohort"] == cohort and int(row["distance_from_anchor"]) == distance]
+                if subset:
+                    xs.append(distance)
+                    ys.append(float(np.mean([row[field] for row in subset])))
+            ax.plot(xs, ys, marker="o", label=cohort, color=color)
+        ax.set_title(title)
+        ax.set_xticks([1, 2, 3])
+        ax.set_xlabel("distance from anchor")
+        ax.set_ylabel("mean value")
+    axes.flat[0].legend()
+    fig.suptitle("Route stability by anchor distance; descriptive, not causal harm by distance")
+    fig.tight_layout()
+    fig.savefig(output, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
 def save_adaptive_controls(rows: Sequence[dict[str, Any]], output: Path) -> None:
     plt = _plt()
     fields = [
@@ -578,8 +699,10 @@ def write_report(path: Path, summary: dict[str, Any]) -> None:
             "",
             "H1 tests whether harm tracks high anchor entropy or low retained target-layer mass.",
             "H2 tests whether harm tracks adjacent selections or low temporal coverage.",
-            "H3 tests whether harm grows with anchor distance or declining route agreement.",
+            "H3 tests whether harm tracks declining route agreement. Anchor distance is summarized only as route staleness because distances 1, 2, and 3 are applied together and yield one final answer.",
             "H4 tests whether apparently stable, high-mass, well-covered routes still cause harm, which would implicate hard deletion itself.",
+            "",
+            "Observed causal outcome is the paired answer-quality delta from the completed route-replay intervention. Failure-mode associations are exploratory. Causal harm by anchor distance is not identifiable in this design.",
             "",
             f"## Recommendation: {recommendation}",
             "",
@@ -644,10 +767,10 @@ def analyze(
     }
     summary["recommendation"] = choose_recommendation(summary)
     write_json_atomic(output / "summary.json", summary)
-    save_scatter(all_example_rows, "mean_anchor_temporal_entropy", "adaptive_minus_dense_correct_answer_log_probability", output / "harm_vs_entropy.png", "Harm versus anchor entropy", "mean anchor entropy")
-    save_scatter(all_example_rows, "mean_retained_target_layer_mass", "adaptive_minus_dense_correct_answer_log_probability", output / "harm_vs_retained_mass.png", "Harm versus retained target-layer mass", "mean retained mass")
+    save_scatter(all_example_rows, "mean_anchor_native_temporal_entropy", "adaptive_minus_dense_correct_answer_log_probability", output / "harm_vs_entropy.png", "Harm versus native anchor entropy", "mean native anchor entropy")
+    save_scatter(all_example_rows, "mean_native_retained_target_layer_mass", "adaptive_minus_dense_correct_answer_log_probability", output / "harm_vs_retained_mass.png", "Harm versus native retained target-layer mass", "mean native retained mass")
     save_bar(all_example_rows, "fraction_adjacent_selections", output / "harm_by_temporal_coverage.png", "Harm by adjacent-selection frequency", "fraction adjacent")
-    save_scatter(all_example_rows, "mean_distance_from_anchor", "adaptive_minus_dense_correct_answer_log_probability", output / "harm_by_anchor_distance.png", "Harm versus anchor distance", "mean distance from anchor")
+    save_route_stability_by_anchor_distance(all_layer_rows, output / "route_stability_by_anchor_distance.png")
     save_adaptive_controls(all_example_rows, output / "adaptive_vs_controls.png")
     write_report(output / "report.md", summary)
     return summary

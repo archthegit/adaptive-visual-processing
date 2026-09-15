@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 
 import scripts.analyze_route_reuse_failure_modes as failure
-from scripts.analyze_route_reuse_failure_modes import analyze, hypothesis_summary, stable_route_harm
+from scripts.analyze_route_reuse_failure_modes import (
+    analyze,
+    choose_recommendation,
+    hypothesis_summary,
+    normalized_entropy,
+    route_layer_metrics,
+    stable_route_harm,
+)
 from scripts.analyze_route_reuse_pilot import CONDITIONS, EXPECTED_ROUTED_LAYERS
 
 
@@ -178,6 +185,7 @@ def _fixtures(tmp_path: Path):
 def _stub_plots(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(failure, "save_scatter", lambda *_args, **_kwargs: Path(_args[3]).write_bytes(b"png"))
     monkeypatch.setattr(failure, "save_bar", lambda *_args, **_kwargs: Path(_args[2]).write_bytes(b"png"))
+    monkeypatch.setattr(failure, "save_route_stability_by_anchor_distance", lambda _rows, output: Path(output).write_bytes(b"png"))
     monkeypatch.setattr(failure, "save_adaptive_controls", lambda _rows, output: Path(output).write_bytes(b"png"))
 
 
@@ -208,7 +216,7 @@ def test_failure_mode_analyzer_writes_dev_and_heldout_outputs(tmp_path: Path, mo
         "coverage-constrained routing",
         "shorter/dynamic refresh",
         "compression instead of deletion",
-        "abandon temporal routing",
+        "diagnosis inconclusive; run a targeted discriminating pilot",
     }
     for filename in (
         "per_example.csv",
@@ -218,7 +226,7 @@ def test_failure_mode_analyzer_writes_dev_and_heldout_outputs(tmp_path: Path, mo
         "harm_vs_entropy.png",
         "harm_vs_retained_mass.png",
         "harm_by_temporal_coverage.png",
-        "harm_by_anchor_distance.png",
+        "route_stability_by_anchor_distance.png",
         "adaptive_vs_controls.png",
     ):
         assert (output_dir / filename).is_file()
@@ -255,12 +263,12 @@ def _hypothesis_rows() -> list[dict]:
         rows.append(
             {
                 "participant_id": f"P{index % 3}",
-                "mean_anchor_temporal_entropy": 0.2 + 0.1 * index,
-                "mean_retained_target_layer_mass": 0.9 - 0.08 * index,
+                "mean_anchor_native_temporal_entropy": 0.2 + 0.1 * index,
+                "mean_native_retained_target_layer_mass": 0.9 - 0.08 * index,
                 "fraction_adjacent_selections": 1.0 if index >= 4 else 0.0,
                 "mean_normalized_temporal_coverage_span": 0.5 if index >= 4 else 1.0,
-                "mean_distance_from_anchor": 1.0 + index / 3,
-                "mean_source_target_spearman": 0.9 - 0.1 * index,
+                "mean_distance_from_anchor_descriptive_only": 2.0,
+                "mean_native_source_target_spearman": 0.9 - 0.1 * index,
                 "adaptive_minus_dense_correct_answer_log_probability": 0.1 - 0.1 * index,
                 "adaptive_minus_dense_answer_margin": 0.05 - 0.08 * index,
             }
@@ -273,21 +281,21 @@ def test_failure_hypotheses_cover_entropy_mass_coverage_distance_and_hard_deleti
     summary = hypothesis_summary(rows, samples=10, seed=3)
     logp = summary["adaptive_minus_dense_correct_answer_log_probability"]
 
-    assert logp["H1_entropy"]["correlation"] < 0
-    assert logp["H1_retained_mass"]["correlation"] > 0
+    assert logp["H1_entropy"]["spearman"] < 0
+    assert logp["H1_retained_mass"]["spearman"] > 0
     assert logp["H2_adjacent_selection"]["median_split"]["high_minus_low"] < 0
-    assert logp["H2_temporal_coverage"]["correlation"] > 0
-    assert logp["H3_anchor_distance"]["correlation"] < 0
-    assert logp["H3_route_agreement"]["correlation"] > 0
+    assert logp["H2_temporal_coverage"]["spearman"] > 0
+    assert "H3_anchor_distance" not in logp
+    assert logp["H3_route_agreement"]["spearman"] > 0
 
     stable = stable_route_harm(
         [
             {
                 **row,
-                "mean_anchor_temporal_entropy": 0.05 if index == 0 else 0.5 + index * 0.05,
-                "mean_retained_target_layer_mass": 0.95 if index == 0 else 0.5 + index * 0.02,
+                "mean_anchor_native_temporal_entropy": 0.05 if index == 0 else 0.5 + index * 0.05,
+                "mean_native_retained_target_layer_mass": 0.95 if index == 0 else 0.5 + index * 0.02,
                 "mean_normalized_temporal_coverage_span": 1.0 if index == 0 else 0.5 + index * 0.02,
-                "mean_source_target_spearman": 0.95 if index == 0 else 0.4 + index * 0.02,
+                "mean_native_source_target_spearman": 0.95 if index == 0 else 0.4 + index * 0.02,
                 "adaptive_minus_dense_correct_answer_log_probability": -0.2,
                 "adaptive_minus_dense_answer_margin": -0.1,
             }
@@ -296,3 +304,83 @@ def test_failure_hypotheses_cover_entropy_mass_coverage_distance_and_hard_deleti
     )
     assert stable["num_stable_examples"] > 0
     assert stable["mean_logp_delta"] < 0
+
+
+def test_native_oracle_differs_from_top_four_analysis_bins_and_entropy_uses_log4():
+    baseline = _base_artifact("q-native", 0, selected_units=(0, 1))
+    route = _route(CONDITIONS["adaptive"], selected_units=(0, 1))
+    # Layer 8 source keeps units 0/1, but layer 9 target has four large analysis
+    # bins split across all native units. The top four analysis bins are not the
+    # same object as the top two aggregated native units.
+    scores = [[0.125] * 8 for _ in range(28)]
+    scores[8] = [0.30, 0.20, 0.18, 0.12, 0.06, 0.05, 0.05, 0.04]
+    scores[9] = [0.22, 0.01, 0.21, 0.01, 0.20, 0.19, 0.08, 0.08]
+    baseline["temporal_relevance"]["normalized_temporal_bin_scores"] = scores
+    adaptive = _routed_artifact("q-native", 0, CONDITIONS["adaptive"], -0.1, selected_units=(0, 1))
+    adaptive["route_reuse"] = route
+
+    row = route_layer_metrics(
+        "q-native",
+        "development",
+        {"question_id": "q-native", "participant_id": "P0", "source_video_id": "P0-v", "category": "gaze", "question_type": "gaze_synthetic"},
+        baseline,
+        adaptive,
+    )[0]
+
+    assert row["target_layer"] == 9
+    assert row["descriptive_eight_bin_top4_oracle_mass"] == pytest.approx(0.82)
+    assert row["native_oracle_top50_target_layer_mass"] == pytest.approx(0.39 + 0.23)
+    assert row["native_retained_target_layer_mass"] == pytest.approx(0.45)
+    assert row["native_source_target_top2_jaccard"] == pytest.approx(1 / 3)
+    assert normalized_entropy([0.25, 0.25, 0.25, 0.25]) == pytest.approx(1.0)
+
+
+def test_constant_anchor_distance_does_not_drive_recommendation_and_point_sign_is_inconclusive():
+    summary = {
+        "cohorts": {
+            "development": {
+                "hypotheses": {
+                    "adaptive_minus_dense_correct_answer_log_probability": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [-0.2, 0.8]}
+                    },
+                    "H4_stable_high_mass_well_covered_routes": {"num_stable_examples": 0},
+                }
+            },
+            "heldout": {
+                "hypotheses": {
+                    "adaptive_minus_dense_correct_answer_log_probability": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [-0.2, 0.8]}
+                    },
+                    "H4_stable_high_mass_well_covered_routes": {"num_stable_examples": 0},
+                }
+            },
+        }
+    }
+    assert "H3_anchor_distance" not in summary["cohorts"]["heldout"]["hypotheses"]["adaptive_minus_dense_correct_answer_log_probability"]
+    assert choose_recommendation(summary) == "diagnosis inconclusive; run a targeted discriminating pilot"
+
+
+def test_recommendation_requires_replicated_direction_and_heldout_ci_excluding_zero():
+    base_summary = {
+        "cohorts": {
+            "development": {
+                "hypotheses": {
+                    "adaptive_minus_dense_correct_answer_log_probability": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [0.1, 0.7]}
+                    },
+                    "H4_stable_high_mass_well_covered_routes": {"num_stable_examples": 0},
+                }
+            },
+            "heldout": {
+                "hypotheses": {
+                    "adaptive_minus_dense_correct_answer_log_probability": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [-0.1, 0.7]}
+                    },
+                    "H4_stable_high_mass_well_covered_routes": {"num_stable_examples": 0},
+                }
+            },
+        }
+    }
+    assert choose_recommendation(base_summary) == "diagnosis inconclusive; run a targeted discriminating pilot"
+    base_summary["cohorts"]["heldout"]["hypotheses"]["adaptive_minus_dense_correct_answer_log_probability"]["H2_temporal_coverage"]["spearman_ci95"] = [0.05, 0.7]
+    assert choose_recommendation(base_summary) == "coverage-constrained routing"
