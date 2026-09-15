@@ -13,6 +13,7 @@ from scripts.analyze_route_reuse_failure_modes import (
     hypothesis_summary,
     normalized_entropy,
     route_layer_metrics,
+    spearman_correlation,
     stable_route_harm,
 )
 from scripts.analyze_route_reuse_pilot import CONDITIONS, EXPECTED_ROUTED_LAYERS
@@ -368,12 +369,18 @@ def test_recommendation_requires_replicated_direction_and_heldout_ci_excluding_z
                     "adaptive_minus_dense_correct_answer_log_probability": {
                         "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [0.1, 0.7]}
                     },
+                    "adaptive_minus_dense_answer_margin": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [0.1, 0.7]}
+                    },
                     "H4_stable_high_mass_well_covered_routes": {"num_stable_examples": 0},
                 }
             },
             "heldout": {
                 "hypotheses": {
                     "adaptive_minus_dense_correct_answer_log_probability": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [-0.1, 0.7]}
+                    },
+                    "adaptive_minus_dense_answer_margin": {
                         "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [-0.1, 0.7]}
                     },
                     "H4_stable_high_mass_well_covered_routes": {"num_stable_examples": 0},
@@ -384,3 +391,144 @@ def test_recommendation_requires_replicated_direction_and_heldout_ci_excluding_z
     assert choose_recommendation(base_summary) == "diagnosis inconclusive; run a targeted discriminating pilot"
     base_summary["cohorts"]["heldout"]["hypotheses"]["adaptive_minus_dense_correct_answer_log_probability"]["H2_temporal_coverage"]["spearman_ci95"] = [0.05, 0.7]
     assert choose_recommendation(base_summary) == "coverage-constrained routing"
+
+
+def test_recommendation_requires_margin_directional_consistency():
+    summary = {
+        "cohorts": {
+            "development": {
+                "hypotheses": {
+                    "adaptive_minus_dense_correct_answer_log_probability": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [0.1, 0.7]}
+                    },
+                    "adaptive_minus_dense_answer_margin": {
+                        "H2_temporal_coverage": {"spearman": -0.4, "spearman_ci95": [-0.7, -0.1]}
+                    },
+                    "H4_stable_high_mass_well_covered_routes": {"num_stable_examples": 0},
+                }
+            },
+            "heldout": {
+                "hypotheses": {
+                    "adaptive_minus_dense_correct_answer_log_probability": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [0.1, 0.7]}
+                    },
+                    "adaptive_minus_dense_answer_margin": {
+                        "H2_temporal_coverage": {"spearman": 0.4, "spearman_ci95": [0.1, 0.7]}
+                    },
+                    "H4_stable_high_mass_well_covered_routes": {"num_stable_examples": 0},
+                }
+            },
+        }
+    }
+    assert choose_recommendation(summary) == "diagnosis inconclusive; run a targeted discriminating pilot"
+
+
+def test_h4_recommendation_requires_margin_ci_and_minimum_heldout_subgroup():
+    summary = {
+        "cohorts": {
+            "development": {
+                "hypotheses": {
+                    "adaptive_minus_dense_correct_answer_log_probability": {},
+                    "adaptive_minus_dense_answer_margin": {},
+                    "H4_stable_high_mass_well_covered_routes": {
+                        "num_stable_examples": 6,
+                        "mean_logp_delta": -0.2,
+                        "logp_ci95": [-0.3, -0.1],
+                        "mean_margin_delta": -0.2,
+                        "margin_ci95": [-0.3, -0.1],
+                    },
+                }
+            },
+            "heldout": {
+                "hypotheses": {
+                    "adaptive_minus_dense_correct_answer_log_probability": {},
+                    "adaptive_minus_dense_answer_margin": {},
+                    "H4_stable_high_mass_well_covered_routes": {
+                        "num_stable_examples": 9,
+                        "mean_logp_delta": -0.2,
+                        "logp_ci95": [-0.3, -0.1],
+                        "mean_margin_delta": -0.2,
+                        "margin_ci95": [-0.3, -0.1],
+                    },
+                }
+            },
+        }
+    }
+    assert choose_recommendation(summary) == "diagnosis inconclusive; run a targeted discriminating pilot"
+    summary["cohorts"]["heldout"]["hypotheses"]["H4_stable_high_mass_well_covered_routes"]["num_stable_examples"] = 10
+    assert choose_recommendation(summary) == "compression instead of deletion"
+
+
+def test_tie_correct_spearman_matches_scipy():
+    scipy_stats = pytest.importorskip("scipy.stats")
+    left = [0.4, 0.4, 0.1, 0.1]
+    right = [0.2, 0.3, 0.3, 0.1]
+    expected = float(scipy_stats.spearmanr(left, right).statistic)
+
+    assert spearman_correlation(left, right) == pytest.approx(expected)
+
+
+def test_malformed_native_routes_are_rejected():
+    baseline = _base_artifact("q-bad", 0)
+    adaptive = _routed_artifact("q-bad", 0, CONDITIONS["adaptive"], -0.1)
+    manifest = {"question_id": "q-bad", "participant_id": "P0", "source_video_id": "P0-v", "category": "gaze", "question_type": "gaze_synthetic"}
+
+    missing = json.loads(json.dumps(adaptive))
+    missing["route_reuse"]["native_routing_units"][0].pop("analysis_bins")
+    with pytest.raises(RuntimeError, match="missing explicit analysis_bins"):
+        route_layer_metrics("q-bad", "development", manifest, baseline, missing)
+
+    overlapping = json.loads(json.dumps(adaptive))
+    overlapping["route_reuse"]["native_routing_units"][1]["analysis_bins"] = [1, 2]
+    with pytest.raises(RuntimeError, match="overlaps analysis bins"):
+        route_layer_metrics("q-bad", "development", manifest, baseline, overlapping)
+
+    incomplete = json.loads(json.dumps(adaptive))
+    incomplete["route_reuse"]["native_routing_units"][3]["analysis_bins"] = [6]
+    with pytest.raises(RuntimeError, match="cover analysis bins 0..7"):
+        route_layer_metrics("q-bad", "development", manifest, baseline, incomplete)
+
+
+def test_validate_condition_artifacts_requires_shared_execution_and_manifest_commits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    baseline_dir, dirs, dev_manifest, heldout_manifest = _fixtures(tmp_path)
+    _stub_plots(monkeypatch)
+    random_records = {}
+    for index, line in enumerate((dirs["dev"]["random"] / "records.jsonl").read_text().splitlines()):
+        record = json.loads(line)
+        artifact_path = dirs["dev"]["random"] / record["artifact"]
+        artifact = json.loads(artifact_path.read_text())
+        artifact["run_config"]["git_commit"] = f"exec-different-{index}"
+        artifact_path.write_text(json.dumps(artifact))
+
+    with pytest.raises(RuntimeError, match="share exactly one execution commit"):
+        analyze(
+            baseline_dir=baseline_dir,
+            dev_condition_dirs=dirs["dev"],
+            heldout_condition_dirs=dirs["heldout"],
+            dev_manifest=dev_manifest,
+            heldout_manifest=heldout_manifest,
+            output_dir=tmp_path / "analysis",
+            bootstrap_samples=5,
+            seed=7,
+        )
+
+    # Restore execution commits, then break route-manifest commit sharing.
+    for line in (dirs["dev"]["random"] / "records.jsonl").read_text().splitlines():
+        record = json.loads(line)
+        artifact_path = dirs["dev"]["random"] / record["artifact"]
+        artifact = json.loads(artifact_path.read_text())
+        artifact["run_config"]["git_commit"] = "exec123"
+        artifact["route_reuse"]["git_commit"] = "manifest-other"
+        artifact_path.write_text(json.dumps(artifact))
+
+    with pytest.raises(RuntimeError, match="share exactly one route-manifest commit"):
+        analyze(
+            baseline_dir=baseline_dir,
+            dev_condition_dirs=dirs["dev"],
+            heldout_condition_dirs=dirs["heldout"],
+            dev_manifest=dev_manifest,
+            heldout_manifest=heldout_manifest,
+            output_dir=tmp_path / "analysis2",
+            bootstrap_samples=5,
+            seed=7,
+        )

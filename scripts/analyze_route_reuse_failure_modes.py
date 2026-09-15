@@ -101,27 +101,55 @@ def spearman_correlation(left: Sequence[float], right: Sequence[float]) -> float
     rx = np.asarray(right, dtype=np.float64)
     if lx.size != rx.size:
         raise ValueError("Spearman inputs must have matching lengths.")
-    lrank = np.argsort(np.argsort(lx, kind="mergesort"), kind="mergesort").astype(np.float64)
-    rrank = np.argsort(np.argsort(rx, kind="mergesort"), kind="mergesort").astype(np.float64)
+    lrank = average_ranks(lx)
+    rrank = average_ranks(rx)
     if np.std(lrank) == 0 or np.std(rrank) == 0:
         return 0.0
     return float(np.corrcoef(lrank, rrank)[0, 1])
 
 
-def unit_analysis_bins(route: dict[str, Any], layer_route: dict[str, Any], unit_id: int) -> set[int]:
+def average_ranks(values: Sequence[float]) -> np.ndarray:
+    array = np.asarray(values, dtype=np.float64)
+    order = np.argsort(array, kind="mergesort")
+    ranks = np.empty(len(array), dtype=np.float64)
+    sorted_values = array[order]
+    start = 0
+    while start < len(array):
+        end = start + 1
+        while end < len(array) and sorted_values[end] == sorted_values[start]:
+            end += 1
+        average_rank = (start + end - 1) / 2.0
+        ranks[order[start:end]] = average_rank
+        start = end
+    return ranks
+
+
+def validate_native_routing_units(route: dict[str, Any]) -> dict[int, set[int]]:
+    unit_bins: dict[int, set[int]] = {}
     for unit in route.get("native_routing_units") or []:
-        if int(unit.get("unit_id")) != int(unit_id):
-            continue
-        if unit.get("analysis_bins") is not None:
-            return {int(item) for item in unit["analysis_bins"]}
-    selected_units = {int(item) for item in layer_route.get("selected_native_unit_ids", ())}
-    omitted_units = {int(item) for item in layer_route.get("omitted_native_unit_ids", ())}
-    if unit_id in selected_units and layer_route.get("selected_analysis_bins") is not None:
-        return {int(item) for item in layer_route["selected_analysis_bins"] if 0 <= int(item) <= 7}
-    if unit_id in omitted_units and layer_route.get("omitted_analysis_bins") is not None:
-        return {int(item) for item in layer_route["omitted_analysis_bins"] if 0 <= int(item) <= 7}
-    # Qwen route replay uses four native temporal cells over eight analysis bins.
-    return {2 * int(unit_id), 2 * int(unit_id) + 1}
+        unit_id = int(unit.get("unit_id"))
+        if "analysis_bins" not in unit:
+            raise RuntimeError(f"Native routing unit {unit_id} is missing explicit analysis_bins.")
+        bins = {int(item) for item in unit.get("analysis_bins") or []}
+        if not bins:
+            raise RuntimeError(f"Native routing unit {unit_id} has empty analysis_bins.")
+        unit_bins[unit_id] = bins
+    if set(unit_bins) != {0, 1, 2, 3}:
+        raise RuntimeError(f"Native routing unit IDs must be exactly 0,1,2,3; got {sorted(unit_bins)}.")
+    seen: set[int] = set()
+    for unit_id, bins in unit_bins.items():
+        overlap = seen & bins
+        if overlap:
+            raise RuntimeError(f"Native routing unit {unit_id} overlaps analysis bins {sorted(overlap)}.")
+        seen |= bins
+    if seen != set(range(8)):
+        raise RuntimeError(f"Native routing units must cover analysis bins 0..7 exactly; got {sorted(seen)}.")
+    return unit_bins
+
+
+def unit_analysis_bins(route: dict[str, Any], _layer_route: dict[str, Any], unit_id: int) -> set[int]:
+    unit_bins = validate_native_routing_units(route)
+    return set(unit_bins[int(unit_id)])
 
 
 def selected_analysis_bins(route: dict[str, Any], layer_route: dict[str, Any]) -> tuple[int, ...]:
@@ -277,6 +305,10 @@ def validate_condition_artifacts(
                 manifest_commits.add(str(route["git_commit"]))
             if not artifact.get("intervention_answer_choice_scores"):
                 raise RuntimeError(f"{cohort}/{qid}/{label}: missing intervention_answer_choice_scores.")
+    if len(execution_commits) != 1:
+        raise RuntimeError(f"{cohort}: adaptive, random, and uniform artifacts must share exactly one execution commit; got {sorted(execution_commits)}")
+    if manifest_commits and len(manifest_commits) != 1:
+        raise RuntimeError(f"{cohort}: adaptive, random, and uniform artifacts must share exactly one route-manifest commit; got {sorted(manifest_commits)}")
     return {
         "num_examples": len(ids),
         "question_ids": sorted(ids),
@@ -508,16 +540,24 @@ def same_nonzero_direction(dev_value: float | None, heldout_value: float | None)
 
 
 def mechanism_supported(summary: dict[str, Any], hypothesis: str, expected_direction: int) -> bool:
-    dev = summary["cohorts"].get("development", {}).get("hypotheses", {}).get("adaptive_minus_dense_correct_answer_log_probability", {}).get(hypothesis, {})
-    heldout = summary["cohorts"].get("heldout", {}).get("hypotheses", {}).get("adaptive_minus_dense_correct_answer_log_probability", {}).get(hypothesis, {})
-    dev_value = dev.get("spearman")
-    heldout_value = heldout.get("spearman")
-    ci = heldout.get("spearman_ci95") or [None, None]
+    dev_logp = summary["cohorts"].get("development", {}).get("hypotheses", {}).get("adaptive_minus_dense_correct_answer_log_probability", {}).get(hypothesis, {})
+    heldout_logp = summary["cohorts"].get("heldout", {}).get("hypotheses", {}).get("adaptive_minus_dense_correct_answer_log_probability", {}).get(hypothesis, {})
+    dev_margin = summary["cohorts"].get("development", {}).get("hypotheses", {}).get("adaptive_minus_dense_answer_margin", {}).get(hypothesis, {})
+    heldout_margin = summary["cohorts"].get("heldout", {}).get("hypotheses", {}).get("adaptive_minus_dense_answer_margin", {}).get(hypothesis, {})
+    dev_value = dev_logp.get("spearman")
+    heldout_value = heldout_logp.get("spearman")
+    ci = heldout_logp.get("spearman_ci95") or [None, None]
     if not same_nonzero_direction(dev_value, heldout_value):
         return False
     if expected_direction < 0 and not (heldout_value is not None and heldout_value < 0):
         return False
     if expected_direction > 0 and not (heldout_value is not None and heldout_value > 0):
+        return False
+    dev_margin_value = dev_margin.get("spearman")
+    heldout_margin_value = heldout_margin.get("spearman")
+    if expected_direction < 0 and not (dev_margin_value is not None and heldout_margin_value is not None and dev_margin_value < 0 and heldout_margin_value < 0):
+        return False
+    if expected_direction > 0 and not (dev_margin_value is not None and heldout_margin_value is not None and dev_margin_value > 0 and heldout_margin_value > 0):
         return False
     return ci_excludes_zero(ci)
 
@@ -529,9 +569,14 @@ def choose_recommendation(summary: dict[str, Any]) -> str:
         h4.get("num_stable_examples", 0) >= 10
         and h4.get("mean_logp_delta") is not None
         and dev_h4.get("mean_logp_delta") is not None
+        and h4.get("mean_margin_delta") is not None
+        and dev_h4.get("mean_margin_delta") is not None
         and h4["mean_logp_delta"] < 0
         and dev_h4["mean_logp_delta"] < 0
+        and h4["mean_margin_delta"] < 0
+        and dev_h4["mean_margin_delta"] < 0
         and ci_excludes_zero(h4.get("logp_ci95") or [None, None])
+        and ci_excludes_zero(h4.get("margin_ci95") or [None, None])
     ):
         return "compression instead of deletion"
     if mechanism_supported(summary, "H2_temporal_coverage", expected_direction=1):
