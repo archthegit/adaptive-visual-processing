@@ -82,8 +82,9 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _budget_signature(route: dict[str, Any]) -> dict[str, Any]:
     return {
-        "frames": route["temporal_frames_preserved"],
-        "per_frame": route["per_frame_retained_visual_tokens"],
+        "sampled_input_frames": route["sampled_input_frames"],
+        "native_temporal_cells": route["native_temporal_cells_preserved"],
+        "per_native_cell": route["per_native_temporal_cell_retained_visual_tokens"],
         "retained_fraction": route["mean_actual_retained_visual_token_fraction"],
         "routed_layers": sorted(int(layer) for layer in route["layer_routes"]),
     }
@@ -113,7 +114,8 @@ def manifest_rows(
             seed=seed,
             git_commit=git_commit,
         )
-        validate_spatial_route_spec(route)
+        dense_visual_tokens = (artifact.get("token_layout") or {}).get("visual_token_indices")
+        validate_spatial_route_spec(route, baseline_visual_token_indices=dense_visual_tokens)
         row = dict(record)
         row["condition"] = condition
         row["model_backend"] = "qwen"

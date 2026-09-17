@@ -65,8 +65,17 @@ def validate_inputs(
     dev_ids = set(dev_records)
     if not dev_ids <= set(baseline):
         raise RuntimeError(f"Baseline missing dev IDs: {sorted(dev_ids - set(baseline))}")
+    dense_commits = {
+        str((baseline[qid].get("run_config") or {}).get("git_commit"))
+        for qid in dev_ids
+        if (baseline[qid].get("run_config") or {}).get("git_commit")
+    }
+    if len(dense_commits) != 1:
+        raise RuntimeError(f"Dense spatial baseline artifacts must come from one commit, got {sorted(dense_commits)}")
     validation: dict[str, Any] = {"conditions": {}}
     reference_ids: set[str] | None = None
+    all_execution_commits = set()
+    all_route_commits = set()
     for label, artifacts in conditions.items():
         qids = set(artifacts)
         if qids != dev_ids:
@@ -86,15 +95,20 @@ def validate_inputs(
                 raise RuntimeError(f"{qid}/{label}: model/checkpoint differs from dense baseline.")
             if sampling_signature(artifact) != sampling_signature(base):
                 raise RuntimeError(f"{qid}/{label}: prompt/frame/sampling signature differs from dense baseline.")
+            if (artifact.get("token_layout") or {}) != (base.get("token_layout") or {}):
+                raise RuntimeError(f"{qid}/{label}: token layout differs from dense baseline.")
+            if (artifact.get("metadata") or {}).get("resolution") != (base.get("metadata") or {}).get("resolution"):
+                raise RuntimeError(f"{qid}/{label}: resolution differs from dense baseline.")
             route = spatial_route_summary(artifact)
             if route.get("condition") != CONDITIONS[label]:
                 raise RuntimeError(f"{qid}/{label}: expected condition {CONDITIONS[label]}, got {route.get('condition')}.")
-            validate_spatial_route_spec(route)
+            validate_spatial_route_spec(route, baseline_visual_token_indices=(base.get("token_layout") or {}).get("visual_token_indices"))
             budget_signatures.add(
                 json.dumps(
                     {
-                        "frames": route.get("temporal_frames_preserved"),
-                        "per_frame": route.get("per_frame_retained_visual_tokens"),
+                        "sampled_input_frames": route.get("sampled_input_frames"),
+                        "native_temporal_cells": route.get("native_temporal_cells_preserved"),
+                        "per_native_cell": route.get("per_native_temporal_cell_retained_visual_tokens"),
                         "routed_layers": sorted(int(layer) for layer in route.get("layer_routes", {})),
                         "retained": route.get("mean_actual_retained_visual_token_fraction"),
                     },
@@ -111,6 +125,10 @@ def validate_inputs(
                 raise RuntimeError(f"{qid}/{label}: missing intervention_answer_choice_scores.")
         if len(commits) != 1:
             raise RuntimeError(f"{label}: expected one execution commit, got {sorted(commits)}")
+        if len(route_commits) != 1:
+            raise RuntimeError(f"{label}: expected one route-manifest commit, got {sorted(route_commits)}")
+        all_execution_commits.update(commits)
+        all_route_commits.update(route_commits)
         if len(budget_signatures) != len(dev_ids):
             validation["conditions"].setdefault(label, {})["budget_varies_by_example"] = True
         validation["conditions"][label] = {
@@ -121,6 +139,14 @@ def validate_inputs(
             "route_manifest_commits": sorted(route_commits),
             "question_ids": sorted(qids),
         }
+    if len(all_execution_commits) != 1:
+        raise RuntimeError(f"Adaptive/random/uniform must share one execution commit, got {sorted(all_execution_commits)}")
+    if len(all_route_commits) != 1:
+        raise RuntimeError(f"Adaptive/random/uniform must share one route-manifest commit, got {sorted(all_route_commits)}")
+    if all_execution_commits != all_route_commits:
+        raise RuntimeError(
+            f"Route-manifest commit must equal execution commit; execution={sorted(all_execution_commits)}, route={sorted(all_route_commits)}"
+        )
     for qid in sorted(dev_ids):
         signatures = []
         for label, artifacts in conditions.items():
@@ -128,8 +154,9 @@ def validate_inputs(
             signatures.append(
                 json.dumps(
                     {
-                        "frames": route.get("temporal_frames_preserved"),
-                        "per_frame": route.get("per_frame_retained_visual_tokens"),
+                        "sampled_input_frames": route.get("sampled_input_frames"),
+                        "native_temporal_cells": route.get("native_temporal_cells_preserved"),
+                        "per_native_cell": route.get("per_native_temporal_cell_retained_visual_tokens"),
                         "routed_layers": sorted(int(layer) for layer in route.get("layer_routes", {})),
                         "retained": route.get("mean_actual_retained_visual_token_fraction"),
                     },
@@ -321,7 +348,7 @@ def write_report(path: Path, summary: dict[str, Any]) -> None:
         "",
         "This is a 15-example development kill test. Routes are replayed from dense baseline artifacts; this does not establish online routing or measured latency/FLOP savings.",
         "",
-        "The gate tests whether dense decoder question-to-visual attention identifies spatial visual tokens that preserve answer quality better than equal-budget random and uniform spatial controls while preserving every temporal frame.",
+        "The gate tests whether dense decoder question-to-visual attention identifies spatial visual tokens that preserve answer quality better than equal-budget random and uniform spatial controls while preserving all sampled inputs and all Qwen native temporal cells.",
     ]
     path.write_text("\n".join(lines) + "\n")
 

@@ -678,6 +678,7 @@ def run_qwen_relevance_example(
             "qwen_reduced_sdpa_question_visual_token_rows"
             if attention_extraction == "reduced_sdpa"
             else "returned_full_attention_question_visual_token_rows",
+            frame_batches=frame_batches,
         )
     if profiler is not None and decoder_tensor_shapes:
         profiler.add_tensor_shapes("decoder_question_visual_reduction", decoder_tensor_shapes)
