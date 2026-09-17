@@ -9,6 +9,11 @@ from typing import Any, Mapping, Sequence
 
 
 ANCHOR_LAYERS = (8, 12, 16, 20, 24, 28)
+ANCHOR_LAYERS_BY_GAP = {
+    2: (8, 10, 12, 14, 16, 18, 20, 22, 24, 26),
+    3: (8, 11, 14, 17, 20, 23, 26),
+    4: ANCHOR_LAYERS,
+}
 ROUTE_REUSE_SEED = 20260913
 NUM_TEMPORAL_BINS = 8
 RETENTION_RATIO = 0.5
@@ -38,14 +43,27 @@ def normalize_bins(values: Sequence[int]) -> tuple[int, ...]:
     return bins
 
 
-def routed_layers_for_anchor(anchor_layer: int, num_layers: int) -> tuple[int, ...]:
+def route_gap_for_condition(condition: str) -> int:
+    if "_gap2_" in condition:
+        return 2
+    if "_gap3_" in condition:
+        return 3
+    if "_gap4_" in condition:
+        return 4
+    raise ValueError(f"Unsupported route-reuse condition: {condition}")
+
+
+def routed_layers_for_anchor(anchor_layer: int, num_layers: int, gap: int = 4) -> tuple[int, ...]:
     if anchor_layer >= num_layers:
         return tuple()
-    return tuple(layer for layer in range(anchor_layer + 1, min(anchor_layer + 4, num_layers)))
+    return tuple(layer for layer in range(anchor_layer + 1, min(anchor_layer + gap, num_layers)))
 
 
-def route_anchor_layers(num_layers: int) -> tuple[int, ...]:
-    return tuple(anchor for anchor in ANCHOR_LAYERS if anchor < num_layers and routed_layers_for_anchor(anchor, num_layers))
+def route_anchor_layers(num_layers: int, gap: int = 4) -> tuple[int, ...]:
+    anchors = ANCHOR_LAYERS_BY_GAP.get(gap)
+    if anchors is None:
+        raise ValueError(f"Unsupported route refresh gap: {gap}")
+    return tuple(anchor for anchor in anchors if anchor < num_layers and routed_layers_for_anchor(anchor, num_layers, gap))
 
 
 def _token_layout(artifact: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -176,7 +194,7 @@ def _condition_units(
     seed: int,
     anchor: int,
 ) -> tuple[int, ...]:
-    if condition == "route_reuse_gap4_top50":
+    if condition in {"route_reuse_gap2_top50", "route_reuse_gap3_top50", "route_reuse_gap4_top50"}:
         return _select_top_units(distribution, units)
     if condition == "uniform_reuse_gap4_top50":
         return _select_uniform_units(units)
@@ -245,7 +263,8 @@ def route_spec_from_baseline_artifact(
     question_id = str(artifact["question_id"])
     units = native_routing_units_from_artifact(artifact, model)
     total_visual_tokens = sum(int(unit["num_visual_tokens"]) for unit in units)
-    anchors = route_anchor_layers(num_layers)
+    gap = route_gap_for_condition(condition)
+    anchors = route_anchor_layers(num_layers, gap)
     anchor_routes = {}
     layer_routes = {}
     for anchor in anchors:
@@ -260,7 +279,7 @@ def route_spec_from_baseline_artifact(
         )
         route = _route_for_units(selected_units, units, anchor, total_visual_tokens)
         anchor_routes[str(anchor)] = route
-        for layer in routed_layers_for_anchor(anchor, num_layers):
+        for layer in routed_layers_for_anchor(anchor, num_layers, gap):
             layer_routes[str(layer)] = dict(route)
     dense_layers = sorted(set(range(0, min(9, num_layers))) | set(anchors))
     retained_fractions = [route["actual_retained_visual_token_fraction"] for route in anchor_routes.values()]
@@ -272,6 +291,7 @@ def route_spec_from_baseline_artifact(
         "routing_unit_type": "qwen_native_temporal_cell" if model == "qwen" else "vila_frame_bin",
         "native_routing_units": units,
         "retention_ratio": RETENTION_RATIO,
+        "refresh_gap": gap,
         "retained_native_units": _retained_unit_count(units),
         "dense_prefix_through_layer": 8,
         "anchor_layers": list(anchors),

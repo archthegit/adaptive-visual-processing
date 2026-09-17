@@ -123,6 +123,55 @@ def test_qwen_and_vila_layer_counts_use_frozen_anchor_schedule():
     assert sorted(int(layer) for layer in vila_spec["layer_routes"] if int(layer) >= 29) == [29, 30, 31]
 
 
+def test_qwen_gap2_and_gap3_anchor_schedules_are_exact():
+    gap2 = route_spec_from_baseline_artifact(
+        _qwen_artifact(layers=28),
+        model="qwen",
+        condition="route_reuse_gap2_top50",
+        baseline_artifact="gap2.json",
+        seed=7,
+        git_commit="abc",
+    )
+    gap3 = route_spec_from_baseline_artifact(
+        _qwen_artifact(layers=28),
+        model="qwen",
+        condition="route_reuse_gap3_top50",
+        baseline_artifact="gap3.json",
+        seed=7,
+        git_commit="abc",
+    )
+
+    assert gap2["anchor_layers"] == [8, 10, 12, 14, 16, 18, 20, 22, 24, 26]
+    assert sorted(int(layer) for layer in gap2["layer_routes"]) == [9, 11, 13, 15, 17, 19, 21, 23, 25, 27]
+    assert all(route["source_anchor_layer"] == int(layer) - 1 for layer, route in gap2["layer_routes"].items())
+    assert gap3["anchor_layers"] == [8, 11, 14, 17, 20, 23, 26]
+    assert sorted(int(layer) for layer in gap3["layer_routes"]) == [9, 10, 12, 13, 15, 16, 18, 19, 21, 22, 24, 25, 27]
+    assert gap3["layer_routes"]["27"]["source_anchor_layer"] == 26
+
+
+def test_gap2_gap3_gap4_differ_only_in_refresh_frequency():
+    specs = {
+        condition: route_spec_from_baseline_artifact(
+            _qwen_artifact(layers=28),
+            model="qwen",
+            condition=condition,
+            baseline_artifact=f"{condition}.json",
+            seed=7,
+            git_commit="abc",
+        )
+        for condition in ("route_reuse_gap2_top50", "route_reuse_gap3_top50", "route_reuse_gap4_top50")
+    }
+
+    for spec in specs.values():
+        assert spec["retention_ratio"] == 0.5
+        assert spec["retained_native_units"] == 2
+        assert spec["routing_unit_type"] == "qwen_native_temporal_cell"
+        assert {route["actual_retained_visual_token_fraction"] for route in spec["anchor_routes"].values()} == {0.5}
+    assert specs["route_reuse_gap2_top50"]["refresh_gap"] == 2
+    assert specs["route_reuse_gap3_top50"]["refresh_gap"] == 3
+    assert specs["route_reuse_gap4_top50"]["refresh_gap"] == 4
+
+
 def test_routed_layers_use_preceding_anchor_selection_and_dense_layers_are_absent():
     spec = route_spec_from_baseline_artifact(
         _vila_artifact(layers=32),

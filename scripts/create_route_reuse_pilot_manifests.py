@@ -20,6 +20,13 @@ from src.io import write_json_atomic
 
 
 CONDITIONS = (
+    "route_reuse_gap2_top50",
+    "route_reuse_gap3_top50",
+    "route_reuse_gap4_top50",
+    "random_reuse_gap4_top50",
+    "uniform_reuse_gap4_top50",
+)
+DEFAULT_CONDITIONS = (
     "route_reuse_gap4_top50",
     "random_reuse_gap4_top50",
     "uniform_reuse_gap4_top50",
@@ -34,6 +41,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--seed", type=int, default=ROUTE_REUSE_SEED)
     parser.add_argument("--expected-dev-examples", type=int, default=15)
+    parser.add_argument(
+        "--conditions",
+        nargs="+",
+        default=list(DEFAULT_CONDITIONS),
+        choices=CONDITIONS,
+        help="Route-replay conditions to generate. Defaults to the original gap-4 pilot conditions.",
+    )
     return parser.parse_args()
 
 
@@ -132,7 +146,7 @@ def main() -> None:
     }
     for model, baseline_dir in (("qwen", args.qwen_dir), ("vila", args.vila_dir)):
         rows_by_condition = {}
-        for condition in CONDITIONS:
+        for condition in args.conditions:
             rows_by_condition[condition] = manifest_rows_for_model(
                 model=model,
                 baseline_dir=baseline_dir,
@@ -147,7 +161,7 @@ def main() -> None:
                     next(row for row in rows_by_condition[condition] if str(row["question_id"]) == question_id)[
                         "route_reuse"
                     ]
-                    for condition in CONDITIONS
+                    for condition in args.conditions
                 ]
             )
         for condition, rows in rows_by_condition.items():
