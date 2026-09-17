@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.analyze_route_reuse_pilot import (  # noqa: E402
     answer_metric,
+    artifact_checkpoint,
+    artifact_model_id,
     category_for,
     dev_manifest_by_id,
     load_latest_complete_artifacts,
@@ -33,6 +35,23 @@ CONDITIONS = {
     "gap4": "route_reuse_gap4_top50",
 }
 EXPECTED_DEV_EXAMPLES = 15
+EXPECTED_SCHEDULES = {
+    "gap2": {
+        "refresh_gap": 2,
+        "anchor_layers": (8, 10, 12, 14, 16, 18, 20, 22, 24, 26),
+        "routed_layers": (9, 11, 13, 15, 17, 19, 21, 23, 25, 27),
+    },
+    "gap3": {
+        "refresh_gap": 3,
+        "anchor_layers": (8, 11, 14, 17, 20, 23, 26),
+        "routed_layers": (9, 10, 12, 13, 15, 16, 18, 19, 21, 22, 24, 25, 27),
+    },
+    "gap4": {
+        "refresh_gap": 4,
+        "anchor_layers": (8, 12, 16, 20, 24),
+        "routed_layers": (9, 10, 11, 13, 14, 15, 17, 18, 19, 21, 22, 23, 25, 26, 27),
+    },
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,27 +67,84 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def validate_route_spec(route: dict[str, Any], condition: str) -> None:
+def _source_anchor_for(layer: int, anchors: Sequence[int]) -> int:
+    candidates = [anchor for anchor in anchors if anchor < layer]
+    if not candidates:
+        raise RuntimeError(f"No source anchor exists for routed layer {layer}.")
+    return max(candidates)
+
+
+def _route_schedule_signature(route: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "anchor_layers": [int(item) for item in route.get("anchor_layers", ())],
+        "routed_layers": sorted(int(item) for item in (route.get("layer_routes") or {})),
+        "source_anchor_by_layer": {
+            str(int(layer)): int(layer_route.get("source_anchor_layer"))
+            for layer, layer_route in sorted((route.get("layer_routes") or {}).items(), key=lambda item: int(item[0]))
+        },
+    }
+
+
+def validate_route_spec(route: dict[str, Any], label: str) -> dict[str, Any]:
+    condition = CONDITIONS[label]
+    expected = EXPECTED_SCHEDULES[label]
     if route.get("type") != "baseline_derived_causal_route_replay":
         raise RuntimeError(f"{condition}: route spec is not baseline-derived replay.")
     if route.get("condition") != condition:
         raise RuntimeError(f"Expected {condition}, got {route.get('condition')}.")
+    if route.get("model") not in (None, "qwen"):
+        raise RuntimeError(f"{condition}: expected Qwen route model, got {route.get('model')}.")
+    if route.get("routing_unit_type") not in (None, "qwen_native_temporal_cell"):
+        raise RuntimeError(f"{condition}: expected Qwen native temporal routing units.")
+    if "refresh_gap" in route and int(route["refresh_gap"]) != expected["refresh_gap"]:
+        raise RuntimeError(f"{condition}: expected refresh gap {expected['refresh_gap']}, got {route.get('refresh_gap')}.")
     if int(route.get("retained_native_units", -1)) != 2:
         raise RuntimeError(f"{condition}: expected two retained native units.")
     units = route.get("native_routing_units") or []
     if len(units) != 4:
         raise RuntimeError(f"{condition}: expected four native temporal units.")
+    unit_ids = {int(unit.get("unit_id")) for unit in units}
+    if unit_ids != {0, 1, 2, 3}:
+        raise RuntimeError(f"{condition}: native unit IDs must be exactly 0,1,2,3.")
+    all_visual_tokens = {
+        int(token)
+        for unit in units
+        for token in unit.get("visual_token_indices", ())
+    }
+    if not all_visual_tokens:
+        raise RuntimeError(f"{condition}: native units contain no visual tokens.")
+    anchor_layers = tuple(int(item) for item in route.get("anchor_layers", ()))
+    if anchor_layers != expected["anchor_layers"]:
+        raise RuntimeError(f"{condition}: expected anchors {expected['anchor_layers']}, got {anchor_layers}.")
+    routed_layers = tuple(sorted(int(layer) for layer in (route.get("layer_routes") or {})))
+    if routed_layers != expected["routed_layers"]:
+        raise RuntimeError(f"{condition}: expected routed layers {expected['routed_layers']}, got {routed_layers}.")
     for layer, layer_route in (route.get("layer_routes") or {}).items():
+        layer_int = int(layer)
+        expected_anchor = _source_anchor_for(layer_int, anchor_layers)
+        if int(layer_route.get("source_anchor_layer", -1)) != expected_anchor:
+            raise RuntimeError(f"{condition}: routed layer {layer} has wrong source anchor.")
+        if layer_int in anchor_layers:
+            raise RuntimeError(f"{condition}: anchor layer {layer} must remain dense.")
         selected = set(int(item) for item in layer_route.get("selected_native_unit_ids", ()))
         omitted = set(int(item) for item in layer_route.get("omitted_native_unit_ids", ()))
-        if selected & omitted or selected | omitted != {0, 1, 2, 3}:
+        if len(selected) != 2 or len(omitted) != 2:
+            raise RuntimeError(f"{condition}: routed layer {layer} must retain exactly two of four native cells.")
+        if selected & omitted or selected | omitted != unit_ids:
             raise RuntimeError(f"{condition}: selected/omitted native units do not partition layer {layer}.")
         allowed = set(int(item) for item in layer_route.get("allowed_visual_token_indices", ()))
         blocked = set(int(item) for item in layer_route.get("blocked_visual_token_indices", ()))
         if allowed & blocked:
             raise RuntimeError(f"{condition}: allowed/blocked visual tokens overlap at layer {layer}.")
+        if allowed | blocked != all_visual_tokens:
+            raise RuntimeError(f"{condition}: allowed/blocked visual tokens do not cover all visual tokens at layer {layer}.")
+        if "num_allowed_visual_tokens" in layer_route and int(layer_route["num_allowed_visual_tokens"]) != len(allowed):
+            raise RuntimeError(f"{condition}: recorded allowed-token count is wrong at layer {layer}.")
+        if "num_blocked_visual_tokens" in layer_route and int(layer_route["num_blocked_visual_tokens"]) != len(blocked):
+            raise RuntimeError(f"{condition}: recorded blocked-token count is wrong at layer {layer}.")
         if abs(float(layer_route.get("actual_retained_visual_token_fraction", -1)) - 0.5) > 1e-9:
             raise RuntimeError(f"{condition}: routed layer {layer} does not retain 50% of visual tokens.")
+    return _route_schedule_signature(route)
 
 
 def theoretical_edge_savings(route: dict[str, Any], num_decoder_layers: int = 28) -> dict[str, Any]:
@@ -102,12 +178,20 @@ def validate_inputs(
             raise RuntimeError(f"{label}: expected exactly dev IDs; extra={sorted(qids - dev_ids)}, missing={sorted(dev_ids - qids)}")
         commits = set()
         route_commits = set()
+        schedule_signatures = set()
         for qid, artifact in artifacts.items():
             base = baseline[qid]
+            if artifact.get("model_backend") != base.get("model_backend") or artifact.get("model_backend") != "qwen":
+                raise RuntimeError(f"{qid}/{label}: model backend differs from dense Qwen baseline.")
+            if artifact_model_id(artifact) != artifact_model_id(base):
+                raise RuntimeError(f"{qid}/{label}: model differs from dense baseline.")
+            if artifact_checkpoint(artifact) != artifact_checkpoint(base):
+                raise RuntimeError(f"{qid}/{label}: checkpoint differs from dense baseline.")
             if sampling_signature(artifact) != sampling_signature(base):
                 raise RuntimeError(f"{qid}/{label}: prompt/frame/sampling signature differs from dense baseline.")
             route = route_summary(artifact)
-            validate_route_spec(route, CONDITIONS[label])
+            schedule = validate_route_spec(route, label)
+            schedule_signatures.add(json.dumps(schedule, sort_keys=True))
             commit = (artifact.get("run_config") or {}).get("git_commit")
             if not commit:
                 raise RuntimeError(f"{qid}/{label}: missing execution git commit.")
@@ -118,11 +202,15 @@ def validate_inputs(
                 raise RuntimeError(f"{qid}/{label}: missing intervention_answer_choice_scores.")
         if len(commits) != 1:
             raise RuntimeError(f"{label}: expected one execution git commit, got {sorted(commits)}")
+        if len(schedule_signatures) != 1:
+            raise RuntimeError(f"{label}: expected one identical route schedule across artifacts.")
         validation["conditions"][label] = {
             "num_examples": len(artifacts),
             "condition": CONDITIONS[label],
             "execution_commits": sorted(commits),
+            "execution_commit_note": "Validated per condition. Frozen gap4 artifacts may have an older execution commit than newer gap2/gap3 runs.",
             "route_manifest_commits": sorted(route_commits),
+            "schedule": json.loads(next(iter(schedule_signatures))),
             "theoretical_edge_savings": theoretical_edge_savings(route_summary(next(iter(artifacts.values())))),
         }
     return validation
@@ -220,11 +308,15 @@ def summarize(rows: Sequence[dict[str, Any]], samples: int, seed: int) -> dict[s
     condition_summary = {}
     for index, label in enumerate(("gap2", "gap3", "gap4")):
         subset = [row for row in rows if row["condition_label"] == label]
+        dense_accuracy = sum(int(row["dense_correct"]) for row in subset) / len(subset)
+        routed_accuracy = sum(int(row["routed_correct"]) for row in subset) / len(subset)
         condition_summary[label] = {
             "num_examples": len(subset),
             "log_probability_delta": clustered_bootstrap_ci(subset, "delta_correct_answer_log_probability", samples, seed + index * 1000),
             "answer_margin_delta": clustered_bootstrap_ci(subset, "delta_answer_margin", samples, seed + 100 + index * 1000),
-            "accuracy": sum(int(row["routed_correct"]) for row in subset) / len(subset),
+            "dense_accuracy": dense_accuracy,
+            "routed_accuracy": routed_accuracy,
+            "accuracy": routed_accuracy,
             "prediction_flip_rate": sum(int(row["prediction_changed"]) for row in subset) / len(subset),
         }
     paired = {}
@@ -247,11 +339,57 @@ def summarize(rows: Sequence[dict[str, Any]], samples: int, seed: int) -> dict[s
         label: condition_summary[label]["log_probability_delta"]["mean"]
         for label in ("gap2", "gap3", "gap4")
     }
-    return {
+    output = {
         "conditions": condition_summary,
         "paired_differences": paired,
-        "preregistered_ordering_gap2_gt_gap3_gt_gap4": bool(means["gap2"] > means["gap3"] > means["gap4"]),
         "ordering_means": means,
+    }
+    output["development_pilot_gate"] = development_pilot_gate(output)
+    return output
+
+
+def development_pilot_gate(metrics: dict[str, Any]) -> dict[str, Any]:
+    conditions = metrics["conditions"]
+    paired = metrics["paired_differences"]
+    means = {
+        label: float(conditions[label]["log_probability_delta"]["mean"])
+        for label in ("gap2", "gap3", "gap4")
+    }
+    gap2_minus_gap4_logp = float(paired["gap2_minus_gap4"]["log_probability_delta"]["mean"])
+    gap2_minus_gap4_margin = float(paired["gap2_minus_gap4"]["answer_margin_delta"]["mean"])
+    gap2_accuracy = float(conditions["gap2"]["routed_accuracy"])
+    gap4_accuracy = float(conditions["gap4"]["routed_accuracy"])
+    promising = (
+        means["gap2"] > means["gap3"] > means["gap4"]
+        and gap2_minus_gap4_logp > 0
+        and gap2_minus_gap4_margin > 0
+        and gap2_accuracy >= gap4_accuracy
+    )
+    reject = gap2_minus_gap4_logp <= 0 and gap2_minus_gap4_margin <= 0
+    if promising:
+        status = "PROMISING"
+    elif reject:
+        status = "REJECT"
+    else:
+        status = "INCONCLUSIVE"
+    return {
+        "status": status,
+        "scope": "development kill-test only; this is not confirmatory significance.",
+        "rules": {
+            "promising": (
+                "mean logp gap2 > gap3 > gap4, paired gap2-minus-gap4 mean logp > 0, "
+                "paired gap2-minus-gap4 mean answer margin > 0, and gap2 routed accuracy is not below gap4."
+            ),
+            "reject": "paired gap2-minus-gap4 mean logp <= 0 and paired gap2-minus-gap4 mean answer margin <= 0.",
+            "otherwise": "INCONCLUSIVE",
+        },
+        "inputs": {
+            "mean_log_probability_delta": means,
+            "gap2_minus_gap4_mean_log_probability_delta": gap2_minus_gap4_logp,
+            "gap2_minus_gap4_mean_answer_margin_delta": gap2_minus_gap4_margin,
+            "gap2_routed_accuracy": gap2_accuracy,
+            "gap4_routed_accuracy": gap4_accuracy,
+        },
     }
 
 
@@ -307,7 +445,7 @@ def main() -> None:
         bootstrap_samples=args.bootstrap_samples,
         seed=args.seed,
     )
-    print(json.dumps({"output_dir": args.output_dir, "ordering": summary["metrics"]["preregistered_ordering_gap2_gt_gap3_gt_gap4"]}, indent=2))
+    print(json.dumps({"output_dir": args.output_dir, "gate": summary["metrics"]["development_pilot_gate"]}, indent=2))
 
 
 if __name__ == "__main__":
