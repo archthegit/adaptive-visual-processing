@@ -226,6 +226,15 @@ def route_reuse_spec(record: dict[str, Any]) -> dict[str, Any] | None:
     return value
 
 
+def spatial_route_spec(record: dict[str, Any]) -> dict[str, Any] | None:
+    value = record.get("spatial_route")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("spatial_route manifest entry must be an object.")
+    return value
+
+
 def records_filename(shard_index: int, num_shards: int) -> str:
     return "records.jsonl" if num_shards == 1 else f"records_shard-{shard_index:05d}-of-{num_shards:05d}.jsonl"
 
@@ -598,6 +607,9 @@ def main() -> None:
         decoder_mask_bins, pre_encoder_mask_bins, keep_bins = intervention_bins(record, args)
         decoder_through_layer = decoder_direct_access_through_layer(record, args)
         route_spec = route_reuse_spec(record)
+        spatial_spec = spatial_route_spec(record)
+        if route_spec and spatial_spec:
+            raise ValueError("route_reuse and spatial_route are separate interventions; run them in separate manifests.")
         condition = condition_for_record(record, args.condition)
         if record["question_id"] in complete_on_resume:
             append_jsonl(
@@ -634,6 +646,7 @@ def main() -> None:
                     "pre_encoder_mask_temporal_bins": list(pre_encoder_mask_bins),
                     "pre_encoder_keep_temporal_bins": list(keep_bins),
                     "route_reuse": route_spec,
+                    "spatial_route": spatial_spec,
                     "condition": condition,
                     "query_scope": args.query_scope,
                     "attention_extraction": args.attention_extraction,
@@ -674,6 +687,7 @@ def main() -> None:
                 pre_encoder_remove_temporal_bins=pre_encoder_mask_bins,
                 pre_encoder_keep_temporal_bins=keep_bins,
                 route_reuse_spec=route_spec,
+                spatial_route_spec=spatial_spec,
                 condition=condition,
                 profiler=profiler,
             )
@@ -685,6 +699,8 @@ def main() -> None:
             artifact["decoder_direct_access_through_layer"] = decoder_through_layer
             if route_spec:
                 artifact["route_reuse"] = route_spec
+            if spatial_spec:
+                artifact["spatial_route"] = spatial_spec
             if record.get("intervention"):
                 artifact["intervention"] = record["intervention"]
             artifact["run_config"] = {
@@ -703,6 +719,7 @@ def main() -> None:
                 "pre_encoder_mask_temporal_bins": list(pre_encoder_mask_bins),
                 "pre_encoder_keep_temporal_bins": list(keep_bins),
                 "route_reuse": route_spec,
+                "spatial_route": spatial_spec,
                 "intervention": record.get("intervention"),
                 "condition": condition,
                 "query_scope": args.query_scope,
@@ -767,6 +784,7 @@ def main() -> None:
             "decoder_direct_access_through_layer_cli": args.decoder_direct_access_through_layer,
             "pre_encoder_mask_temporal_bin_cli": list(args.pre_encoder_mask_temporal_bin or ()),
             "pre_encoder_keep_temporal_bin_cli": list(args.pre_encoder_keep_temporal_bin or ()),
+            "supports_spatial_route_manifest_field": True,
             "condition": args.condition,
             "query_scope": args.query_scope,
             "attention_extraction": args.attention_extraction,
