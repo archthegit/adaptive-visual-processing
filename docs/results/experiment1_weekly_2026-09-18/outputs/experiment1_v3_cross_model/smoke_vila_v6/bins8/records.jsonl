@@ -1,0 +1,1 @@
+{"question_id": "gaze_interaction_anticipation_537", "category": "gaze", "question_type": "gaze_interaction_anticipation", "status": "failed", "error": "'NoneType' object has no attribute 'strip'", "retryable": true}

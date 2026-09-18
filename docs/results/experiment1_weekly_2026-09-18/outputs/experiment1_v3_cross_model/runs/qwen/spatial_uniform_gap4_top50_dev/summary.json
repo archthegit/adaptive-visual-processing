@@ -1,0 +1,38 @@
+{
+  "num_records": 15,
+  "output_jsonl": "outputs/experiment1_v3_cross_model/runs/qwen/spatial_uniform_gap4_top50_dev/records.jsonl",
+  "runtime_seconds": 300.47338461875916,
+  "config": {
+    "manifest": "outputs/experiment1_v3_cross_model/manifests/spatial_route_pilot/qwen/spatial_uniform_gap4_top50.jsonl",
+    "num_frames": 8,
+    "sampling_mode": "cross_model_8",
+    "sampling_policy_json": null,
+    "frames_per_bin": null,
+    "model_backend": "qwen",
+    "model_checkpoint": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "frame_budget_mode": "total",
+    "resolution": {
+      "name": "medium",
+      "min_pixels": 200704,
+      "max_pixels": 602112,
+      "description": "Moderate visual-token budget."
+    },
+    "vision_access_through_layer": "none",
+    "decoder_direct_access_mask_temporal_bin_cli": [],
+    "decoder_direct_access_through_layer_cli": null,
+    "pre_encoder_mask_temporal_bin_cli": [],
+    "pre_encoder_keep_temporal_bin_cli": [],
+    "supports_spatial_route_manifest_field": true,
+    "condition": "spatial_uniform_gap4_top50",
+    "query_scope": "question",
+    "attention_extraction": "reduced_sdpa",
+    "max_new_tokens": 16,
+    "dry_run": false,
+    "allow_7b_inference": true,
+    "resume": true,
+    "shard_index": 0,
+    "num_shards": 1,
+    "seed": 20260818,
+    "git_commit": "459e5999b418f4fc9f743ecfbcb1d35a32d92f7a"
+  }
+}

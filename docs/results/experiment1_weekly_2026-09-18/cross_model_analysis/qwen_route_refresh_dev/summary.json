@@ -1,0 +1,407 @@
+{
+  "inputs": {
+    "baseline_dir": "outputs/experiment1_v3_cross_model/runs/qwen/baseline",
+    "condition_dirs": {
+      "gap2": "outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap2_top50_dev",
+      "gap3": "outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap3_top50_dev",
+      "gap4": "outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap4_top50_dev"
+    },
+    "dev_manifest": "outputs/experiment1_v3_cross_model/manifests/dev_eligible_8frame.jsonl"
+  },
+  "bootstrap_samples": 10000,
+  "seed": 20260916,
+  "validation": {
+    "conditions": {
+      "gap2": {
+        "num_examples": 15,
+        "condition": "route_reuse_gap2_top50",
+        "execution_commits": [
+          "0ec46668eaf67fea354ec0591ea01f960ad8dba3"
+        ],
+        "execution_commit_note": "Validated per condition. Frozen gap4 artifacts may have an older execution commit than newer gap2/gap3 runs.",
+        "route_manifest_commits": [
+          "0ec46668eaf67fea354ec0591ea01f960ad8dba3"
+        ],
+        "schedule": {
+          "anchor_layers": [
+            8,
+            10,
+            12,
+            14,
+            16,
+            18,
+            20,
+            22,
+            24,
+            26
+          ],
+          "routed_layers": [
+            9,
+            11,
+            13,
+            15,
+            17,
+            19,
+            21,
+            23,
+            25,
+            27
+          ],
+          "source_anchor_by_layer": {
+            "11": 10,
+            "13": 12,
+            "15": 14,
+            "17": 16,
+            "19": 18,
+            "21": 20,
+            "23": 22,
+            "25": 24,
+            "27": 26,
+            "9": 8
+          }
+        },
+        "theoretical_edge_savings": {
+          "num_decoder_layers": 28,
+          "num_routed_layers": 10,
+          "routed_layers": [
+            9,
+            11,
+            13,
+            15,
+            17,
+            19,
+            21,
+            23,
+            25,
+            27
+          ],
+          "retained_visual_token_fraction_at_routed_layers": 0.5,
+          "blocked_visual_token_fraction_at_routed_layers": 0.5,
+          "theoretical_question_to_visual_edge_savings_fraction_all_layers": 0.17857142857142858,
+          "note": "Theoretical attention-edge savings only; this is not measured latency or FLOP savings."
+        }
+      },
+      "gap3": {
+        "num_examples": 15,
+        "condition": "route_reuse_gap3_top50",
+        "execution_commits": [
+          "0ec46668eaf67fea354ec0591ea01f960ad8dba3"
+        ],
+        "execution_commit_note": "Validated per condition. Frozen gap4 artifacts may have an older execution commit than newer gap2/gap3 runs.",
+        "route_manifest_commits": [
+          "0ec46668eaf67fea354ec0591ea01f960ad8dba3"
+        ],
+        "schedule": {
+          "anchor_layers": [
+            8,
+            11,
+            14,
+            17,
+            20,
+            23,
+            26
+          ],
+          "routed_layers": [
+            9,
+            10,
+            12,
+            13,
+            15,
+            16,
+            18,
+            19,
+            21,
+            22,
+            24,
+            25,
+            27
+          ],
+          "source_anchor_by_layer": {
+            "10": 8,
+            "12": 11,
+            "13": 11,
+            "15": 14,
+            "16": 14,
+            "18": 17,
+            "19": 17,
+            "21": 20,
+            "22": 20,
+            "24": 23,
+            "25": 23,
+            "27": 26,
+            "9": 8
+          }
+        },
+        "theoretical_edge_savings": {
+          "num_decoder_layers": 28,
+          "num_routed_layers": 13,
+          "routed_layers": [
+            9,
+            10,
+            12,
+            13,
+            15,
+            16,
+            18,
+            19,
+            21,
+            22,
+            24,
+            25,
+            27
+          ],
+          "retained_visual_token_fraction_at_routed_layers": 0.5,
+          "blocked_visual_token_fraction_at_routed_layers": 0.5,
+          "theoretical_question_to_visual_edge_savings_fraction_all_layers": 0.23214285714285715,
+          "note": "Theoretical attention-edge savings only; this is not measured latency or FLOP savings."
+        }
+      },
+      "gap4": {
+        "num_examples": 15,
+        "condition": "route_reuse_gap4_top50",
+        "execution_commits": [
+          "f61cbd0fa9326e47354a2ce66cca194f466e0be2"
+        ],
+        "execution_commit_note": "Validated per condition. Frozen gap4 artifacts may have an older execution commit than newer gap2/gap3 runs.",
+        "route_manifest_commits": [
+          "f61cbd0fa9326e47354a2ce66cca194f466e0be2"
+        ],
+        "schedule": {
+          "anchor_layers": [
+            8,
+            12,
+            16,
+            20,
+            24
+          ],
+          "routed_layers": [
+            9,
+            10,
+            11,
+            13,
+            14,
+            15,
+            17,
+            18,
+            19,
+            21,
+            22,
+            23,
+            25,
+            26,
+            27
+          ],
+          "source_anchor_by_layer": {
+            "10": 8,
+            "11": 8,
+            "13": 12,
+            "14": 12,
+            "15": 12,
+            "17": 16,
+            "18": 16,
+            "19": 16,
+            "21": 20,
+            "22": 20,
+            "23": 20,
+            "25": 24,
+            "26": 24,
+            "27": 24,
+            "9": 8
+          }
+        },
+        "theoretical_edge_savings": {
+          "num_decoder_layers": 28,
+          "num_routed_layers": 15,
+          "routed_layers": [
+            9,
+            10,
+            11,
+            13,
+            14,
+            15,
+            17,
+            18,
+            19,
+            21,
+            22,
+            23,
+            25,
+            26,
+            27
+          ],
+          "retained_visual_token_fraction_at_routed_layers": 0.5,
+          "blocked_visual_token_fraction_at_routed_layers": 0.5,
+          "theoretical_question_to_visual_edge_savings_fraction_all_layers": 0.26785714285714285,
+          "note": "Theoretical attention-edge savings only; this is not measured latency or FLOP savings."
+        }
+      }
+    }
+  },
+  "metrics": {
+    "conditions": {
+      "gap2": {
+        "num_examples": 15,
+        "log_probability_delta": {
+          "mean": 0.07262834090846687,
+          "median": 0.0422147898173377,
+          "ci95": [
+            -0.018844746463904025,
+            0.22022362205349066
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": 0.15,
+          "median": 0.125,
+          "ci95": [
+            0.0125,
+            0.375
+          ],
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "routed_accuracy": 0.26666666666666666,
+        "accuracy": 0.26666666666666666,
+        "prediction_flip_rate": 0.06666666666666667
+      },
+      "gap3": {
+        "num_examples": 15,
+        "log_probability_delta": {
+          "mean": 0.0561562452426132,
+          "median": 0.04007946442970026,
+          "ci95": [
+            -0.07999617837642954,
+            0.20411420708179906
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": 0.11666666666666667,
+          "median": 0.125,
+          "ci95": [
+            -0.0661764705882353,
+            0.3416666666666667
+          ],
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "routed_accuracy": 0.26666666666666666,
+        "accuracy": 0.26666666666666666,
+        "prediction_flip_rate": 0.06666666666666667
+      },
+      "gap4": {
+        "num_examples": 15,
+        "log_probability_delta": {
+          "mean": 0.14870223357206405,
+          "median": 0.0300311177854007,
+          "ci95": [
+            -0.03534995478830555,
+            0.42484892028485555
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": 0.2916666666666667,
+          "median": 0.0,
+          "ci95": [
+            0.023419744318181834,
+            0.7045454545454546
+          ],
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "routed_accuracy": 0.26666666666666666,
+        "accuracy": 0.26666666666666666,
+        "prediction_flip_rate": 0.06666666666666667
+      }
+    },
+    "paired_differences": {
+      "gap2_minus_gap4": {
+        "log_probability_delta": {
+          "mean": -0.07607389266359718,
+          "median": 0.011817969117611904,
+          "ci95": [
+            -0.2628593137842745,
+            0.052508721599165586
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": -0.14166666666666666,
+          "median": 0.0,
+          "ci95": [
+            -0.4166666666666667,
+            0.041666666666666664
+          ],
+          "n": 15
+        }
+      },
+      "gap3_minus_gap4": {
+        "log_probability_delta": {
+          "mean": -0.09254598832945085,
+          "median": -0.01730338936035114,
+          "ci95": [
+            -0.3261579263715926,
+            0.05575583896783497
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": -0.175,
+          "median": 0.0,
+          "ci95": [
+            -0.48863636363636365,
+            0.019764254385964512
+          ],
+          "n": 15
+        }
+      },
+      "gap2_minus_gap3": {
+        "log_probability_delta": {
+          "mean": 0.016472095665853663,
+          "median": -0.018364773661292744,
+          "ci95": [
+            -0.0661752730809175,
+            0.15007950615724405
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": 0.03333333333333333,
+          "median": 0.0,
+          "ci95": [
+            -0.07352941176470588,
+            0.17857142857142858
+          ],
+          "n": 15
+        }
+      }
+    },
+    "ordering_means": {
+      "gap2": 0.07262834090846687,
+      "gap3": 0.0561562452426132,
+      "gap4": 0.14870223357206405
+    },
+    "development_pilot_gate": {
+      "status": "REJECT",
+      "scope": "development kill-test only; this is not confirmatory significance.",
+      "rules": {
+        "promising": "mean logp gap2 > gap3 > gap4, paired gap2-minus-gap4 mean logp > 0, paired gap2-minus-gap4 mean answer margin > 0, and gap2 routed accuracy is not below gap4.",
+        "reject": "paired gap2-minus-gap4 mean logp <= 0 and paired gap2-minus-gap4 mean answer margin <= 0.",
+        "otherwise": "INCONCLUSIVE"
+      },
+      "inputs": {
+        "mean_log_probability_delta": {
+          "gap2": 0.07262834090846687,
+          "gap3": 0.0561562452426132,
+          "gap4": 0.14870223357206405
+        },
+        "gap2_minus_gap4_mean_log_probability_delta": -0.07607389266359718,
+        "gap2_minus_gap4_mean_answer_margin_delta": -0.14166666666666666,
+        "gap2_routed_accuracy": 0.26666666666666666,
+        "gap4_routed_accuracy": 0.26666666666666666
+      }
+    }
+  },
+  "latency_claim": "No measured latency or FLOP savings are claimed; edge savings are theoretical question-to-visual attention-edge savings only."
+}

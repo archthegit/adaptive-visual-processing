@@ -1,0 +1,739 @@
+{
+  "inputs": {
+    "baseline_dir": "outputs/experiment1_v3_cross_model/runs/qwen/baseline",
+    "condition_dirs": {
+      "adaptive": "outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap4_top50_test",
+      "random": "outputs/experiment1_v3_cross_model/runs/qwen/random_reuse_gap4_top50_test",
+      "uniform": "outputs/experiment1_v3_cross_model/runs/qwen/uniform_reuse_gap4_top50_test"
+    },
+    "dev_manifest": "outputs/experiment1_v3_cross_model/manifests/heldout_eligible_8frame.jsonl"
+  },
+  "bootstrap_samples": 10000,
+  "seed": 20260915,
+  "expected_examples": 56,
+  "cohort_label": "heldout_confirmatory",
+  "validation": {
+    "conditions": {
+      "adaptive": {
+        "num_examples": 56,
+        "question_ids": [
+          "fine_grained_action_localization_1388",
+          "fine_grained_action_localization_1515",
+          "fine_grained_action_localization_2299",
+          "fine_grained_action_localization_3677",
+          "fine_grained_action_localization_404",
+          "fine_grained_action_localization_5475",
+          "fine_grained_action_localization_6783",
+          "fine_grained_action_localization_8009",
+          "fine_grained_action_localization_8273",
+          "fine_grained_action_localization_8735",
+          "fine_grained_action_recognition_1045",
+          "fine_grained_action_recognition_1133",
+          "fine_grained_action_recognition_1445",
+          "fine_grained_action_recognition_174",
+          "fine_grained_action_recognition_2054",
+          "fine_grained_action_recognition_2281",
+          "fine_grained_action_recognition_285",
+          "fine_grained_action_recognition_3135",
+          "fine_grained_action_recognition_335",
+          "fine_grained_action_recognition_3768",
+          "fine_grained_action_recognition_3776",
+          "fine_grained_action_recognition_3917",
+          "fine_grained_action_recognition_4266",
+          "fine_grained_action_recognition_4688",
+          "fine_grained_action_recognition_649",
+          "fine_grained_action_recognition_662",
+          "fine_grained_action_recognition_757",
+          "gaze_interaction_anticipation_22",
+          "gaze_interaction_anticipation_244",
+          "gaze_interaction_anticipation_468",
+          "gaze_interaction_anticipation_487",
+          "gaze_interaction_anticipation_537",
+          "gaze_interaction_anticipation_633",
+          "gaze_interaction_anticipation_751",
+          "gaze_interaction_anticipation_82",
+          "gaze_interaction_anticipation_930",
+          "gaze_interaction_anticipation_967",
+          "ingredient_ingredient_adding_localization_0",
+          "ingredient_ingredient_adding_localization_13",
+          "ingredient_ingredient_adding_localization_16",
+          "ingredient_ingredient_adding_localization_17",
+          "ingredient_ingredient_adding_localization_74",
+          "ingredient_ingredient_adding_localization_94",
+          "ingredient_ingredient_weight_14",
+          "ingredient_ingredient_weight_2",
+          "ingredient_ingredient_weight_38",
+          "ingredient_ingredient_weight_42",
+          "object_motion_object_movement_itinerary_207",
+          "object_motion_object_movement_itinerary_282",
+          "object_motion_object_movement_itinerary_285",
+          "object_motion_object_movement_itinerary_311",
+          "object_motion_object_movement_itinerary_316",
+          "object_motion_object_movement_itinerary_367",
+          "object_motion_object_movement_itinerary_477",
+          "object_motion_object_movement_itinerary_55",
+          "object_motion_object_movement_itinerary_87"
+        ]
+      },
+      "random": {
+        "num_examples": 56,
+        "question_ids": [
+          "fine_grained_action_localization_1388",
+          "fine_grained_action_localization_1515",
+          "fine_grained_action_localization_2299",
+          "fine_grained_action_localization_3677",
+          "fine_grained_action_localization_404",
+          "fine_grained_action_localization_5475",
+          "fine_grained_action_localization_6783",
+          "fine_grained_action_localization_8009",
+          "fine_grained_action_localization_8273",
+          "fine_grained_action_localization_8735",
+          "fine_grained_action_recognition_1045",
+          "fine_grained_action_recognition_1133",
+          "fine_grained_action_recognition_1445",
+          "fine_grained_action_recognition_174",
+          "fine_grained_action_recognition_2054",
+          "fine_grained_action_recognition_2281",
+          "fine_grained_action_recognition_285",
+          "fine_grained_action_recognition_3135",
+          "fine_grained_action_recognition_335",
+          "fine_grained_action_recognition_3768",
+          "fine_grained_action_recognition_3776",
+          "fine_grained_action_recognition_3917",
+          "fine_grained_action_recognition_4266",
+          "fine_grained_action_recognition_4688",
+          "fine_grained_action_recognition_649",
+          "fine_grained_action_recognition_662",
+          "fine_grained_action_recognition_757",
+          "gaze_interaction_anticipation_22",
+          "gaze_interaction_anticipation_244",
+          "gaze_interaction_anticipation_468",
+          "gaze_interaction_anticipation_487",
+          "gaze_interaction_anticipation_537",
+          "gaze_interaction_anticipation_633",
+          "gaze_interaction_anticipation_751",
+          "gaze_interaction_anticipation_82",
+          "gaze_interaction_anticipation_930",
+          "gaze_interaction_anticipation_967",
+          "ingredient_ingredient_adding_localization_0",
+          "ingredient_ingredient_adding_localization_13",
+          "ingredient_ingredient_adding_localization_16",
+          "ingredient_ingredient_adding_localization_17",
+          "ingredient_ingredient_adding_localization_74",
+          "ingredient_ingredient_adding_localization_94",
+          "ingredient_ingredient_weight_14",
+          "ingredient_ingredient_weight_2",
+          "ingredient_ingredient_weight_38",
+          "ingredient_ingredient_weight_42",
+          "object_motion_object_movement_itinerary_207",
+          "object_motion_object_movement_itinerary_282",
+          "object_motion_object_movement_itinerary_285",
+          "object_motion_object_movement_itinerary_311",
+          "object_motion_object_movement_itinerary_316",
+          "object_motion_object_movement_itinerary_367",
+          "object_motion_object_movement_itinerary_477",
+          "object_motion_object_movement_itinerary_55",
+          "object_motion_object_movement_itinerary_87"
+        ]
+      },
+      "uniform": {
+        "num_examples": 56,
+        "question_ids": [
+          "fine_grained_action_localization_1388",
+          "fine_grained_action_localization_1515",
+          "fine_grained_action_localization_2299",
+          "fine_grained_action_localization_3677",
+          "fine_grained_action_localization_404",
+          "fine_grained_action_localization_5475",
+          "fine_grained_action_localization_6783",
+          "fine_grained_action_localization_8009",
+          "fine_grained_action_localization_8273",
+          "fine_grained_action_localization_8735",
+          "fine_grained_action_recognition_1045",
+          "fine_grained_action_recognition_1133",
+          "fine_grained_action_recognition_1445",
+          "fine_grained_action_recognition_174",
+          "fine_grained_action_recognition_2054",
+          "fine_grained_action_recognition_2281",
+          "fine_grained_action_recognition_285",
+          "fine_grained_action_recognition_3135",
+          "fine_grained_action_recognition_335",
+          "fine_grained_action_recognition_3768",
+          "fine_grained_action_recognition_3776",
+          "fine_grained_action_recognition_3917",
+          "fine_grained_action_recognition_4266",
+          "fine_grained_action_recognition_4688",
+          "fine_grained_action_recognition_649",
+          "fine_grained_action_recognition_662",
+          "fine_grained_action_recognition_757",
+          "gaze_interaction_anticipation_22",
+          "gaze_interaction_anticipation_244",
+          "gaze_interaction_anticipation_468",
+          "gaze_interaction_anticipation_487",
+          "gaze_interaction_anticipation_537",
+          "gaze_interaction_anticipation_633",
+          "gaze_interaction_anticipation_751",
+          "gaze_interaction_anticipation_82",
+          "gaze_interaction_anticipation_930",
+          "gaze_interaction_anticipation_967",
+          "ingredient_ingredient_adding_localization_0",
+          "ingredient_ingredient_adding_localization_13",
+          "ingredient_ingredient_adding_localization_16",
+          "ingredient_ingredient_adding_localization_17",
+          "ingredient_ingredient_adding_localization_74",
+          "ingredient_ingredient_adding_localization_94",
+          "ingredient_ingredient_weight_14",
+          "ingredient_ingredient_weight_2",
+          "ingredient_ingredient_weight_38",
+          "ingredient_ingredient_weight_42",
+          "object_motion_object_movement_itinerary_207",
+          "object_motion_object_movement_itinerary_282",
+          "object_motion_object_movement_itinerary_285",
+          "object_motion_object_movement_itinerary_311",
+          "object_motion_object_movement_itinerary_316",
+          "object_motion_object_movement_itinerary_367",
+          "object_motion_object_movement_itinerary_477",
+          "object_motion_object_movement_itinerary_55",
+          "object_motion_object_movement_itinerary_87"
+        ]
+      }
+    },
+    "execution_code_commits": [
+      "17df93e1f33462e9404ba33d0f92e475f90f81f5"
+    ],
+    "route_manifest_commits": [
+      "17df93e1f33462e9404ba33d0f92e475f90f81f5"
+    ],
+    "code_commits": [
+      "17df93e1f33462e9404ba33d0f92e475f90f81f5"
+    ]
+  },
+  "conditions": {
+    "adaptive": {
+      "num_examples": 56,
+      "dense_accuracy": 0.4107142857142857,
+      "routed_accuracy": 0.32142857142857145,
+      "prediction_flip_rate": 0.23214285714285715,
+      "metrics": {
+        "delta_correct_choice_log_probability": {
+          "mean": -0.010659013978600097,
+          "median": -0.01635942937872871,
+          "ci95": [
+            -0.11850421114578856,
+            0.08856853158255171
+          ],
+          "n": 56
+        },
+        "delta_answer_margin": {
+          "mean": -0.07142857142857142,
+          "median": -0.125,
+          "ci95": [
+            -0.22917729591836733,
+            0.0625
+          ],
+          "n": 56
+        }
+      }
+    },
+    "random": {
+      "num_examples": 56,
+      "dense_accuracy": 0.4107142857142857,
+      "routed_accuracy": 0.375,
+      "prediction_flip_rate": 0.21428571428571427,
+      "metrics": {
+        "delta_correct_choice_log_probability": {
+          "mean": 0.00711705524050365,
+          "median": -0.006901270500980661,
+          "ci95": [
+            -0.10944898088168421,
+            0.12300949556537275
+          ],
+          "n": 56
+        },
+        "delta_answer_margin": {
+          "mean": 0.006696428571428571,
+          "median": 0.0,
+          "ci95": [
+            -0.19318717838765007,
+            0.18867924528301888
+          ],
+          "n": 56
+        }
+      }
+    },
+    "uniform": {
+      "num_examples": 56,
+      "dense_accuracy": 0.4107142857142857,
+      "routed_accuracy": 0.3392857142857143,
+      "prediction_flip_rate": 0.25,
+      "metrics": {
+        "delta_correct_choice_log_probability": {
+          "mean": 0.014612359923721294,
+          "median": -0.008378091710140763,
+          "ci95": [
+            -0.10049016228543202,
+            0.1585411172854962
+          ],
+          "n": 56
+        },
+        "delta_answer_margin": {
+          "mean": -0.002232142857142857,
+          "median": -0.0625,
+          "ci95": [
+            -0.16129032258064516,
+            0.22116477272727256
+          ],
+          "n": 56
+        }
+      }
+    }
+  },
+  "paired_adaptive_control_differences": {
+    "adaptive_minus_random": {
+      "delta_correct_choice_log_probability": {
+        "mean": -0.017776069219103748,
+        "median": 0.009287668726545961,
+        "ci95": [
+          -0.1858952155360917,
+          0.1424264160546853
+        ],
+        "n": 56
+      },
+      "delta_answer_margin": {
+        "mean": -0.078125,
+        "median": 0.0,
+        "ci95": [
+          -0.3110481266149871,
+          0.15455086580086572
+        ],
+        "n": 56
+      }
+    },
+    "adaptive_minus_uniform": {
+      "delta_correct_choice_log_probability": {
+        "mean": -0.02527137390232141,
+        "median": 0.0,
+        "ci95": [
+          -0.19753234030642042,
+          0.07308858080651656
+        ],
+        "n": 56
+      },
+      "delta_answer_margin": {
+        "mean": -0.06919642857142858,
+        "median": 0.0,
+        "ci95": [
+          -0.36538461538461536,
+          0.0821540178571427
+        ],
+        "n": 56
+      }
+    }
+  },
+  "exploratory_category_breakdowns": {
+    "fine_grained": {
+      "adaptive": {
+        "num_examples": 27,
+        "dense_accuracy": 0.5555555555555556,
+        "routed_accuracy": 0.48148148148148145,
+        "prediction_flip_rate": 0.1111111111111111,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.06949415673999335,
+            "median": -0.04503550988827609,
+            "ci95": [
+              -0.16344663822115527,
+              0.005030193301004926
+            ],
+            "n": 27
+          },
+          "delta_answer_margin": {
+            "mean": -0.16666666666666666,
+            "median": -0.125,
+            "ci95": [
+              -0.3393035714285714,
+              -0.033083397832817406
+            ],
+            "n": 27
+          }
+        }
+      },
+      "random": {
+        "num_examples": 27,
+        "dense_accuracy": 0.5555555555555556,
+        "routed_accuracy": 0.5185185185185185,
+        "prediction_flip_rate": 0.14814814814814814,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.016639267559368037,
+            "median": 0.0006194672195253834,
+            "ci95": [
+              -0.16513550712905242,
+              0.09634276588241951
+            ],
+            "n": 27
+          },
+          "delta_answer_margin": {
+            "mean": -0.06018518518518518,
+            "median": 0.0,
+            "ci95": [
+              -0.3317307692307692,
+              0.14224137931034483
+            ],
+            "n": 27
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 27,
+        "dense_accuracy": 0.5555555555555556,
+        "routed_accuracy": 0.48148148148148145,
+        "prediction_flip_rate": 0.14814814814814814,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.050354309220593765,
+            "median": -0.01045560229535461,
+            "ci95": [
+              -0.14684372451074856,
+              0.02999025655974304
+            ],
+            "n": 27
+          },
+          "delta_answer_margin": {
+            "mean": -0.10648148148148148,
+            "median": 0.0,
+            "ci95": [
+              -0.28703703703703703,
+              0.04688555743243228
+            ],
+            "n": 27
+          }
+        }
+      }
+    },
+    "gaze": {
+      "adaptive": {
+        "num_examples": 10,
+        "dense_accuracy": 0.1,
+        "routed_accuracy": 0.1,
+        "prediction_flip_rate": 0.2,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.09895686915501536,
+            "median": 0.11190081004631791,
+            "ci95": [
+              -0.30277503018495466,
+              0.4411348190595741
+            ],
+            "n": 10
+          },
+          "delta_answer_margin": {
+            "mean": 0.1125,
+            "median": 0.125,
+            "ci95": [
+              -0.48441840277777776,
+              0.575
+            ],
+            "n": 10
+          }
+        }
+      },
+      "random": {
+        "num_examples": 10,
+        "dense_accuracy": 0.1,
+        "routed_accuracy": 0.1,
+        "prediction_flip_rate": 0.3,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.13220907092503356,
+            "median": -0.08977251406808162,
+            "ci95": [
+              -0.1108730198644959,
+              0.4191040059347811
+            ],
+            "n": 10
+          },
+          "delta_answer_margin": {
+            "mean": 0.175,
+            "median": 0.125,
+            "ci95": [
+              -0.09722222222222222,
+              0.46875
+            ],
+            "n": 10
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 10,
+        "dense_accuracy": 0.1,
+        "routed_accuracy": 0.2,
+        "prediction_flip_rate": 0.4,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.3784484538609495,
+            "median": 0.3638658340306129,
+            "ci95": [
+              0.055851777897070874,
+              0.7025292345771925
+            ],
+            "n": 10
+          },
+          "delta_answer_margin": {
+            "mean": 0.4875,
+            "median": 0.5625,
+            "ci95": [
+              -0.0625,
+              1.1111111111111112
+            ],
+            "n": 10
+          }
+        }
+      }
+    },
+    "ingredient": {
+      "adaptive": {
+        "num_examples": 10,
+        "dense_accuracy": 0.4,
+        "routed_accuracy": 0.1,
+        "prediction_flip_rate": 0.4,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.07055910933268468,
+            "median": 0.053146317367332274,
+            "ci95": [
+              -0.08453749468109703,
+              0.23195880457773876
+            ],
+            "n": 10
+          },
+          "delta_answer_margin": {
+            "mean": 0.0125,
+            "median": -0.0625,
+            "ci95": [
+              -0.20454545454545456,
+              0.25
+            ],
+            "n": 10
+          }
+        }
+      },
+      "random": {
+        "num_examples": 10,
+        "dense_accuracy": 0.4,
+        "routed_accuracy": 0.2,
+        "prediction_flip_rate": 0.2,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.024613537410569743,
+            "median": 0.02743737609023633,
+            "ci95": [
+              -0.1283457815321638,
+              0.18325563774962064
+            ],
+            "n": 10
+          },
+          "delta_answer_margin": {
+            "mean": 0.0,
+            "median": 0.0,
+            "ci95": [
+              -0.20833333333333334,
+              0.225
+            ],
+            "n": 10
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 10,
+        "dense_accuracy": 0.4,
+        "routed_accuracy": 0.1,
+        "prediction_flip_rate": 0.4,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.010107642577858632,
+            "median": 0.02231062626275765,
+            "ci95": [
+              -0.16865496337105565,
+              0.19268813508579713
+            ],
+            "n": 10
+          },
+          "delta_answer_margin": {
+            "mean": -0.025,
+            "median": -0.0625,
+            "ci95": [
+              -0.22115384615384615,
+              0.23214285714285715
+            ],
+            "n": 10
+          }
+        }
+      }
+    },
+    "object_motion": {
+      "adaptive": {
+        "num_examples": 9,
+        "dense_accuracy": 0.3333333333333333,
+        "routed_accuracy": 0.3333333333333333,
+        "prediction_flip_rate": 0.4444444444444444,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.0461913706331984,
+            "median": -0.083086998037738,
+            "ci95": [
+              -0.13511169498877243,
+              0.06303583259006716
+            ],
+            "n": 9
+          },
+          "delta_answer_margin": {
+            "mean": -0.08333333333333333,
+            "median": -0.125,
+            "ci95": [
+              -0.225,
+              0.078125
+            ],
+            "n": 9
+          }
+        }
+      },
+      "random": {
+        "num_examples": 9,
+        "dense_accuracy": 0.3333333333333333,
+        "routed_accuracy": 0.4444444444444444,
+        "prediction_flip_rate": 0.3333333333333333,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.0800456406427657,
+            "median": -0.09012490081232816,
+            "ci95": [
+              -0.2874372679934438,
+              0.11869070096896393
+            ],
+            "n": 9
+          },
+          "delta_answer_margin": {
+            "mean": 0.027777777777777776,
+            "median": -0.125,
+            "ci95": [
+              -0.296875,
+              0.35
+            ],
+            "n": 9
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 9,
+        "dense_accuracy": 0.3333333333333333,
+        "routed_accuracy": 0.3333333333333333,
+        "prediction_flip_rate": 0.2222222222222222,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.1672832897940538,
+            "median": -0.09785432584289322,
+            "ci95": [
+              -0.3869009688899404,
+              -0.01671325721274482
+            ],
+            "n": 9
+          },
+          "delta_answer_margin": {
+            "mean": -0.20833333333333334,
+            "median": -0.125,
+            "ci95": [
+              -0.32142857142857145,
+              -0.09722222222222222
+            ],
+            "n": 9
+          }
+        }
+      }
+    }
+  },
+  "prediction_transition_counts": {
+    "adaptive": {
+      "0->0": 4,
+      "0->1": 1,
+      "0->2": 1,
+      "0->3": 3,
+      "1->1": 7,
+      "1->2": 1,
+      "1->4": 1,
+      "2->1": 1,
+      "2->2": 13,
+      "2->4": 2,
+      "3->0": 2,
+      "3->1": 1,
+      "3->3": 6,
+      "4->4": 13
+    },
+    "random": {
+      "0->0": 6,
+      "0->3": 2,
+      "0->4": 1,
+      "1->1": 8,
+      "1->4": 1,
+      "2->0": 1,
+      "2->2": 13,
+      "2->3": 1,
+      "2->4": 1,
+      "3->1": 1,
+      "3->3": 7,
+      "3->4": 1,
+      "4->0": 1,
+      "4->1": 1,
+      "4->3": 1,
+      "4->4": 10
+    },
+    "uniform": {
+      "0->0": 3,
+      "0->1": 1,
+      "0->2": 1,
+      "0->3": 4,
+      "1->0": 1,
+      "1->1": 7,
+      "1->4": 1,
+      "2->1": 1,
+      "2->2": 13,
+      "2->3": 1,
+      "2->4": 1,
+      "3->0": 1,
+      "3->3": 7,
+      "3->4": 1,
+      "4->2": 1,
+      "4->4": 12
+    }
+  },
+  "causal_gate": {
+    "status": "FAIL",
+    "rule": "PASS if adaptive routing preserves correct-answer log probability and answer margin better than both equal-budget random and uniform controls; FAIL if adaptive is no better than either control; INCONCLUSIVE if point estimates favor adaptive but uncertainty is too large.",
+    "checks": [
+      {
+        "comparison": "adaptive_minus_random",
+        "metric": "delta_correct_choice_log_probability",
+        "mean": -0.017776069219103748,
+        "ci_low": -0.1858952155360917
+      },
+      {
+        "comparison": "adaptive_minus_random",
+        "metric": "delta_answer_margin",
+        "mean": -0.078125,
+        "ci_low": -0.3110481266149871
+      },
+      {
+        "comparison": "adaptive_minus_uniform",
+        "metric": "delta_correct_choice_log_probability",
+        "mean": -0.02527137390232141,
+        "ci_low": -0.19753234030642042
+      },
+      {
+        "comparison": "adaptive_minus_uniform",
+        "metric": "delta_answer_margin",
+        "mean": -0.06919642857142858,
+        "ci_low": -0.36538461538461536
+      }
+    ]
+  }
+}

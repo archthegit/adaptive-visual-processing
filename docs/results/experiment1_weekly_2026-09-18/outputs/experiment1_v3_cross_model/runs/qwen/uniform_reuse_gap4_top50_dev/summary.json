@@ -1,0 +1,37 @@
+{
+  "num_records": 15,
+  "output_jsonl": "outputs/experiment1_v3_cross_model/runs/qwen/uniform_reuse_gap4_top50_dev/records.jsonl",
+  "runtime_seconds": 298.7176785469055,
+  "config": {
+    "manifest": "outputs/experiment1_v3_cross_model/manifests/route_reuse_pilot_native/qwen/uniform_reuse_gap4_top50.jsonl",
+    "num_frames": 8,
+    "sampling_mode": "cross_model_8",
+    "sampling_policy_json": null,
+    "frames_per_bin": null,
+    "model_backend": "qwen",
+    "model_checkpoint": null,
+    "frame_budget_mode": "total",
+    "resolution": {
+      "name": "medium",
+      "min_pixels": 200704,
+      "max_pixels": 602112,
+      "description": "Moderate visual-token budget."
+    },
+    "vision_access_through_layer": "none",
+    "decoder_direct_access_mask_temporal_bin_cli": [],
+    "decoder_direct_access_through_layer_cli": null,
+    "pre_encoder_mask_temporal_bin_cli": [],
+    "pre_encoder_keep_temporal_bin_cli": [],
+    "condition": "uniform_reuse_gap4_top50",
+    "query_scope": "question",
+    "attention_extraction": "reduced_sdpa",
+    "max_new_tokens": 16,
+    "dry_run": false,
+    "allow_7b_inference": true,
+    "resume": true,
+    "shard_index": 0,
+    "num_shards": 1,
+    "seed": 20260818,
+    "git_commit": "f61cbd0fa9326e47354a2ce66cca194f466e0be2"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "num_records": 77,
+  "output_jsonl": "outputs/experiment1_v3/runs/baseline/records.jsonl",
+  "runtime_seconds": 67918.01571798325,
+  "config": {
+    "manifest": "outputs/experiment1_v3/primary_manifest.jsonl",
+    "num_frames": 128,
+    "sampling_mode": "realtime",
+    "sampling_policy_json": "outputs/experiment1_v3/split_summary.json",
+    "frame_budget_mode": "total",
+    "resolution": {
+      "name": "medium",
+      "min_pixels": 200704,
+      "max_pixels": 602112,
+      "description": "Moderate visual-token budget."
+    },
+    "vision_access_through_layer": "none",
+    "decoder_direct_access_mask_temporal_bin_cli": [],
+    "decoder_direct_access_through_layer_cli": null,
+    "pre_encoder_mask_temporal_bin_cli": [],
+    "pre_encoder_keep_temporal_bin_cli": [],
+    "condition": "baseline",
+    "query_scope": "question",
+    "attention_extraction": "reduced_sdpa",
+    "max_new_tokens": 16,
+    "dry_run": false,
+    "allow_7b_inference": true,
+    "resume": true,
+    "shard_index": 0,
+    "num_shards": 1,
+    "seed": 20260818,
+    "git_commit": "6ac32259cfcb07b3b85e1a5c3c4c49279f069901"
+  }
+}

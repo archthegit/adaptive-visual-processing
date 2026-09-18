@@ -1,0 +1,685 @@
+{
+  "inputs": {
+    "baseline_dir": "outputs/experiment1_v3_cross_model/runs/qwen/baseline",
+    "dev_condition_dirs": {
+      "route_reuse": "outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap4_top50_dev",
+      "random": "outputs/experiment1_v3_cross_model/runs/qwen/random_reuse_gap4_top50_dev",
+      "uniform": "outputs/experiment1_v3_cross_model/runs/qwen/uniform_reuse_gap4_top50_dev"
+    },
+    "heldout_condition_dirs": {
+      "route_reuse": "outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap4_top50_test",
+      "random": "outputs/experiment1_v3_cross_model/runs/qwen/random_reuse_gap4_top50_test",
+      "uniform": "outputs/experiment1_v3_cross_model/runs/qwen/uniform_reuse_gap4_top50_test"
+    },
+    "dev_manifest": "outputs/experiment1_v3_cross_model/manifests/dev_eligible_8frame.jsonl",
+    "heldout_manifest": "outputs/experiment1_v3_cross_model/manifests/heldout_eligible_8frame.jsonl"
+  },
+  "bootstrap_samples": 10000,
+  "seed": 20260915,
+  "validation": {
+    "cohorts": {
+      "development": {
+        "num_examples": 15,
+        "question_ids": [
+          "fine_grained_action_localization_3168",
+          "fine_grained_action_localization_5424",
+          "fine_grained_action_localization_9427",
+          "fine_grained_action_recognition_1705",
+          "fine_grained_action_recognition_284",
+          "fine_grained_action_recognition_3572",
+          "gaze_interaction_anticipation_41",
+          "gaze_interaction_anticipation_5",
+          "gaze_interaction_anticipation_926",
+          "ingredient_ingredient_adding_localization_23",
+          "ingredient_ingredient_adding_localization_91",
+          "ingredient_ingredient_weight_5",
+          "object_motion_object_movement_itinerary_286",
+          "object_motion_object_movement_itinerary_433",
+          "object_motion_object_movement_itinerary_61"
+        ],
+        "execution_commits": [
+          "f61cbd0fa9326e47354a2ce66cca194f466e0be2"
+        ],
+        "route_manifest_commits": [
+          "f61cbd0fa9326e47354a2ce66cca194f466e0be2"
+        ]
+      },
+      "heldout": {
+        "num_examples": 56,
+        "question_ids": [
+          "fine_grained_action_localization_1388",
+          "fine_grained_action_localization_1515",
+          "fine_grained_action_localization_2299",
+          "fine_grained_action_localization_3677",
+          "fine_grained_action_localization_404",
+          "fine_grained_action_localization_5475",
+          "fine_grained_action_localization_6783",
+          "fine_grained_action_localization_8009",
+          "fine_grained_action_localization_8273",
+          "fine_grained_action_localization_8735",
+          "fine_grained_action_recognition_1045",
+          "fine_grained_action_recognition_1133",
+          "fine_grained_action_recognition_1445",
+          "fine_grained_action_recognition_174",
+          "fine_grained_action_recognition_2054",
+          "fine_grained_action_recognition_2281",
+          "fine_grained_action_recognition_285",
+          "fine_grained_action_recognition_3135",
+          "fine_grained_action_recognition_335",
+          "fine_grained_action_recognition_3768",
+          "fine_grained_action_recognition_3776",
+          "fine_grained_action_recognition_3917",
+          "fine_grained_action_recognition_4266",
+          "fine_grained_action_recognition_4688",
+          "fine_grained_action_recognition_649",
+          "fine_grained_action_recognition_662",
+          "fine_grained_action_recognition_757",
+          "gaze_interaction_anticipation_22",
+          "gaze_interaction_anticipation_244",
+          "gaze_interaction_anticipation_468",
+          "gaze_interaction_anticipation_487",
+          "gaze_interaction_anticipation_537",
+          "gaze_interaction_anticipation_633",
+          "gaze_interaction_anticipation_751",
+          "gaze_interaction_anticipation_82",
+          "gaze_interaction_anticipation_930",
+          "gaze_interaction_anticipation_967",
+          "ingredient_ingredient_adding_localization_0",
+          "ingredient_ingredient_adding_localization_13",
+          "ingredient_ingredient_adding_localization_16",
+          "ingredient_ingredient_adding_localization_17",
+          "ingredient_ingredient_adding_localization_74",
+          "ingredient_ingredient_adding_localization_94",
+          "ingredient_ingredient_weight_14",
+          "ingredient_ingredient_weight_2",
+          "ingredient_ingredient_weight_38",
+          "ingredient_ingredient_weight_42",
+          "object_motion_object_movement_itinerary_207",
+          "object_motion_object_movement_itinerary_282",
+          "object_motion_object_movement_itinerary_285",
+          "object_motion_object_movement_itinerary_311",
+          "object_motion_object_movement_itinerary_316",
+          "object_motion_object_movement_itinerary_367",
+          "object_motion_object_movement_itinerary_477",
+          "object_motion_object_movement_itinerary_55",
+          "object_motion_object_movement_itinerary_87"
+        ],
+        "execution_commits": [
+          "17df93e1f33462e9404ba33d0f92e475f90f81f5"
+        ],
+        "route_manifest_commits": [
+          "17df93e1f33462e9404ba33d0f92e475f90f81f5"
+        ]
+      }
+    }
+  },
+  "cohorts": {
+    "development": {
+      "num_examples": 15,
+      "num_layer_rows": 225,
+      "metrics": {
+        "adaptive_minus_dense_correct_answer_log_probability": {
+          "mean": 0.14870223357206405,
+          "median": 0.0300311177854007,
+          "ci95": [
+            -0.03667277748155155,
+            0.42990571364022445
+          ],
+          "n": 15
+        },
+        "adaptive_minus_dense_answer_margin": {
+          "mean": 0.2916666666666667,
+          "median": 0.0,
+          "ci95": [
+            0.025,
+            0.7019230769230769
+          ],
+          "n": 15
+        },
+        "adaptive_minus_random_correct_answer_log_probability": {
+          "mean": 0.24047731416390794,
+          "median": 0.11796572312945108,
+          "ci95": [
+            0.014584185924929015,
+            0.6046979441665347
+          ],
+          "n": 15
+        },
+        "adaptive_minus_random_answer_margin": {
+          "mean": 0.325,
+          "median": 0.125,
+          "ci95": [
+            0.075,
+            0.7395833333333334
+          ],
+          "n": 15
+        },
+        "adaptive_minus_uniform_correct_answer_log_probability": {
+          "mean": 0.06633947159237347,
+          "median": 0.0,
+          "ci95": [
+            -0.11364661883529542,
+            0.37785019957940286
+          ],
+          "n": 15
+        },
+        "adaptive_minus_uniform_answer_margin": {
+          "mean": 0.058333333333333334,
+          "median": 0.0,
+          "ci95": [
+            -0.16666666666666666,
+            0.38639204545454503
+          ],
+          "n": 15
+        }
+      },
+      "hypotheses": {
+        "adaptive_minus_dense_correct_answer_log_probability": {
+          "overall": {
+            "mean": 0.14870223357206405,
+            "median": 0.0300311177854007,
+            "ci95": [
+              -0.04155131006920089,
+              0.42846607281266924
+            ],
+            "n": 15
+          },
+          "H1_entropy": {
+            "spearman": 0.0035714285714285704,
+            "spearman_ci95": [
+              -0.6508053221288516,
+              0.6169265033407572
+            ],
+            "median_split": {
+              "threshold": 0.9795437664995733,
+              "high_mean": 0.21248665119809218,
+              "low_mean": 0.07580575628517479,
+              "high_minus_low": 0.1366808949129174,
+              "ci95": [
+                -0.21974855574115618,
+                0.5451993082825397
+              ],
+              "n": 15
+            }
+          },
+          "H1_retained_mass": {
+            "spearman": -0.05357142857142857,
+            "spearman_ci95": [
+              -0.7226555688801745,
+              0.7304964539007092
+            ],
+            "median_split": {
+              "threshold": 0.5754598893144628,
+              "high_mean": 0.08236523777023048,
+              "low_mean": 0.22451594305987385,
+              "high_minus_low": -0.14215070528964335,
+              "ci95": [
+                -0.7706487354076366,
+                0.32413795422704494
+              ],
+              "n": 15
+            }
+          },
+          "H2_adjacent_selection": {
+            "spearman": 0.27507428008478846,
+            "spearman_ci95": [
+              -0.2564388222660863,
+              0.6338978498293434
+            ],
+            "median_split": {
+              "threshold": 0.6,
+              "high_mean": 0.2626648937873274,
+              "low_mean": -0.022241756750830954,
+              "high_minus_low": 0.28490665053815833,
+              "ci95": [
+                -0.13673277855102228,
+                0.6336315119052074
+              ],
+              "n": 15
+            }
+          },
+          "H2_temporal_coverage": {
+            "spearman": -0.28607725128818,
+            "spearman_ci95": [
+              -0.6326826109521119,
+              0.24712570298055622
+            ],
+            "median_split": {
+              "threshold": 0.65,
+              "high_mean": 0.117733738467047,
+              "low_mean": 0.19515497622958963,
+              "high_minus_low": -0.07742123776254263,
+              "ci95": [
+                -0.5199610307715491,
+                0.23268419539839152
+              ],
+              "n": 15
+            }
+          },
+          "H3_route_agreement": {
+            "spearman": 0.18214285714285713,
+            "spearman_ci95": [
+              -0.4624609305891372,
+              0.7974843269576327
+            ],
+            "median_split": {
+              "threshold": 0.6933333333333335,
+              "high_mean": 0.1001322046241696,
+              "low_mean": 0.2042108380839434,
+              "high_minus_low": -0.10407863345977382,
+              "ci95": [
+                -0.6433391262055022,
+                0.387804127776217
+              ],
+              "n": 15
+            }
+          }
+        },
+        "adaptive_minus_dense_answer_margin": {
+          "overall": {
+            "mean": 0.2916666666666667,
+            "median": 0.0,
+            "ci95": [
+              0.0234375,
+              0.7045454545454546
+            ],
+            "n": 15
+          },
+          "H1_entropy": {
+            "spearman": 0.03613618650228853,
+            "spearman_ci95": [
+              -0.6287519493939553,
+              0.5977148279497909
+            ],
+            "median_split": {
+              "threshold": 0.9795437664995733,
+              "high_mean": 0.390625,
+              "low_mean": 0.17857142857142858,
+              "high_minus_low": 0.21205357142857142,
+              "ci95": [
+                -0.35000000000000003,
+                0.7777777777777778
+              ],
+              "n": 15
+            }
+          },
+          "H1_retained_mass": {
+            "spearman": -0.11202217815709443,
+            "spearman_ci95": [
+              -0.8066024995090312,
+              0.7338528022709472
+            ],
+            "median_split": {
+              "threshold": 0.5754598893144628,
+              "high_mean": 0.1875,
+              "low_mean": 0.4107142857142857,
+              "high_minus_low": -0.2232142857142857,
+              "ci95": [
+                -1.0625,
+                0.5
+              ],
+              "n": 15
+            }
+          },
+          "H2_adjacent_selection": {
+            "spearman": 0.3961475329469549,
+            "spearman_ci95": [
+              -0.09434082212050379,
+              0.7499550833065267
+            ],
+            "median_split": {
+              "threshold": 0.6,
+              "high_mean": 0.4722222222222222,
+              "low_mean": 0.020833333333333332,
+              "high_minus_low": 0.4513888888888889,
+              "ci95": [
+                -0.125,
+                0.9638888888888888
+              ],
+              "n": 15
+            }
+          },
+          "H2_temporal_coverage": {
+            "spearman": -0.4044972467561413,
+            "spearman_ci95": [
+              -0.7527274800902435,
+              0.08133100770305755
+            ],
+            "median_split": {
+              "threshold": 0.65,
+              "high_mean": 0.2222222222222222,
+              "low_mean": 0.3958333333333333,
+              "high_minus_low": -0.1736111111111111,
+              "ci95": [
+                -0.84375,
+                0.2972222222222222
+              ],
+              "n": 15
+            }
+          },
+          "H3_route_agreement": {
+            "spearman": 0.11563579680732328,
+            "spearman_ci95": [
+              -0.536062119593158,
+              0.7764174635015176
+            ],
+            "median_split": {
+              "threshold": 0.6933333333333335,
+              "high_mean": 0.1875,
+              "low_mean": 0.4107142857142857,
+              "high_minus_low": -0.2232142857142857,
+              "ci95": [
+                -0.9708333333333333,
+                0.53125
+              ],
+              "n": 15
+            }
+          }
+        },
+        "H4_stable_high_mass_well_covered_routes": {
+          "thresholds": {
+            "mean_anchor_native_temporal_entropy": 0.9795437664995733,
+            "mean_native_retained_target_layer_mass": 0.5754598893144628,
+            "mean_normalized_temporal_coverage_span": 0.65,
+            "mean_native_source_target_spearman": 0.6933333333333335
+          },
+          "num_stable_examples": 3,
+          "mean_logp_delta": -0.0007180709671566662,
+          "logp_ci95": [
+            -0.27989532248975196,
+            0.34173235427784654
+          ],
+          "mean_margin_delta": 0.08333333333333333,
+          "margin_ci95": [
+            -0.28125,
+            0.625
+          ]
+        }
+      }
+    },
+    "heldout": {
+      "num_examples": 56,
+      "num_layer_rows": 840,
+      "metrics": {
+        "adaptive_minus_dense_correct_answer_log_probability": {
+          "mean": -0.010659013978600097,
+          "median": -0.01635942937872871,
+          "ci95": [
+            -0.11378124424127974,
+            0.08784828982175895
+          ],
+          "n": 56
+        },
+        "adaptive_minus_dense_answer_margin": {
+          "mean": -0.07142857142857142,
+          "median": -0.125,
+          "ci95": [
+            -0.23098210623461854,
+            0.06547619047619048
+          ],
+          "n": 56
+        },
+        "adaptive_minus_random_correct_answer_log_probability": {
+          "mean": -0.017776069219103748,
+          "median": 0.009287668726545961,
+          "ci95": [
+            -0.18670321384153815,
+            0.13705164357362673
+          ],
+          "n": 56
+        },
+        "adaptive_minus_random_answer_margin": {
+          "mean": -0.078125,
+          "median": 0.0,
+          "ci95": [
+            -0.31146716101694916,
+            0.15385044642857137
+          ],
+          "n": 56
+        },
+        "adaptive_minus_uniform_correct_answer_log_probability": {
+          "mean": -0.02527137390232141,
+          "median": 0.0,
+          "ci95": [
+            -0.1933883559544319,
+            0.07211326105823515
+          ],
+          "n": 56
+        },
+        "adaptive_minus_uniform_answer_margin": {
+          "mean": -0.06919642857142858,
+          "median": 0.0,
+          "ci95": [
+            -0.36337343884582257,
+            0.08250223214285711
+          ],
+          "n": 56
+        }
+      },
+      "hypotheses": {
+        "adaptive_minus_dense_correct_answer_log_probability": {
+          "overall": {
+            "mean": -0.010659013978600097,
+            "median": -0.01635942937872871,
+            "ci95": [
+              -0.11845044727968099,
+              0.08819459944055558
+            ],
+            "n": 56
+          },
+          "H1_entropy": {
+            "spearman": -0.2901572112098428,
+            "spearman_ci95": [
+              -0.5040484613105641,
+              -0.0399729525740649
+            ],
+            "median_split": {
+              "threshold": 0.9762455598363795,
+              "high_mean": -0.09166134074923812,
+              "low_mean": 0.0703433127920379,
+              "high_minus_low": -0.16200465354127602,
+              "ci95": [
+                -0.3042619063396318,
+                0.0109837033142735
+              ],
+              "n": 56
+            }
+          },
+          "H1_retained_mass": {
+            "spearman": 0.31367053998632954,
+            "spearman_ci95": [
+              0.02466824046001631,
+              0.5543089458963998
+            ],
+            "median_split": {
+              "threshold": 0.5918528680798563,
+              "high_mean": 0.02143575342832284,
+              "low_mean": -0.042753781385523035,
+              "high_minus_low": 0.06418953481384587,
+              "ci95": [
+                -0.07751139006198869,
+                0.2452577370175774
+              ],
+              "n": 56
+            }
+          },
+          "H2_adjacent_selection": {
+            "spearman": 0.01453677507242755,
+            "spearman_ci95": [
+              -0.28457153491371345,
+              0.3287637980291301
+            ],
+            "median_split": {
+              "threshold": 0.6,
+              "high_mean": -0.02184550978626219,
+              "low_mean": 0.003212240822900907,
+              "high_minus_low": -0.0250577506091631,
+              "ci95": [
+                -0.2727406931299479,
+                0.14794649768300183
+              ],
+              "n": 56
+            }
+          },
+          "H2_temporal_coverage": {
+            "spearman": 0.011048795097404633,
+            "spearman_ci95": [
+              -0.2934832363261021,
+              0.30649139777182255
+            ],
+            "median_split": {
+              "threshold": 0.6,
+              "high_mean": -0.010219522564712187,
+              "low_mean": -0.011338227981881414,
+              "high_minus_low": 0.0011187054171692273,
+              "ci95": [
+                -0.1750226454528475,
+                0.17171447676931362
+              ],
+              "n": 56
+            }
+          },
+          "H3_route_agreement": {
+            "spearman": 0.3290377761268297,
+            "spearman_ci95": [
+              0.13844939910278628,
+              0.5047100333772518
+            ],
+            "median_split": {
+              "threshold": 0.78,
+              "high_mean": 0.09104503534002843,
+              "low_mean": -0.11236306329722864,
+              "high_minus_low": 0.20340809863725706,
+              "ci95": [
+                0.05937094964143699,
+                0.3004709089728847
+              ],
+              "n": 56
+            }
+          }
+        },
+        "adaptive_minus_dense_answer_margin": {
+          "overall": {
+            "mean": -0.07142857142857142,
+            "median": -0.125,
+            "ci95": [
+              -0.23670562709966406,
+              0.06473643543956038
+            ],
+            "n": 56
+          },
+          "H1_entropy": {
+            "spearman": -0.2871606876510573,
+            "spearman_ci95": [
+              -0.45251744562612756,
+              -0.11470619016663115
+            ],
+            "median_split": {
+              "threshold": 0.9762455598363795,
+              "high_mean": -0.17857142857142858,
+              "low_mean": 0.03571428571428571,
+              "high_minus_low": -0.2142857142857143,
+              "ci95": [
+                -0.44140625,
+                0.008341013824884681
+              ],
+              "n": 56
+            }
+          },
+          "H1_retained_mass": {
+            "spearman": 0.28120042382818594,
+            "spearman_ci95": [
+              0.013310899971038218,
+              0.503644600693634
+            ],
+            "median_split": {
+              "threshold": 0.5918528680798563,
+              "high_mean": -0.026785714285714284,
+              "low_mean": -0.11607142857142858,
+              "high_minus_low": 0.08928571428571429,
+              "ci95": [
+                -0.13103041120619244,
+                0.347583912037037
+              ],
+              "n": 56
+            }
+          },
+          "H2_adjacent_selection": {
+            "spearman": -0.01583144342448571,
+            "spearman_ci95": [
+              -0.32537079793563317,
+              0.3179615336168815
+            ],
+            "median_split": {
+              "threshold": 0.6,
+              "high_mean": -0.07258064516129033,
+              "low_mean": -0.07,
+              "high_minus_low": -0.002580645161290321,
+              "ci95": [
+                -0.4536764705882353,
+                0.26785714285714285
+              ],
+              "n": 56
+            }
+          },
+          "H2_temporal_coverage": {
+            "spearman": 0.028613230714041354,
+            "spearman_ci95": [
+              -0.2960292470744958,
+              0.3454523872659761
+            ],
+            "median_split": {
+              "threshold": 0.6,
+              "high_mean": -0.06985294117647059,
+              "low_mean": -0.07386363636363637,
+              "high_minus_low": 0.0040106951871657776,
+              "ci95": [
+                -0.2976190476190476,
+                0.264616506681724
+              ],
+              "n": 56
+            }
+          },
+          "H3_route_agreement": {
+            "spearman": 0.21236638478136405,
+            "spearman_ci95": [
+              0.08000379987890545,
+              0.3098369100188784
+            ],
+            "median_split": {
+              "threshold": 0.78,
+              "high_mean": 0.044642857142857144,
+              "low_mean": -0.1875,
+              "high_minus_low": 0.23214285714285715,
+              "ci95": [
+                0.0005253232758620789,
+                0.38240116995073864
+              ],
+              "n": 56
+            }
+          }
+        },
+        "H4_stable_high_mass_well_covered_routes": {
+          "thresholds": {
+            "mean_anchor_native_temporal_entropy": 0.9762455598363795,
+            "mean_native_retained_target_layer_mass": 0.5918528680798563,
+            "mean_normalized_temporal_coverage_span": 0.6,
+            "mean_native_source_target_spearman": 0.78
+          },
+          "num_stable_examples": 11,
+          "mean_logp_delta": 0.13571318335717797,
+          "logp_ci95": [
+            -0.03167934501079973,
+            0.3636479186569511
+          ],
+          "mean_margin_delta": 0.10227272727272728,
+          "margin_ci95": [
+            -0.20833333333333334,
+            0.5
+          ]
+        }
+      }
+    }
+  },
+  "recommendation": "shorter/dynamic refresh"
+}

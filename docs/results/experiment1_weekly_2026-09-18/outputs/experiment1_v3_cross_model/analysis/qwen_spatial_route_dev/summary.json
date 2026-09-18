@@ -1,0 +1,307 @@
+{
+  "inputs": {
+    "baseline_dir": "outputs/experiment1_v3_cross_model/runs/qwen/baseline_spatial",
+    "condition_dirs": {
+      "adaptive": "outputs/experiment1_v3_cross_model/runs/qwen/spatial_route_gap4_top50_dev",
+      "random": "outputs/experiment1_v3_cross_model/runs/qwen/spatial_random_gap4_top50_dev",
+      "uniform": "outputs/experiment1_v3_cross_model/runs/qwen/spatial_uniform_gap4_top50_dev"
+    },
+    "dev_manifest": "outputs/experiment1_v3_cross_model/manifests/dev_eligible_8frame.jsonl"
+  },
+  "bootstrap_samples": 10000,
+  "seed": 20260917,
+  "validation": {
+    "conditions": {
+      "adaptive": {
+        "num_examples": 15,
+        "condition": "spatial_route_gap4_top50",
+        "execution_commits": [
+          "459e5999b418f4fc9f743ecfbcb1d35a32d92f7a"
+        ],
+        "route_manifest_commits": [
+          "459e5999b418f4fc9f743ecfbcb1d35a32d92f7a"
+        ],
+        "question_ids": [
+          "fine_grained_action_localization_3168",
+          "fine_grained_action_localization_5424",
+          "fine_grained_action_localization_9427",
+          "fine_grained_action_recognition_1705",
+          "fine_grained_action_recognition_284",
+          "fine_grained_action_recognition_3572",
+          "gaze_interaction_anticipation_41",
+          "gaze_interaction_anticipation_5",
+          "gaze_interaction_anticipation_926",
+          "ingredient_ingredient_adding_localization_23",
+          "ingredient_ingredient_adding_localization_91",
+          "ingredient_ingredient_weight_5",
+          "object_motion_object_movement_itinerary_286",
+          "object_motion_object_movement_itinerary_433",
+          "object_motion_object_movement_itinerary_61"
+        ]
+      },
+      "random": {
+        "num_examples": 15,
+        "condition": "spatial_random_gap4_top50",
+        "execution_commits": [
+          "459e5999b418f4fc9f743ecfbcb1d35a32d92f7a"
+        ],
+        "route_manifest_commits": [
+          "459e5999b418f4fc9f743ecfbcb1d35a32d92f7a"
+        ],
+        "question_ids": [
+          "fine_grained_action_localization_3168",
+          "fine_grained_action_localization_5424",
+          "fine_grained_action_localization_9427",
+          "fine_grained_action_recognition_1705",
+          "fine_grained_action_recognition_284",
+          "fine_grained_action_recognition_3572",
+          "gaze_interaction_anticipation_41",
+          "gaze_interaction_anticipation_5",
+          "gaze_interaction_anticipation_926",
+          "ingredient_ingredient_adding_localization_23",
+          "ingredient_ingredient_adding_localization_91",
+          "ingredient_ingredient_weight_5",
+          "object_motion_object_movement_itinerary_286",
+          "object_motion_object_movement_itinerary_433",
+          "object_motion_object_movement_itinerary_61"
+        ]
+      },
+      "uniform": {
+        "num_examples": 15,
+        "condition": "spatial_uniform_gap4_top50",
+        "execution_commits": [
+          "459e5999b418f4fc9f743ecfbcb1d35a32d92f7a"
+        ],
+        "route_manifest_commits": [
+          "459e5999b418f4fc9f743ecfbcb1d35a32d92f7a"
+        ],
+        "question_ids": [
+          "fine_grained_action_localization_3168",
+          "fine_grained_action_localization_5424",
+          "fine_grained_action_localization_9427",
+          "fine_grained_action_recognition_1705",
+          "fine_grained_action_recognition_284",
+          "fine_grained_action_recognition_3572",
+          "gaze_interaction_anticipation_41",
+          "gaze_interaction_anticipation_5",
+          "gaze_interaction_anticipation_926",
+          "ingredient_ingredient_adding_localization_23",
+          "ingredient_ingredient_adding_localization_91",
+          "ingredient_ingredient_weight_5",
+          "object_motion_object_movement_itinerary_286",
+          "object_motion_object_movement_itinerary_433",
+          "object_motion_object_movement_itinerary_61"
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "conditions": {
+      "adaptive": {
+        "num_examples": 15,
+        "log_probability_delta": {
+          "mean": 0.028702201466851693,
+          "median": 0.018356677034974123,
+          "ci95": [
+            -0.020690596006898633,
+            0.10496516736009238
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": 0.058333333333333334,
+          "median": 0.0,
+          "ci95": [
+            -0.017857142857142856,
+            0.16666666666666666
+          ],
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "routed_accuracy": 0.2,
+        "prediction_flip_rate": 0.13333333333333333,
+        "by_category": {
+          "fine_grained": {
+            "num_examples": 6,
+            "log_probability_delta_mean": -0.003517583175184647,
+            "answer_margin_delta_mean": 0.041666666666666664,
+            "routed_accuracy": 0.3333333333333333
+          },
+          "gaze": {
+            "num_examples": 3,
+            "log_probability_delta_mean": 0.11023671559343706,
+            "answer_margin_delta_mean": 0.16666666666666666,
+            "routed_accuracy": 0.3333333333333333
+          },
+          "ingredient": {
+            "num_examples": 3,
+            "log_probability_delta_mean": -0.014970986536212575,
+            "answer_margin_delta_mean": 0.0,
+            "routed_accuracy": 0.0
+          },
+          "object_motion": {
+            "num_examples": 3,
+            "log_probability_delta_mean": 0.05528044462740326,
+            "answer_margin_delta_mean": 0.041666666666666664,
+            "routed_accuracy": 0.0
+          }
+        }
+      },
+      "random": {
+        "num_examples": 15,
+        "log_probability_delta": {
+          "mean": 0.0011777252833341744,
+          "median": 0.009223391364425071,
+          "ci95": [
+            -0.1004807821185125,
+            0.10158680766277188
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": 0.041666666666666664,
+          "median": 0.0,
+          "ci95": [
+            -0.09821428571428571,
+            0.1875
+          ],
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "routed_accuracy": 0.13333333333333333,
+        "prediction_flip_rate": 0.06666666666666667,
+        "by_category": {
+          "fine_grained": {
+            "num_examples": 6,
+            "log_probability_delta_mean": 0.049150279881285064,
+            "answer_margin_delta_mean": 0.0625,
+            "routed_accuracy": 0.3333333333333333
+          },
+          "gaze": {
+            "num_examples": 3,
+            "log_probability_delta_mean": -0.019874845306184847,
+            "answer_margin_delta_mean": 0.0,
+            "routed_accuracy": 0.0
+          },
+          "ingredient": {
+            "num_examples": 3,
+            "log_probability_delta_mean": -0.0778292610075652,
+            "answer_margin_delta_mean": 0.0,
+            "routed_accuracy": 0.0
+          },
+          "object_motion": {
+            "num_examples": 3,
+            "log_probability_delta_mean": 0.005292172967850783,
+            "answer_margin_delta_mean": 0.08333333333333333,
+            "routed_accuracy": 0.0
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 15,
+        "log_probability_delta": {
+          "mean": 0.041703223154083764,
+          "median": 0.04501128895523099,
+          "ci95": [
+            -0.08726025166719044,
+            0.20041586341497133
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": 0.1,
+          "median": 0.25,
+          "ci95": [
+            -0.0703125,
+            0.3035993303571424
+          ],
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "routed_accuracy": 0.2,
+        "prediction_flip_rate": 0.13333333333333333,
+        "by_category": {
+          "fine_grained": {
+            "num_examples": 6,
+            "log_probability_delta_mean": -0.028908823267730283,
+            "answer_margin_delta_mean": 0.020833333333333332,
+            "routed_accuracy": 0.3333333333333333
+          },
+          "gaze": {
+            "num_examples": 3,
+            "log_probability_delta_mean": 0.31696489435882225,
+            "answer_margin_delta_mean": 0.4166666666666667,
+            "routed_accuracy": 0.3333333333333333
+          },
+          "ingredient": {
+            "num_examples": 3,
+            "log_probability_delta_mean": -0.11114509740379168,
+            "answer_margin_delta_mean": -0.08333333333333333,
+            "routed_accuracy": 0.0
+          },
+          "object_motion": {
+            "num_examples": 3,
+            "log_probability_delta_mean": 0.06051396535084878,
+            "answer_margin_delta_mean": 0.125,
+            "routed_accuracy": 0.0
+          }
+        }
+      }
+    },
+    "paired_differences": {
+      "adaptive_minus_random": {
+        "log_probability_delta": {
+          "mean": 0.027524476183517516,
+          "median": 0.034095623973119604,
+          "ci95": [
+            -0.08662072166220582,
+            0.1484473501680615
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": 0.016666666666666666,
+          "median": 0.0,
+          "ci95": [
+            -0.15,
+            0.225
+          ],
+          "n": 15
+        }
+      },
+      "adaptive_minus_uniform": {
+        "log_probability_delta": {
+          "mean": -0.013001021687232066,
+          "median": -0.04178228811117335,
+          "ci95": [
+            -0.14517889959965946,
+            0.11098604169809094
+          ],
+          "n": 15
+        },
+        "answer_margin_delta": {
+          "mean": -0.041666666666666664,
+          "median": -0.125,
+          "ci95": [
+            -0.1875,
+            0.11366003787878753
+          ],
+          "n": 15
+        }
+      }
+    },
+    "development_gate": {
+      "status": "REJECT",
+      "scope": "development kill test only; this is not held-out confirmatory evidence.",
+      "inputs": {
+        "adaptive_minus_random_mean_logp": 0.027524476183517516,
+        "adaptive_minus_uniform_mean_logp": -0.013001021687232066,
+        "adaptive_minus_random_mean_margin": 0.016666666666666666,
+        "adaptive_minus_uniform_mean_margin": -0.041666666666666664,
+        "adaptive_routed_accuracy": 0.2,
+        "random_routed_accuracy": 0.13333333333333333,
+        "uniform_routed_accuracy": 0.2
+      }
+    }
+  }
+}

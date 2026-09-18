@@ -1,0 +1,369 @@
+{
+  "validation": {
+    "num_artifacts": 77,
+    "num_source_videos": 77,
+    "min_bins": 8,
+    "median_bins": 8.0,
+    "max_bins": 64
+  },
+  "normalization": "For each example and layer: lift = B * p(bin); plotted heatmaps show lift - 1 after interpolation at relative-time bin centers. Uniform attention is zero.",
+  "aggregation": "Each source video receives equal weight. Curve intervals use hierarchical participant-then-video bootstrap.",
+  "encoder_heatmap": {
+    "max_absolute_lift_deviation": 9.966250384962905e-07,
+    "color_limit": 0.05
+  },
+  "decoder_heatmap": {
+    "max_absolute_lift_deviation": 1.3266424824273937,
+    "color_limit": 1.3266424824273937
+  },
+  "encoder_adjacent_vs_far": {
+    "raw": {
+      "vision_block_early": {
+        "mean": 0.002057919070357115,
+        "ci95": [
+          0.0012091014547268878,
+          0.0030558856327375125
+        ]
+      },
+      "vision_block_middle": {
+        "mean": 0.014813698053942427,
+        "ci95": [
+          0.011379842527773205,
+          0.018849691177336078
+        ]
+      },
+      "vision_block_late": {
+        "mean": 1.4350766286357515e-05,
+        "ci95": [
+          1.121902370842234e-05,
+          1.766538786813194e-05
+        ]
+      },
+      "vision_merger_pre_reverse": {
+        "mean": 0.026257978420270205,
+        "ci95": [
+          0.020222732081557473,
+          0.032245075322058815
+        ]
+      },
+      "vision_final": {
+        "mean": 0.026257978420270205,
+        "ci95": [
+          0.020215983242056763,
+          0.032430051677867285
+        ]
+      }
+    },
+    "mean-centered": {
+      "vision_block_early": {
+        "mean": 0.32664798789274785,
+        "ci95": [
+          0.24814399232712597,
+          0.428941402533088
+        ]
+      },
+      "vision_block_middle": {
+        "mean": 0.47793772266918605,
+        "ci95": [
+          0.419591331343856,
+          0.5518034504040934
+        ]
+      },
+      "vision_block_late": {
+        "mean": 0.3692273866435873,
+        "ci95": [
+          0.23468364711219153,
+          0.5116496752249604
+        ]
+      },
+      "vision_merger_pre_reverse": {
+        "mean": 0.44297227588748717,
+        "ci95": [
+          0.3990618421776299,
+          0.497393187490559
+        ]
+      },
+      "vision_final": {
+        "mean": 0.44297227588748717,
+        "ci95": [
+          0.3970904742045663,
+          0.49053263022286103
+        ]
+      }
+    }
+  },
+  "layer_14_check": {
+    "fine_grained_action_localization": {
+      "n": 13,
+      "layers": [
+        {
+          "layer": 13,
+          "entropy_mean": 0.8583106361146707,
+          "entropy_median": 0.859784803924657,
+          "entropy_iqr": [
+            0.8332903458672487,
+            0.8719564343161867
+          ],
+          "absolute_visual_mass_mean": 0.39332917881225143,
+          "absolute_visual_mass_median": 0.3942516519222612
+        },
+        {
+          "layer": 14,
+          "entropy_mean": 0.9473276281080449,
+          "entropy_median": 0.9543100576779828,
+          "entropy_iqr": [
+            0.938921627690604,
+            0.9607299002100979
+          ],
+          "absolute_visual_mass_mean": 0.2982021728997765,
+          "absolute_visual_mass_median": 0.3004784329632107
+        },
+        {
+          "layer": 15,
+          "entropy_mean": 0.8913602061480674,
+          "entropy_median": 0.8979714902793448,
+          "entropy_iqr": [
+            0.8787168764588384,
+            0.9038823039672249
+          ],
+          "absolute_visual_mass_mean": 0.4031702057496398,
+          "absolute_visual_mass_median": 0.4029701230932625
+        }
+      ]
+    },
+    "fine_grained_action_recognition": {
+      "n": 25,
+      "layers": [
+        {
+          "layer": 13,
+          "entropy_mean": 0.9810628789781737,
+          "entropy_median": 0.9823619956931975,
+          "entropy_iqr": [
+            0.9759045193394489,
+            0.9854427986378229
+          ],
+          "absolute_visual_mass_mean": 0.2046962282140396,
+          "absolute_visual_mass_median": 0.2027802373907832
+        },
+        {
+          "layer": 14,
+          "entropy_mean": 0.9476834836352915,
+          "entropy_median": 0.9455337843992803,
+          "entropy_iqr": [
+            0.9404644742259274,
+            0.9515593197706687
+          ],
+          "absolute_visual_mass_mean": 0.20347220852511755,
+          "absolute_visual_mass_median": 0.20156953149567514
+        },
+        {
+          "layer": 15,
+          "entropy_mean": 0.9979293781960241,
+          "entropy_median": 0.9981738375112408,
+          "entropy_iqr": [
+            0.9974013504083369,
+            0.9987380437507047
+          ],
+          "absolute_visual_mass_mean": 0.18369634117110992,
+          "absolute_visual_mass_median": 0.18295278390300496
+        }
+      ]
+    },
+    "fine_grained_why_recognition": {
+      "n": 1,
+      "layers": [
+        {
+          "layer": 13,
+          "entropy_mean": 0.988768813121276,
+          "entropy_median": 0.988768813121276,
+          "entropy_iqr": [
+            0.988768813121276,
+            0.988768813121276
+          ],
+          "absolute_visual_mass_mean": 0.2757959548509632,
+          "absolute_visual_mass_median": 0.2757959548509632
+        },
+        {
+          "layer": 14,
+          "entropy_mean": 0.9553794611423698,
+          "entropy_median": 0.9553794611423698,
+          "entropy_iqr": [
+            0.9553794611423698,
+            0.9553794611423698
+          ],
+          "absolute_visual_mass_mean": 0.24589953047628654,
+          "absolute_visual_mass_median": 0.24589953047628654
+        },
+        {
+          "layer": 15,
+          "entropy_mean": 0.9990876763037787,
+          "entropy_median": 0.9990876763037787,
+          "entropy_iqr": [
+            0.9990876763037787,
+            0.9990876763037787
+          ],
+          "absolute_visual_mass_mean": 0.21552678821689142,
+          "absolute_visual_mass_median": 0.21552678821689142
+        }
+      ]
+    },
+    "gaze_interaction_anticipation": {
+      "n": 13,
+      "layers": [
+        {
+          "layer": 13,
+          "entropy_mean": 0.9821288443519556,
+          "entropy_median": 0.9832042438460407,
+          "entropy_iqr": [
+            0.9799764912822956,
+            0.9874332627932401
+          ],
+          "absolute_visual_mass_mean": 0.285658217938163,
+          "absolute_visual_mass_median": 0.2854669460684107
+        },
+        {
+          "layer": 14,
+          "entropy_mean": 0.9814708127113871,
+          "entropy_median": 0.9831245535336204,
+          "entropy_iqr": [
+            0.9769877728839053,
+            0.9887355945829092
+          ],
+          "absolute_visual_mass_mean": 0.25153092002334054,
+          "absolute_visual_mass_median": 0.2502740968349002
+        },
+        {
+          "layer": 15,
+          "entropy_mean": 0.978696123913881,
+          "entropy_median": 0.9816875086728888,
+          "entropy_iqr": [
+            0.9731627777950517,
+            0.9859928197601024
+          ],
+          "absolute_visual_mass_mean": 0.20213272705805815,
+          "absolute_visual_mass_median": 0.2020662318764721
+        }
+      ]
+    },
+    "ingredient_ingredient_adding_localization": {
+      "n": 8,
+      "layers": [
+        {
+          "layer": 13,
+          "entropy_mean": 0.8606321026551833,
+          "entropy_median": 0.8563342680167563,
+          "entropy_iqr": [
+            0.8418892333499878,
+            0.8748469191988174
+          ],
+          "absolute_visual_mass_mean": 0.36727283218060414,
+          "absolute_visual_mass_median": 0.3627993185616467
+        },
+        {
+          "layer": 14,
+          "entropy_mean": 0.9496801584476937,
+          "entropy_median": 0.9518748449654526,
+          "entropy_iqr": [
+            0.9354331500043472,
+            0.9692678410785034
+          ],
+          "absolute_visual_mass_mean": 0.3093581067999456,
+          "absolute_visual_mass_median": 0.3125697723905285
+        },
+        {
+          "layer": 15,
+          "entropy_mean": 0.9049248744904577,
+          "entropy_median": 0.904995292435782,
+          "entropy_iqr": [
+            0.8901225258081817,
+            0.921396754501818
+          ],
+          "absolute_visual_mass_mean": 0.3603749751747819,
+          "absolute_visual_mass_median": 0.35948888013009145
+        }
+      ]
+    },
+    "ingredient_ingredient_weight": {
+      "n": 5,
+      "layers": [
+        {
+          "layer": 13,
+          "entropy_mean": 0.9412267493898174,
+          "entropy_median": 0.9385932363035665,
+          "entropy_iqr": [
+            0.9348602820125269,
+            0.9592265445124258
+          ],
+          "absolute_visual_mass_mean": 0.3303608612125327,
+          "absolute_visual_mass_median": 0.338808349876796
+        },
+        {
+          "layer": 14,
+          "entropy_mean": 0.9583085821146267,
+          "entropy_median": 0.9596224173284164,
+          "entropy_iqr": [
+            0.9506602734180948,
+            0.9676383487362569
+          ],
+          "absolute_visual_mass_mean": 0.32972724020259997,
+          "absolute_visual_mass_median": 0.3546645219060487
+        },
+        {
+          "layer": 15,
+          "entropy_mean": 0.9509716995990436,
+          "entropy_median": 0.9457063904419917,
+          "entropy_iqr": [
+            0.938088441408411,
+            0.9595611726250821
+          ],
+          "absolute_visual_mass_mean": 0.32780122986566457,
+          "absolute_visual_mass_median": 0.3402966849334206
+        }
+      ]
+    },
+    "object_motion_object_movement_itinerary": {
+      "n": 12,
+      "layers": [
+        {
+          "layer": 13,
+          "entropy_mean": 0.8506669035803222,
+          "entropy_median": 0.851061407287276,
+          "entropy_iqr": [
+            0.8399747593327908,
+            0.8641124746545967
+          ],
+          "absolute_visual_mass_mean": 0.30272054029160506,
+          "absolute_visual_mass_median": 0.3052698245808375
+        },
+        {
+          "layer": 14,
+          "entropy_mean": 0.9518189223457606,
+          "entropy_median": 0.9550820821213032,
+          "entropy_iqr": [
+            0.9483008262615041,
+            0.9591083920355034
+          ],
+          "absolute_visual_mass_mean": 0.2571825155168076,
+          "absolute_visual_mass_median": 0.25774682529336135
+        },
+        {
+          "layer": 15,
+          "entropy_mean": 0.8705154318923515,
+          "entropy_median": 0.8700823268384421,
+          "entropy_iqr": [
+            0.8577833413429184,
+            0.8814626977679486
+          ],
+          "absolute_visual_mass_mean": 0.37142285896869787,
+          "absolute_visual_mass_median": 0.3693068859466855
+        }
+      ]
+    }
+  },
+  "guardrails": [
+    "Absolute duration remains confounded with question type in this 77-video manifest.",
+    "Question types with fewer than five examples are excluded from stratified curves.",
+    "Attention concentration is descriptive until positional, query-mismatch, and causal controls are complete.",
+    "Encoder representation similarity is available only at the five captured stages, not all 32 blocks."
+  ]
+}

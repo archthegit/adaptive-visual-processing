@@ -1,0 +1,1 @@
+{"question_id": "gaze_interaction_anticipation_537", "category": "gaze", "question_type": "gaze_interaction_anticipation", "status": "complete", "artifact": "outputs/experiment1_v3_cross_model/smoke_vila_v7/bins8/gaze_interaction_anticipation_537.json", "correct": false, "predicted_idx": 2, "num_visual_tokens": 1576, "num_temporal_bins": 8, "peak_cuda_memory_bytes": 35883162624}

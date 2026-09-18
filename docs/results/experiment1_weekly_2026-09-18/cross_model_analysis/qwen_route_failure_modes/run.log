@@ -1,0 +1,4 @@
+{
+  "output_dir": "outputs/experiment1_v3_cross_model/analysis/qwen_route_failure_modes",
+  "recommendation": "shorter/dynamic refresh"
+}

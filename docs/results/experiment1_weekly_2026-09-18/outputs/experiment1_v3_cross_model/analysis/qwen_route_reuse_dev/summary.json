@@ -1,0 +1,589 @@
+{
+  "inputs": {
+    "baseline_dir": "outputs/experiment1_v3_cross_model/runs/qwen/baseline",
+    "condition_dirs": {
+      "adaptive": "outputs/experiment1_v3_cross_model/runs/qwen/route_reuse_gap4_top50_dev",
+      "random": "outputs/experiment1_v3_cross_model/runs/qwen/random_reuse_gap4_top50_dev",
+      "uniform": "outputs/experiment1_v3_cross_model/runs/qwen/uniform_reuse_gap4_top50_dev"
+    },
+    "dev_manifest": "outputs/experiment1_v3_cross_model/manifests/dev_eligible_8frame.jsonl"
+  },
+  "bootstrap_samples": 10000,
+  "seed": 20260915,
+  "validation": {
+    "conditions": {
+      "adaptive": {
+        "num_examples": 15,
+        "question_ids": [
+          "fine_grained_action_localization_3168",
+          "fine_grained_action_localization_5424",
+          "fine_grained_action_localization_9427",
+          "fine_grained_action_recognition_1705",
+          "fine_grained_action_recognition_284",
+          "fine_grained_action_recognition_3572",
+          "gaze_interaction_anticipation_41",
+          "gaze_interaction_anticipation_5",
+          "gaze_interaction_anticipation_926",
+          "ingredient_ingredient_adding_localization_23",
+          "ingredient_ingredient_adding_localization_91",
+          "ingredient_ingredient_weight_5",
+          "object_motion_object_movement_itinerary_286",
+          "object_motion_object_movement_itinerary_433",
+          "object_motion_object_movement_itinerary_61"
+        ]
+      },
+      "random": {
+        "num_examples": 15,
+        "question_ids": [
+          "fine_grained_action_localization_3168",
+          "fine_grained_action_localization_5424",
+          "fine_grained_action_localization_9427",
+          "fine_grained_action_recognition_1705",
+          "fine_grained_action_recognition_284",
+          "fine_grained_action_recognition_3572",
+          "gaze_interaction_anticipation_41",
+          "gaze_interaction_anticipation_5",
+          "gaze_interaction_anticipation_926",
+          "ingredient_ingredient_adding_localization_23",
+          "ingredient_ingredient_adding_localization_91",
+          "ingredient_ingredient_weight_5",
+          "object_motion_object_movement_itinerary_286",
+          "object_motion_object_movement_itinerary_433",
+          "object_motion_object_movement_itinerary_61"
+        ]
+      },
+      "uniform": {
+        "num_examples": 15,
+        "question_ids": [
+          "fine_grained_action_localization_3168",
+          "fine_grained_action_localization_5424",
+          "fine_grained_action_localization_9427",
+          "fine_grained_action_recognition_1705",
+          "fine_grained_action_recognition_284",
+          "fine_grained_action_recognition_3572",
+          "gaze_interaction_anticipation_41",
+          "gaze_interaction_anticipation_5",
+          "gaze_interaction_anticipation_926",
+          "ingredient_ingredient_adding_localization_23",
+          "ingredient_ingredient_adding_localization_91",
+          "ingredient_ingredient_weight_5",
+          "object_motion_object_movement_itinerary_286",
+          "object_motion_object_movement_itinerary_433",
+          "object_motion_object_movement_itinerary_61"
+        ]
+      }
+    },
+    "execution_code_commits": [
+      "f61cbd0fa9326e47354a2ce66cca194f466e0be2"
+    ],
+    "route_manifest_commits": [
+      "f61cbd0fa9326e47354a2ce66cca194f466e0be2"
+    ],
+    "code_commits": [
+      "f61cbd0fa9326e47354a2ce66cca194f466e0be2"
+    ]
+  },
+  "conditions": {
+    "adaptive": {
+      "num_examples": 15,
+      "dense_accuracy": 0.2,
+      "routed_accuracy": 0.26666666666666666,
+      "prediction_flip_rate": 0.06666666666666667,
+      "metrics": {
+        "delta_correct_choice_log_probability": {
+          "mean": 0.14870223357206405,
+          "median": 0.0300311177854007,
+          "ci95": [
+            -0.03667277748155155,
+            0.42990571364022445
+          ],
+          "n": 15
+        },
+        "delta_answer_margin": {
+          "mean": 0.2916666666666667,
+          "median": 0.0,
+          "ci95": [
+            0.017857142857142856,
+            0.6979166666666666
+          ],
+          "n": 15
+        }
+      }
+    },
+    "random": {
+      "num_examples": 15,
+      "dense_accuracy": 0.2,
+      "routed_accuracy": 0.2,
+      "prediction_flip_rate": 0.13333333333333333,
+      "metrics": {
+        "delta_correct_choice_log_probability": {
+          "mean": -0.09177508059184387,
+          "median": 0.005192166237588669,
+          "ci95": [
+            -0.3817061828277633,
+            0.21828279281066978
+          ],
+          "n": 15
+        },
+        "delta_answer_margin": {
+          "mean": -0.03333333333333333,
+          "median": 0.0,
+          "ci95": [
+            -0.32695312499999996,
+            0.33035714285714285
+          ],
+          "n": 15
+        }
+      }
+    },
+    "uniform": {
+      "num_examples": 15,
+      "dense_accuracy": 0.2,
+      "routed_accuracy": 0.2,
+      "prediction_flip_rate": 0.2,
+      "metrics": {
+        "delta_correct_choice_log_probability": {
+          "mean": 0.0823627619796906,
+          "median": 0.17513742410775646,
+          "ci95": [
+            -0.1980065800216495,
+            0.3084348868686029
+          ],
+          "n": 15
+        },
+        "delta_answer_margin": {
+          "mean": 0.23333333333333334,
+          "median": 0.25,
+          "ci95": [
+            -0.057692307692307696,
+            0.53125
+          ],
+          "n": 15
+        }
+      }
+    }
+  },
+  "paired_adaptive_control_differences": {
+    "adaptive_minus_random": {
+      "delta_correct_choice_log_probability": {
+        "mean": 0.24047731416390794,
+        "median": 0.11796572312945108,
+        "ci95": [
+          0.014809145241079,
+          0.606744032304364
+        ],
+        "n": 15
+      },
+      "delta_answer_margin": {
+        "mean": 0.325,
+        "median": 0.125,
+        "ci95": [
+          0.07236842105263158,
+          0.7403846153846154
+        ],
+        "n": 15
+      }
+    },
+    "adaptive_minus_uniform": {
+      "delta_correct_choice_log_probability": {
+        "mean": 0.06633947159237347,
+        "median": 0.0,
+        "ci95": [
+          -0.11064067412013816,
+          0.3699492626602263
+        ],
+        "n": 15
+      },
+      "delta_answer_margin": {
+        "mean": 0.058333333333333334,
+        "median": 0.0,
+        "ci95": [
+          -0.16071428571428573,
+          0.3854166666666667
+        ],
+        "n": 15
+      }
+    }
+  },
+  "exploratory_category_breakdowns": {
+    "fine_grained": {
+      "adaptive": {
+        "num_examples": 6,
+        "dense_accuracy": 0.5,
+        "routed_accuracy": 0.5,
+        "prediction_flip_rate": 0.0,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.04469760353144375,
+            "median": 0.02048791313805432,
+            "ci95": [
+              -0.11134393840283296,
+              0.18185277658066115
+            ],
+            "n": 6
+          },
+          "delta_answer_margin": {
+            "mean": 0.16666666666666666,
+            "median": 0.125,
+            "ci95": [
+              -0.03125,
+              0.39285714285714285
+            ],
+            "n": 6
+          }
+        }
+      },
+      "random": {
+        "num_examples": 6,
+        "dense_accuracy": 0.5,
+        "routed_accuracy": 0.3333333333333333,
+        "prediction_flip_rate": 0.16666666666666666,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.0787069379585113,
+            "median": -0.032161708245846715,
+            "ci95": [
+              -0.214795821616991,
+              0.02122687480939402
+            ],
+            "n": 6
+          },
+          "delta_answer_margin": {
+            "mean": -0.08333333333333333,
+            "median": -0.0625,
+            "ci95": [
+              -0.25,
+              0.07142857142857142
+            ],
+            "n": 6
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 6,
+        "dense_accuracy": 0.5,
+        "routed_accuracy": 0.3333333333333333,
+        "prediction_flip_rate": 0.16666666666666666,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.012960651156154655,
+            "median": 0.03979693180986422,
+            "ci95": [
+              -0.15623477513210063,
+              0.13381452707633698
+            ],
+            "n": 6
+          },
+          "delta_answer_margin": {
+            "mean": 0.10416666666666667,
+            "median": 0.25,
+            "ci95": [
+              -0.125,
+              0.25
+            ],
+            "n": 6
+          }
+        }
+      }
+    },
+    "gaze": {
+      "adaptive": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.3333333333333333,
+        "prediction_flip_rate": 0.3333333333333333,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.41419551035028296,
+            "median": 0.655487931539887,
+            "ci95": [
+              -0.12118672122930474,
+              0.7082853207402664
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": 0.7083333333333334,
+            "median": 0.875,
+            "ci95": [
+              -0.125,
+              1.375
+            ],
+            "n": 3
+          }
+        }
+      },
+      "random": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.3333333333333333,
+        "prediction_flip_rate": 0.3333333333333333,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.20586811126900373,
+            "median": 0.058063346001425264,
+            "ci95": [
+              -1.1048504834268282,
+              0.4291828036183918
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": -0.08333333333333333,
+            "median": 0.125,
+            "ci95": [
+              -1.125,
+              0.75
+            ],
+            "n": 3
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.3333333333333333,
+        "prediction_flip_rate": 0.6666666666666666,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.09721807125793203,
+            "median": 0.6563118181367769,
+            "ci95": [
+              -1.0729429251032472,
+              0.7082853207402664
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": 0.5,
+            "median": 0.875,
+            "ci95": [
+              -0.75,
+              1.375
+            ],
+            "n": 3
+          }
+        }
+      }
+    },
+    "ingredient": {
+      "adaptive": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.0,
+        "prediction_flip_rate": 0.0,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.009068436888496048,
+            "median": 0.04396079421052912,
+            "ci95": [
+              -0.38784736138984566,
+              0.3166812565138284
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": 0.041666666666666664,
+            "median": 0.0,
+            "ci95": [
+              -0.375,
+              0.5
+            ],
+            "n": 3
+          }
+        }
+      },
+      "random": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.0,
+        "prediction_flip_rate": 0.0,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": -0.3713357681540488,
+            "median": -0.21926052189960998,
+            "ci95": [
+              -0.8999389488001249,
+              0.005192166237588669
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": -0.25,
+            "median": -0.125,
+            "ci95": [
+              -0.625,
+              0.0
+            ],
+            "n": 3
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.0,
+        "prediction_flip_rate": 0.0,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.08907538614279382,
+            "median": 0.22831111653792413,
+            "ci95": [
+              -0.323282820246108,
+              0.36219786213656535
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": 0.20833333333333334,
+            "median": 0.375,
+            "ci95": [
+              -0.375,
+              0.625
+            ],
+            "n": 3
+          }
+        }
+      }
+    },
+    "object_motion": {
+      "adaptive": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.0,
+        "prediction_flip_rate": 0.0,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.24898888733564592,
+            "median": -0.021054314864918933,
+            "ci95": [
+              -0.18492081346387623,
+              1.0075639565353853
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": 0.375,
+            "median": 0.0,
+            "ci95": [
+              -0.1875,
+              1.375
+            ],
+            "n": 3
+          }
+        }
+      },
+      "random": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.0,
+        "prediction_flip_rate": 0.0,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.2757423523808556,
+            "median": 0.044557294684316684,
+            "ci95": [
+              -0.10166867103508248,
+              0.9330804220664657
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": 0.3333333333333333,
+            "median": 0.0,
+            "ci95": [
+              -0.09375,
+              1.125
+            ],
+            "n": 3
+          }
+        }
+      },
+      "uniform": {
+        "num_examples": 3,
+        "dense_accuracy": 0.0,
+        "routed_accuracy": 0.0,
+        "prediction_flip_rate": 0.0,
+        "metrics": {
+          "delta_correct_choice_log_probability": {
+            "mean": 0.19959905018541782,
+            "median": 0.2364181417925102,
+            "ci95": [
+              0.10536035880932071,
+              0.30070457761548575
+            ],
+            "n": 3
+          },
+          "delta_answer_margin": {
+            "mean": 0.25,
+            "median": 0.375,
+            "ci95": [
+              0.09375,
+              0.375
+            ],
+            "n": 3
+          }
+        }
+      }
+    }
+  },
+  "prediction_transition_counts": {
+    "adaptive": {
+      "0->0": 2,
+      "1->1": 1,
+      "1->2": 1,
+      "2->2": 2,
+      "3->3": 4,
+      "4->4": 5
+    },
+    "random": {
+      "0->0": 2,
+      "1->1": 1,
+      "1->2": 1,
+      "2->0": 1,
+      "2->2": 1,
+      "3->3": 4,
+      "4->4": 5
+    },
+    "uniform": {
+      "0->0": 2,
+      "1->1": 1,
+      "1->2": 1,
+      "2->2": 1,
+      "2->3": 1,
+      "3->2": 1,
+      "3->3": 3,
+      "4->4": 5
+    }
+  },
+  "causal_gate": {
+    "status": "INCONCLUSIVE",
+    "rule": "PASS if adaptive routing preserves correct-answer log probability and answer margin better than both equal-budget random and uniform controls; FAIL if adaptive is no better than either control; INCONCLUSIVE if point estimates favor adaptive but uncertainty is too large.",
+    "checks": [
+      {
+        "comparison": "adaptive_minus_random",
+        "metric": "delta_correct_choice_log_probability",
+        "mean": 0.24047731416390794,
+        "ci_low": 0.014809145241079
+      },
+      {
+        "comparison": "adaptive_minus_random",
+        "metric": "delta_answer_margin",
+        "mean": 0.325,
+        "ci_low": 0.07236842105263158
+      },
+      {
+        "comparison": "adaptive_minus_uniform",
+        "metric": "delta_correct_choice_log_probability",
+        "mean": 0.06633947159237347,
+        "ci_low": -0.11064067412013816
+      },
+      {
+        "comparison": "adaptive_minus_uniform",
+        "metric": "delta_answer_margin",
+        "mean": 0.058333333333333334,
+        "ci_low": -0.16071428571428573
+      }
+    ]
+  }
+}
