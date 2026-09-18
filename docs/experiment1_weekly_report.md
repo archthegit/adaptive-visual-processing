@@ -15,6 +15,7 @@ Supported findings:
 | Qwen and VILA do not share the same fixed-eight temporal pattern. | `outputs/experiment1_v3_cross_model/matched_baseline_comparison.json` |
 | Hard attention-ranked temporal route replay failed on held-out Qwen examples. | `cross_model_analysis/qwen_route_reuse_heldout/summary.json` |
 | Shorter route refresh did not fix the development failure. | `cross_model_analysis/qwen_route_refresh_dev/summary.json` |
+| Qwen decoder temporal non-uniformity persisted in a preliminary repeated-frame positional control. | `outputs/experiment1_v3/preliminary/repeated_frame_partial/corrected_plot_diagnostics.json` |
 
 Negative findings are scientifically important. The held-out route-replay gate failed: attention-ranked hard temporal retention did not preserve correct-answer log probability or answer margin better than equal-budget random or uniform controls. The shorter-refresh development pilot was rejected because gap 2 did not improve over gap 4. These results reject hard temporal eviction based only on attention rank. They do not reject temporal structure, temporal predictability, or temporal optimization generally.
 
@@ -153,6 +154,26 @@ Figure 5. Encoder local temporal advantage. Cohort: 77 Qwen adaptive-duration ex
 
 ![Figure 5. Encoder local temporal advantage](assets/experiment1_v3_corrected/encoder_local_temporal_advantage_ci.png)
 
+### Preliminary Repeated-Frame Positional Control
+
+The preliminary repeated-frame control preserved sequence length and temporal positions while replacing every sampled frame with the same visual frame. This removes temporal content variation while preserving positional structure. It therefore tests whether temporal non-uniformity can persist without changing visual content.
+
+The frozen plotting diagnostics contain 12 source-video artifacts with an 8-64 temporal-bin range. The archived repeated-frame records file contains nine complete unique records. Because of that inventory discrepancy, this report treats the 12-artifact diagnostics as a frozen preliminary aggregate, does not reconstruct per-example results, does not report repeated-frame accuracy, and does not report paired baseline differences.
+
+Packaged repeated-frame diagnostics:
+
+| Measurement | Value |
+|---|---:|
+| Frozen diagnostic artifacts | 12 |
+| Archived complete records | 9 |
+| Temporal-bin range | 8-64 |
+| Maximum absolute encoder lift deviation from uniform | 2.6838581579369247e-08 |
+| Maximum absolute decoder lift deviation from uniform | 2.7386054371816946 |
+
+Encoder adjacent-minus-far representation differences were effectively zero in both raw and mean-centered representations. Raw stage means ranged from `1.850371707708594e-17` to `4.625929269271486e-17`; mean-centered stage means ranged from `0.0` to `6.47630097698008e-17`.
+
+The decoder result is substantial: temporal non-uniformity remains even when visual content is repeated across temporal positions. This is consistent with a positional or architectural contribution to decoder temporal non-uniformity. It shows that non-uniform allocation can persist without changing visual content. It does not quantify how much of the real-video pattern is positional, and it is preliminary rather than confirmatory.
+
 ## Matched Qwen-VILA Temporal Comparison
 
 The matched baseline comparison contains 71 common examples. Qwen and VILA each have 71 completed artifacts in the packaged matched comparison. Qwen has 28 decoder layers; VILA has 32. Both were analyzed over eight normalized temporal bins.
@@ -213,20 +234,19 @@ The defensible cross-architecture claim is that decoder temporal non-uniformity 
 
 ## Cross-Layer Temporal Route Predictability
 
-Artifact unavailable. The required route-predictability output files (`route_reuse_metrics.jsonl`, `route_reuse_summary.json`, or an equivalent packaged summary for dynamic gap 1/2/4/8 and static development-prior analyses) were not present in `docs/results/experiment1_weekly_2026-09-18/`.
+This analysis was executed on the 15-example matched development cohort, but its authoritative numerical outputs were accidentally omitted from the evidence bundle. The missing files are `route_reuse_summary.json` and `route_reuse_metrics.jsonl`. I therefore do not reconstruct or report numerical values for captured mass, oracle mass, reuse efficiency, Jaccard, Spearman, subgroup results, or confidence intervals.
 
-The evidence package does contain downstream route-replay and failure-mode artifacts, but those are causal masking and post-hoc diagnostic outputs, not the requested observational route-predictability analysis. I therefore do not report captured mass, oracle mass, reuse efficiency, top-k Jaccard, Spearman, or static-prior values for this section.
+The executed analysis compared dynamic source-layer top-k routes at layer gaps 1, 2, 4, and 8. It also compared a leave-one-participant-out static development prior. Both Qwen and VILA were covered. The qualitative project finding was that nearby-layer temporal allocation was predictable; VILA appeared more stable across depth; and Qwen predictability degraded more strongly with layer distance.
 
-The missing artifact means the following intended claims remain unavailable in this weekly report:
+This is an executed but not archived exploratory result. It remains observational. It does not prove causal safety, KV reuse, pruning safety, latency reduction, or memory reduction.
 
-| Intended predictability claim | Status in this report |
+| Analysis component | Archival status | Reporting decision |
 |---|---|
-| Dynamic source-layer top-k gap 1/2/4/8 captured mass | Artifact unavailable |
-| Static development prior with leave-one-participant-out construction | Artifact unavailable |
-| Predictability decrease with layer gap | Artifact unavailable |
-| Qwen versus VILA stability comparison from route-predictability summary | Artifact unavailable |
-
-Observational route predictability, even if later reported, would not establish causal safety, KV-cache reuse, latency reduction, or pruning quality.
+| Dynamic routes at gaps 1/2/4/8 | Executed; numerical artifact not archived | Qualitative result only |
+| Static development prior | Executed; numerical artifact not archived | Qualitative result only |
+| Captured and oracle mass | Artifact not archived | Omit values |
+| Reuse efficiency | Artifact not archived | Omit values |
+| Jaccard, Spearman and confidence intervals | Artifact not archived | Omit values |
 
 ## Causal Temporal Route-Replay Evaluation
 
@@ -367,9 +387,9 @@ Spatial gate decision: REJECT. No held-out spatial experiment was run. These res
 | VILA decoder temporal attention is non-uniform. | Supported | 71-example VILA diagnostics; max lift-minus-uniform deviation 2.6827750242. | Descriptive attention finding. |
 | Qwen and VILA share the same positional attention pattern. | Rejected | Matched comparison: mean Spearman -0.1804158283; Qwen first-bin mass exceeds last-bin mass, VILA last-bin mass dominates. | Fixed-eight comparison only. |
 | Non-uniformity is observed across two decoder architectures. | Supported | Qwen and VILA baseline diagnostics. | Does not imply all VLMs behave this way. |
-| Nearby-layer temporal allocation is predictable. | Not yet tested | Route-predictability artifact unavailable in package. | Cannot be reported from packaged evidence. |
-| Temporal allocation remains equally predictable over large layer gaps. | Not yet tested | Route-predictability artifact unavailable. | Cannot be reported. |
-| A static positional prior is sufficient for all examples. | Not yet tested | Static-prior artifact unavailable. | Cannot be reported. |
+| Nearby-layer temporal allocation is predictable. | Exploratory | Analysis executed, but numerical output was not archived. | Qualitative project finding only; numerical verification pending archival. |
+| Temporal allocation remains equally predictable over large layer gaps. | Not supported | Executed exploratory analysis indicated degradation with layer distance, but the numerical artifact is not archived. | Qualitative project finding only; omit values. |
+| A static positional prior is sufficient for all examples. | Not supported | Static-prior sufficiency was never established causally, and its numerical output is not archived. | Qualitative project finding only; omit values. |
 | High-attention temporal units can safely be hard-retained. | Rejected | Held-out route-replay causal gate FAIL. | Rejected for tested 50% hard route replay. |
 | Attention-ranked retention outperforms random retention on held-out data. | Rejected | Adaptive - random held-out log-prob mean -0.0177760692; margin mean -0.078125. | Tested on 56 held-out examples. |
 | Attention-ranked retention outperforms uniform retention on held-out data. | Rejected | Adaptive - uniform held-out log-prob mean -0.0252713739; margin mean -0.0691964286. | Tested on 56 held-out examples. |
@@ -448,6 +468,8 @@ This evidence comes from one dataset and two decoder architectures. The developm
 
 Attention is not equivalent to causal importance. Qwen and VILA have different model-native temporal units, and normalized eight-bin comparison does not make their internal temporal representations identical. Post-hoc failure-mode analyses are exploratory. The route-replay intervention did not shorten the sequence, did not remove tokens, did not implement an optimized kernel, and did not measure system speedups. No actual KV reuse, latency reduction, memory reduction, or FLOP reduction has been demonstrated. Temporal handoff remains hypothetical.
 
+The repeated-frame control is preliminary. Its frozen diagnostics contain 12 artifacts, whereas the archived records file contains nine complete records. The route-predictability analysis was executed, but its numerical output was not included in the evidence package.
+
 ## Artifact Index
 
 | Report section | Source artifact | Purpose |
@@ -458,11 +480,13 @@ Attention is not equivalent to causal importance. Qwen and VILA have different m
 | Qwen baseline | `docs/results/experiment1_weekly_2026-09-18/outputs/experiment1_v3/runs/baseline/records.jsonl` | 77-example Qwen records |
 | Qwen baseline | `docs/results/experiment1_weekly_2026-09-18/outputs/experiment1_v3/preliminary/corrected/corrected_plot_diagnostics.json` | Corrected Qwen attention and representation diagnostics |
 | Qwen figures | `docs/assets/experiment1_v3_corrected/` | Existing corrected Qwen diagrams |
+| Preliminary repeated-frame control | `docs/results/experiment1_weekly_2026-09-18/outputs/experiment1_v3/preliminary/repeated_frame_partial/corrected_plot_diagnostics.json` | Frozen 12-artifact aggregate diagnostics |
+| Repeated-frame inventory | `docs/results/experiment1_weekly_2026-09-18/outputs/experiment1_v3/runs/repeated_frame/records.jsonl` | Nine archived complete records; documents the inventory discrepancy |
 | VILA baseline | `docs/results/experiment1_weekly_2026-09-18/outputs/experiment1_v3_cross_model/runs/vila_baseline/records.jsonl` | VILA records and failures |
 | VILA diagnostics | `docs/results/experiment1_weekly_2026-09-18/outputs/experiment1_v3_cross_model/preliminary/vila_baseline/vila_baseline_diagnostics.json` | VILA accuracy, validation, layerwise attention |
 | VILA figures | `docs/assets/experiment1_v3_vila_baseline/` | Existing VILA diagrams |
 | Matched Qwen-VILA comparison | `docs/results/experiment1_weekly_2026-09-18/outputs/experiment1_v3_cross_model/matched_baseline_comparison.json` | 71-example depth-aligned aggregate comparison |
-| Route predictability | Artifact unavailable | Required dynamic/static route-predictability summaries were absent |
+| Route predictability | Analysis executed; numerical artifact not archived | Missing `route_reuse_summary.json` and `route_reuse_metrics.jsonl`; qualitative result only |
 | Development route replay | `docs/results/experiment1_weekly_2026-09-18/cross_model_analysis/qwen_route_reuse_dev/summary.json` | 15-example causal route-replay development summary |
 | Held-out route replay | `docs/results/experiment1_weekly_2026-09-18/cross_model_analysis/qwen_route_reuse_heldout/summary.json` | 56-example causal route-replay confirmatory summary |
 | Route failure modes | `docs/results/experiment1_weekly_2026-09-18/cross_model_analysis/qwen_route_failure_modes/summary.json` | Post-hoc failure-mode summary |
@@ -501,7 +525,7 @@ Validation performed for this report:
 | 77-example and 71-example protocols separated | Yes |
 | Development and held-out results not pooled as confirmatory evidence | Yes |
 | Six cross-model excluded clips described as sampling-ineligible | Yes |
-| Route predictability not described as causal safety | Yes; artifact unavailable |
+| Route predictability not described as causal safety | Yes; executed but numerical artifact not archived |
 | Route replay not described as KV-cache reuse | Yes |
 | Actual latency, memory, and FLOP savings not claimed | Yes |
 | Spatial pilot marked outside temporal scope | Yes |
