@@ -746,7 +746,7 @@ def run_custom_decoder_prefill(
             visual_in, memory_in, text_in = _counts(seq_in, current_visual_indices, current_memory_indices)
             qk, av = _estimate_attention_flops(
                 seq_in,
-                num_attention_heads=num_attention_heads,
+                num_heads=num_attention_heads,
                 head_dim=head_dim,
                 batch_size=int(hidden_states.shape[0]),
             )
