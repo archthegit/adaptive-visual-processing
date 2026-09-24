@@ -181,11 +181,13 @@ def test_custom_dense_prefill_preserves_sequence_length_and_matches_manual_loop(
         rotary_emb=rotary,
         layer_types=("full_attention",) * 4,
     )
-    assert result.logits.shape == hidden.shape
-    assert torch.allclose(result.logits, torch.full_like(hidden, 0.04))
+    assert result.logits.shape == (1, 1, 6)
+    assert torch.allclose(result.logits, torch.full((1, 1, 6), 0.04))
     assert result.compaction_plan is None
     assert all(layer.sequence_length_in == 16 and layer.sequence_length_out == 16 for layer in result.instrumentation)
-    assert rotary.calls == [((1, 16, 6), (3, 1, 16))] * 4
+    assert rotary.calls == [((1, 16, 6), (3, 1, 16))]
+    assert result.rotary_embedding_computations == 1
+    assert result.instrumentation_metadata()["rotary_embedding_computations"] == 1
 
 
 def test_custom_handoff_shortens_sequence_and_reduces_later_flops():
@@ -221,7 +223,10 @@ def test_custom_handoff_shortens_sequence_and_reduces_later_flops():
     assert result.instrumentation[3].estimated_qk_flops < result.instrumentation[2].estimated_qk_flops
     assert torch.isfinite(result.logits).all()
     assert rotary.calls[0] == ((1, 16, 8), (3, 1, 16))
-    assert rotary.calls[3] == ((1, 14, 8), (3, 1, 14))
+    assert rotary.calls[1] == ((1, 14, 8), (3, 1, 14))
+    assert len(rotary.calls) == 2
+    assert result.rotary_embedding_computations == 2
+    assert result.instrumentation_metadata()["rotary_embedding_computations"] == 2
 
 
 def test_hard_evict_and_handoff_share_retained_regions_but_different_memory_budget():

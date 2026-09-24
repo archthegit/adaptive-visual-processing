@@ -145,6 +145,7 @@ class DecoderPrefillResult:
     total_estimated_attention_flops: int
     attention_mask_mode: str
     layer_types: tuple[str, ...]
+    rotary_embedding_computations: int
 
     def instrumentation_metadata(self) -> dict[str, Any]:
         return {
@@ -156,6 +157,7 @@ class DecoderPrefillResult:
             "final_memory_token_indices": list(self.final_memory_token_indices),
             "attention_mask_mode": self.attention_mask_mode,
             "layer_types": list(self.layer_types),
+            "rotary_embedding_computations": self.rotary_embedding_computations,
         }
 
 
@@ -537,8 +539,12 @@ def run_custom_decoder_prefill(
         raise RuntimeError("Qwen sliding_attention layers require a sliding_window value.")
     text_position_ids = _official_text_position_ids(position_ids)
     attention_mask_mode = "full_attention_only" if set(active_layer_types) == {"full_attention"} else "mixed_full_and_sliding_attention"
+    position_embeddings = None
+    rotary_embedding_computations = 0
 
     with torch.inference_mode():
+        position_embeddings = _position_embeddings(rotary_emb, hidden_states, position_ids)
+        rotary_embedding_computations = 1 if position_embeddings is not None else 0
         for layer_idx, layer in enumerate(layers):
             seq_in = int(hidden_states.shape[1])
             visual_in, memory_in, text_in = _counts(seq_in, current_visual_indices, current_memory_indices)
@@ -559,7 +565,6 @@ def run_custom_decoder_prefill(
                     hidden_states.dtype,
                     hidden_states.device,
                 )
-            position_embeddings = _position_embeddings(rotary_emb, hidden_states, position_ids)
             hidden_states = _call_decoder_layer(
                 layer,
                 hidden_states,
@@ -586,6 +591,8 @@ def run_custom_decoder_prefill(
                 current_memory_indices = compaction_plan.memory_token_positions
                 current_question_indices = remap_indices(current_question_indices, compaction_plan.old_to_new)
                 text_position_ids = _official_text_position_ids(position_ids)
+                position_embeddings = _position_embeddings(rotary_emb, hidden_states, position_ids)
+                rotary_embedding_computations += 1 if position_embeddings is not None else 0
                 seq_out = int(hidden_states.shape[1])
                 compaction_applied = True
             visual_out, memory_out, text_out = _counts(seq_out, current_visual_indices, current_memory_indices)
@@ -623,6 +630,7 @@ def run_custom_decoder_prefill(
         total_estimated_attention_flops=total_flops,
         attention_mask_mode=attention_mask_mode,
         layer_types=active_layer_types,
+        rotary_embedding_computations=rotary_embedding_computations,
     )
 
 
