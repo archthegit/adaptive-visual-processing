@@ -25,6 +25,7 @@ from src.experiment1.qwen_execution import (
 from src.experiment1.resolution import get_resolution_config
 from src.experiment1.temporal_handoff import (
     TemporalHandoffConfig,
+    aggregate_analysis_scores_to_native_cells,
     append_jsonl,
     condition_from_baseline_scores,
     cuda_profile_prefill,
@@ -230,9 +231,14 @@ def main() -> None:
 
     baseline_record = _latest_complete_record(Path(args.baseline_dir) / "records.jsonl", args.question_id)
     baseline_artifact = _load_artifact_from_record(baseline_record)
-    baseline_scores = _temporal_scores_from_artifact(baseline_artifact)
-    if len(baseline_scores[args.handoff_layer]) != 4:
-        raise RuntimeError("Expected four native temporal cells in the cross-model Qwen baseline.")
+    analysis_scores = _temporal_scores_from_artifact(baseline_artifact)
+    native_aggregation = aggregate_analysis_scores_to_native_cells(analysis_scores, baseline_artifact)
+    baseline_scores = [list(layer) for layer in native_aggregation.native_temporal_scores]
+    if args.retain_regions > native_aggregation.native_temporal_cell_count:
+        raise RuntimeError(
+            f"--retain-regions={args.retain_regions} exceeds native temporal-cell count "
+            f"{native_aggregation.native_temporal_cell_count}."
+        )
 
     model = Qwen25VLWrapper(QwenConfig(model_id=args.model_id, max_new_tokens=1, attn_implementation="sdpa"))
     model._load()
@@ -255,7 +261,7 @@ def main() -> None:
             baseline_temporal_scores=baseline_scores,
             handoff_layer=args.handoff_layer,
             retain_count=args.retain_regions,
-            num_regions=4,
+            num_regions=native_aggregation.native_temporal_cell_count,
             memory_tokens_per_region=args.memory_tokens_per_region,
             seed=args.seed,
             question_id=args.question_id,
@@ -333,6 +339,9 @@ def main() -> None:
                 "condition": condition,
                 "baseline_artifact": baseline_record.get("artifact"),
                 "baseline_selection_layer": args.handoff_layer,
+                "native_temporal_aggregation": native_aggregation.to_metadata(),
+                "per_layer_native_cell_scores_used_for_selection": [list(layer) for layer in baseline_scores],
+                "selected_retained_native_cells": list(config.retained_temporal_regions),
                 "compaction_plan": result.compaction_plan.to_metadata() if result.compaction_plan else None,
                 "instrumentation": result.instrumentation_metadata(),
             },

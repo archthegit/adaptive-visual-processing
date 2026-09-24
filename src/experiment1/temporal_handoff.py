@@ -56,6 +56,32 @@ class TemporalRegionPlan:
 
 
 @dataclass(frozen=True)
+class NativeTemporalAggregation:
+    analysis_bin_count: int
+    native_temporal_cell_count: int
+    analysis_bin_to_native_cell: dict[int, int]
+    native_cell_to_analysis_bins: dict[int, tuple[int, ...]]
+    aggregation_method: str
+    native_temporal_scores: tuple[tuple[float, ...], ...]
+    expected_native_temporal_cell_count: int | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "analysis_bin_count": self.analysis_bin_count,
+            "native_temporal_cell_count": self.native_temporal_cell_count,
+            "expected_native_temporal_cell_count": self.expected_native_temporal_cell_count,
+            "analysis_bin_to_native_cell": {
+                str(key): int(value) for key, value in sorted(self.analysis_bin_to_native_cell.items())
+            },
+            "native_cell_to_analysis_bins": {
+                str(key): list(value) for key, value in sorted(self.native_cell_to_analysis_bins.items())
+            },
+            "aggregation_method": self.aggregation_method,
+            "native_temporal_scores": [list(layer) for layer in self.native_temporal_scores],
+        }
+
+
+@dataclass(frozen=True)
 class CompactionPlan:
     condition: str
     canonical_order: str
@@ -233,6 +259,176 @@ def select_random_temporal_regions(num_regions: int, retain_count: int, seed: in
     regions = list(range(num_regions))
     rng.shuffle(regions)
     return tuple(sorted(regions[:retain_count]))
+
+
+def aggregate_analysis_scores_to_native_cells(
+    analysis_scores: Sequence[Sequence[float]],
+    artifact: dict[str, Any],
+    *,
+    tolerance: float = 1e-6,
+) -> NativeTemporalAggregation:
+    """Sum decoder analysis-bin distributions into Qwen-native temporal-cell distributions.
+
+    The mapping is derived only from artifact metadata:
+    frame_bin_mappings[*].{analysis_bin, source_frame_index} and
+    token_layout.visual_token_cells[*].{temporal_bin, sampled_frame_indices}.
+    """
+    scores = tuple(tuple(float(value) for value in layer) for layer in analysis_scores)
+    if not scores:
+        raise ValueError("No analysis-bin temporal scores were provided.")
+    analysis_bin_count = len(scores[0])
+    if analysis_bin_count <= 0:
+        raise ValueError("Analysis temporal score layers are empty.")
+    for layer_idx, layer in enumerate(scores):
+        if len(layer) != analysis_bin_count:
+            raise ValueError(
+                f"Analysis temporal score layer {layer_idx} has length {len(layer)}, expected {analysis_bin_count}."
+            )
+        if not all(math.isfinite(value) for value in layer):
+            raise ValueError(f"Analysis temporal score layer {layer_idx} contains non-finite values.")
+        total = sum(layer)
+        if abs(total - 1.0) > tolerance:
+            raise ValueError(f"Analysis temporal score layer {layer_idx} sums to {total}, expected 1.")
+
+    frame_to_analysis = _frame_to_analysis_bin_mapping(artifact)
+    frame_to_native = _frame_to_native_cell_mapping(artifact)
+    missing_analysis_frames = sorted(set(frame_to_native).difference(frame_to_analysis))
+    if missing_analysis_frames:
+        raise ValueError(
+            "Native temporal-cell metadata references sampled source frames missing from frame_bin_mappings: "
+            f"{missing_analysis_frames[:8]}"
+        )
+    analysis_to_native_sets: dict[int, set[int]] = {idx: set() for idx in range(analysis_bin_count)}
+    for frame_index, analysis_bin in frame_to_analysis.items():
+        if analysis_bin < 0 or analysis_bin >= analysis_bin_count:
+            raise ValueError(
+                f"Frame {frame_index} maps to analysis bin {analysis_bin}, outside score range 0..{analysis_bin_count - 1}."
+            )
+        if frame_index not in frame_to_native:
+            raise ValueError(f"Sampled source frame {frame_index} has no native temporal-cell owner.")
+        analysis_to_native_sets[analysis_bin].add(frame_to_native[frame_index])
+
+    analysis_bin_to_native: dict[int, int] = {}
+    for analysis_bin in range(analysis_bin_count):
+        owners = analysis_to_native_sets.get(analysis_bin, set())
+        if not owners:
+            raise ValueError(f"Analysis bin {analysis_bin} is not covered by any native temporal cell.")
+        if len(owners) != 1:
+            raise ValueError(f"Analysis bin {analysis_bin} maps to multiple native temporal cells: {sorted(owners)}.")
+        analysis_bin_to_native[analysis_bin] = next(iter(owners))
+
+    native_ids = sorted(set(analysis_bin_to_native.values()))
+    if native_ids != list(range(len(native_ids))):
+        raise ValueError(f"Native temporal-bin IDs are not contiguous from zero: {native_ids}.")
+    expected_native_count = _expected_native_temporal_cell_count(artifact)
+    if expected_native_count is not None and expected_native_count != len(native_ids):
+        raise ValueError(
+            "Derived native temporal-cell count does not match video_grid_thw: "
+            f"{len(native_ids)} != {expected_native_count}."
+        )
+    native_cell_to_analysis: dict[int, tuple[int, ...]] = {
+        native: tuple(idx for idx, owner in sorted(analysis_bin_to_native.items()) if owner == native)
+        for native in native_ids
+    }
+    native_scores: list[tuple[float, ...]] = []
+    for layer_idx, layer in enumerate(scores):
+        aggregated = [0.0 for _ in native_ids]
+        for analysis_bin, native in analysis_bin_to_native.items():
+            aggregated[native] += layer[analysis_bin]
+        if not all(math.isfinite(value) for value in aggregated):
+            raise ValueError(f"Native temporal score layer {layer_idx} contains non-finite values.")
+        total = sum(aggregated)
+        if abs(total - 1.0) > tolerance:
+            raise ValueError(f"Native temporal score layer {layer_idx} sums to {total}, expected 1.")
+        native_scores.append(tuple(float(value) for value in aggregated))
+    return NativeTemporalAggregation(
+        analysis_bin_count=analysis_bin_count,
+        native_temporal_cell_count=len(native_ids),
+        analysis_bin_to_native_cell=analysis_bin_to_native,
+        native_cell_to_analysis_bins=native_cell_to_analysis,
+        aggregation_method="sum",
+        native_temporal_scores=tuple(native_scores),
+        expected_native_temporal_cell_count=expected_native_count,
+    )
+
+
+def _frame_to_analysis_bin_mapping(artifact: dict[str, Any]) -> dict[int, int]:
+    batches = artifact.get("frame_bin_mappings")
+    if not batches or not isinstance(batches, list):
+        raise ValueError("Artifact is missing frame_bin_mappings.")
+    mapping: dict[int, int] = {}
+    for batch in batches:
+        if not isinstance(batch, list):
+            continue
+        for item in batch:
+            if "source_frame_index" not in item or "analysis_bin" not in item:
+                raise ValueError(f"Malformed frame_bin_mappings entry: {item}")
+            frame = int(item["source_frame_index"])
+            analysis_bin = int(item["analysis_bin"])
+            previous = mapping.get(frame)
+            if previous is not None and previous != analysis_bin:
+                raise ValueError(f"Source frame {frame} maps to multiple analysis bins: {previous}, {analysis_bin}.")
+            mapping[frame] = analysis_bin
+    if not mapping:
+        raise ValueError("No source-frame to analysis-bin mappings found.")
+    return mapping
+
+
+def _frame_to_native_cell_mapping(artifact: dict[str, Any]) -> dict[int, int]:
+    cells = (artifact.get("token_layout") or {}).get("visual_token_cells")
+    if not cells:
+        raise ValueError("Artifact is missing token_layout.visual_token_cells.")
+    mapping: dict[int, int] = {}
+    for cell in cells:
+        if "temporal_bin" not in cell:
+            raise ValueError(f"Visual token cell is missing temporal_bin: {cell}")
+        sampled = cell.get("sampled_frame_indices")
+        if sampled is None:
+            raise ValueError(f"Visual token cell is missing sampled_frame_indices: {cell}")
+        native = int(cell["temporal_bin"])
+        for frame_value in sampled:
+            frame = int(frame_value)
+            previous = mapping.get(frame)
+            if previous is not None and previous != native:
+                raise ValueError(f"Source frame {frame} belongs to multiple native temporal cells: {previous}, {native}.")
+            mapping[frame] = native
+    if not mapping:
+        raise ValueError("No sampled-frame to native temporal-cell mappings found.")
+    return mapping
+
+
+def _expected_native_temporal_cell_count(artifact: dict[str, Any]) -> int | None:
+    token_layout = artifact.get("token_layout") or {}
+    metadata = token_layout.get("visual_grid_metadata") or {}
+    candidates = [
+        token_layout.get("video_grid_thw"),
+        metadata.get("video_grid_thw") if isinstance(metadata, dict) else None,
+        (artifact.get("metadata") or {}).get("video_grid_thw"),
+    ]
+    for value in candidates:
+        count = _first_grid_t(value)
+        if count is not None:
+            return count
+    return None
+
+
+def _first_grid_t(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        for key in ("video_grid_thw", "grid", "thw"):
+            count = _first_grid_t(value.get(key))
+            if count is not None:
+                return count
+        return None
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return None
+        first = value[0]
+        if isinstance(first, (list, tuple)):
+            return _first_grid_t(first)
+        return int(first)
+    return None
 
 
 def build_compaction_plan(

@@ -7,6 +7,7 @@ import pytest
 
 from src.experiment1.temporal_handoff import (
     TemporalHandoffConfig,
+    aggregate_analysis_scores_to_native_cells,
     build_additive_causal_mask,
     build_compaction_plan,
     compact_hidden_states_and_positions,
@@ -56,6 +57,47 @@ def fake_layout(num_temporal_regions: int = 4, spatial_tokens_per_region: int = 
         question_token_indices=(token_index, token_index + 1),
         visual_token_indices=tuple(cell.token_index for cell in cells),
     )
+
+
+def native_mapping_artifact(
+    analysis_to_frames: dict[int, list[int]],
+    native_to_frames: dict[int, list[int]],
+    expected_native_count: int | None = None,
+) -> dict:
+    frame_bin_mapping = []
+    for analysis_bin, frames in sorted(analysis_to_frames.items()):
+        for frame in frames:
+            frame_bin_mapping.append(
+                {
+                    "analysis_bin": int(analysis_bin),
+                    "source_frame_index": int(frame),
+                }
+            )
+    cells = []
+    visual_index = 0
+    for native, frames in sorted(native_to_frames.items()):
+        for spatial in range(2):
+            cells.append(
+                {
+                    "token_index": 10 + visual_index,
+                    "visual_index": visual_index,
+                    "temporal_bin": int(native),
+                    "sampled_frame_indices": [int(frame) for frame in frames],
+                    "spatial_row": 0,
+                    "spatial_col": spatial,
+                }
+            )
+            visual_index += 1
+    token_layout = {
+        "visual_token_cells": cells,
+        "visual_grid_metadata": {},
+    }
+    if expected_native_count is not None:
+        token_layout["visual_grid_metadata"]["video_grid_thw"] = [[expected_native_count, 52, 52]]
+    return {
+        "frame_bin_mappings": [frame_bin_mapping],
+        "token_layout": token_layout,
+    }
 
 
 class IdentityLayer(torch.nn.Module):
@@ -276,6 +318,109 @@ def test_random_and_adaptive_handoff_have_identical_token_budgets():
     assert adaptive.compacted_sequence_length == random_plan.compacted_sequence_length
     assert len(adaptive.retained_visual_token_positions) == len(random_plan.retained_visual_token_positions)
     assert len(adaptive.memory_token_positions) == len(random_plan.memory_token_positions)
+
+
+def test_aggregate_analysis_scores_to_native_cells_real_eight_to_four_structure():
+    artifact = native_mapping_artifact(
+        analysis_to_frames={
+            0: [11712],
+            1: [13339],
+            2: [14965],
+            3: [16591],
+            4: [18217],
+            5: [19844],
+            6: [21470],
+            7: [23096],
+        },
+        native_to_frames={
+            0: [11712, 13339],
+            1: [14965, 16591],
+            2: [18217, 19844],
+            3: [21470, 23096],
+        },
+        expected_native_count=4,
+    )
+    scores = [[0.02, 0.08, 0.1, 0.2, 0.05, 0.15, 0.12, 0.28]]
+    result = aggregate_analysis_scores_to_native_cells(scores, artifact)
+    assert result.analysis_bin_count == 8
+    assert result.native_temporal_cell_count == 4
+    assert result.analysis_bin_to_native_cell == {0: 0, 1: 0, 2: 1, 3: 1, 4: 2, 5: 2, 6: 3, 7: 3}
+    assert result.native_cell_to_analysis_bins == {0: (0, 1), 1: (2, 3), 2: (4, 5), 3: (6, 7)}
+    assert result.aggregation_method == "sum"
+    assert result.native_temporal_scores == ((0.1, 0.30000000000000004, 0.2, 0.4),)
+    assert sum(result.native_temporal_scores[0]) == pytest.approx(1.0)
+
+
+def test_aggregate_analysis_scores_to_native_cells_handles_nonuniform_group_sizes():
+    artifact = native_mapping_artifact(
+        analysis_to_frames={
+            0: [10],
+            1: [11],
+            2: [12],
+            3: [13],
+            4: [14],
+        },
+        native_to_frames={
+            0: [10, 11, 12],
+            1: [13],
+            2: [14],
+        },
+        expected_native_count=3,
+    )
+    result = aggregate_analysis_scores_to_native_cells([[0.1, 0.2, 0.3, 0.15, 0.25]], artifact)
+    assert result.analysis_bin_to_native_cell == {0: 0, 1: 0, 2: 0, 3: 1, 4: 2}
+    assert result.native_temporal_scores == ((0.6000000000000001, 0.15, 0.25),)
+
+
+def test_aggregate_analysis_scores_to_native_cells_detects_missing_frame_mapping():
+    artifact = native_mapping_artifact(
+        analysis_to_frames={0: [1], 1: [2]},
+        native_to_frames={0: [1], 1: [2, 3]},
+        expected_native_count=2,
+    )
+    with pytest.raises(ValueError, match="missing from frame_bin_mappings"):
+        aggregate_analysis_scores_to_native_cells([[0.5, 0.5]], artifact)
+
+
+def test_aggregate_analysis_scores_to_native_cells_detects_duplicate_frame_ownership():
+    artifact = native_mapping_artifact(
+        analysis_to_frames={0: [1], 1: [2]},
+        native_to_frames={0: [1, 2], 1: [2]},
+        expected_native_count=2,
+    )
+    with pytest.raises(ValueError, match="multiple native temporal cells"):
+        aggregate_analysis_scores_to_native_cells([[0.5, 0.5]], artifact)
+
+
+def test_aggregate_analysis_scores_to_native_cells_detects_uncovered_analysis_bin():
+    artifact = native_mapping_artifact(
+        analysis_to_frames={0: [1], 1: [2]},
+        native_to_frames={0: [1]},
+        expected_native_count=1,
+    )
+    with pytest.raises(ValueError, match="no native temporal-cell owner"):
+        aggregate_analysis_scores_to_native_cells([[0.5, 0.5]], artifact)
+
+
+def test_aggregate_analysis_scores_to_native_cells_detects_native_count_mismatch():
+    artifact = native_mapping_artifact(
+        analysis_to_frames={0: [1], 1: [2]},
+        native_to_frames={0: [1], 1: [2]},
+        expected_native_count=3,
+    )
+    with pytest.raises(ValueError, match="video_grid_thw"):
+        aggregate_analysis_scores_to_native_cells([[0.5, 0.5]], artifact)
+
+
+def test_aggregate_analysis_scores_to_native_cells_no_regression_when_bins_already_native():
+    artifact = native_mapping_artifact(
+        analysis_to_frames={0: [1], 1: [2], 2: [3]},
+        native_to_frames={0: [1], 1: [2], 2: [3]},
+        expected_native_count=3,
+    )
+    result = aggregate_analysis_scores_to_native_cells([[0.2, 0.3, 0.5]], artifact)
+    assert result.analysis_bin_to_native_cell == {0: 0, 1: 1, 2: 2}
+    assert result.native_temporal_scores == ((0.2, 0.3, 0.5),)
 
 
 class FakeFeatureOutput:
