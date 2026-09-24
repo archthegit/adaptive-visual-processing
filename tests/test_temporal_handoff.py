@@ -11,6 +11,8 @@ from src.experiment1.temporal_handoff import (
     build_compaction_plan,
     compact_hidden_states_and_positions,
     condition_from_baseline_scores,
+    qwen_decoder_stack,
+    qwen_multimodal_decoder_inputs,
     run_custom_decoder_prefill,
     select_random_temporal_regions,
     select_top_temporal_regions,
@@ -57,10 +59,32 @@ def fake_layout(num_temporal_regions: int = 4, spatial_tokens_per_region: int = 
 
 
 class IdentityLayer(torch.nn.Module):
-    def forward(self, hidden_states, attention_mask=None, position_ids=None, use_cache=False, output_attentions=False):
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        position_embeddings=None,
+        position_ids=None,
+        past_key_values=None,
+        use_cache=False,
+    ):
         assert attention_mask is not None
         assert attention_mask.shape[-1] == hidden_states.shape[1]
+        assert position_embeddings is not None
         return (hidden_states + 0.01,)
+
+
+class FakeRotary(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def forward(self, hidden_states, position_ids):
+        self.calls.append((tuple(hidden_states.shape), tuple(position_ids.shape)))
+        return (
+            torch.zeros_like(hidden_states),
+            torch.ones_like(hidden_states),
+        )
 
 
 def test_temporal_regions_from_layout_group_visual_tokens_by_native_cell():
@@ -140,8 +164,9 @@ def test_causal_mask_blocks_future_attention_only():
 def test_custom_dense_prefill_preserves_sequence_length_and_matches_manual_loop():
     layout = fake_layout()
     layers = torch.nn.ModuleList([IdentityLayer() for _ in range(4)])
+    rotary = FakeRotary()
     hidden = torch.zeros((1, 16, 6), dtype=torch.float32)
-    position_ids = torch.arange(16).view(1, 16)
+    position_ids = torch.arange(16).view(1, 1, 16).repeat(3, 1, 1)
     config = TemporalHandoffConfig(condition="dense_custom", handoff_layer=2, memory_tokens_per_region=0)
     result = run_custom_decoder_prefill(
         layers=layers,
@@ -153,18 +178,22 @@ def test_custom_dense_prefill_preserves_sequence_length_and_matches_manual_loop(
         norm=None,
         num_attention_heads=2,
         head_dim=3,
+        rotary_emb=rotary,
+        layer_types=("full_attention",) * 4,
     )
     assert result.logits.shape == hidden.shape
     assert torch.allclose(result.logits, torch.full_like(hidden, 0.04))
     assert result.compaction_plan is None
     assert all(layer.sequence_length_in == 16 and layer.sequence_length_out == 16 for layer in result.instrumentation)
+    assert rotary.calls == [((1, 16, 6), (3, 1, 16))] * 4
 
 
 def test_custom_handoff_shortens_sequence_and_reduces_later_flops():
     layout = fake_layout()
     layers = torch.nn.ModuleList([IdentityLayer() for _ in range(6)])
+    rotary = FakeRotary()
     hidden = torch.zeros((1, 16, 8), dtype=torch.float32)
-    position_ids = torch.arange(16).view(1, 16)
+    position_ids = torch.arange(16).view(1, 1, 16).repeat(3, 1, 1)
     config = TemporalHandoffConfig(
         condition="handoff_mean",
         handoff_layer=2,
@@ -181,6 +210,8 @@ def test_custom_handoff_shortens_sequence_and_reduces_later_flops():
         norm=None,
         num_attention_heads=2,
         head_dim=4,
+        rotary_emb=rotary,
+        layer_types=("full_attention",) * 6,
     )
     lengths = [(layer.sequence_length_in, layer.sequence_length_out) for layer in result.instrumentation]
     assert lengths[2] == (16, 14)
@@ -189,6 +220,8 @@ def test_custom_handoff_shortens_sequence_and_reduces_later_flops():
     assert result.final_memory_token_indices == result.compaction_plan.memory_token_positions
     assert result.instrumentation[3].estimated_qk_flops < result.instrumentation[2].estimated_qk_flops
     assert torch.isfinite(result.logits).all()
+    assert rotary.calls[0] == ((1, 16, 8), (3, 1, 16))
+    assert rotary.calls[3] == ((1, 14, 8), (3, 1, 14))
 
 
 def test_hard_evict_and_handoff_share_retained_regions_but_different_memory_budget():
@@ -239,3 +272,138 @@ def test_random_and_adaptive_handoff_have_identical_token_budgets():
     assert len(adaptive.retained_visual_token_positions) == len(random_plan.retained_visual_token_positions)
     assert len(adaptive.memory_token_positions) == len(random_plan.memory_token_positions)
 
+
+class FakeFeatureOutput:
+    def __init__(self, pooler_output):
+        self.pooler_output = pooler_output
+
+
+class FakeCore(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(image_token_id=91, video_token_id=92)
+        self.language_model = SimpleNamespace(
+            layers=torch.nn.ModuleList([IdentityLayer() for _ in range(2)]),
+            norm=torch.nn.Identity(),
+            rotary_emb=FakeRotary(),
+            config=SimpleNamespace(
+                layer_types=("full_attention", "full_attention"),
+                num_attention_heads=2,
+                hidden_size=4,
+                head_dim=2,
+                sliding_window=None,
+            ),
+        )
+        self.emb = torch.nn.Embedding(100, 4)
+        self.video_feature_calls = 0
+        self.position_calls = 0
+
+    def get_input_embeddings(self):
+        return self.emb
+
+    def get_video_features(self, pixel_values_videos, video_grid_thw):
+        self.video_feature_calls += 1
+        return FakeFeatureOutput((torch.full((2, 4), 7.0),))
+
+    def get_placeholder_mask(self, input_ids, inputs_embeds, image_features=None, video_features=None):
+        image_mask = (input_ids == self.config.image_token_id).unsqueeze(-1)
+        video_mask = (input_ids == self.config.video_token_id).unsqueeze(-1)
+        return image_mask, video_mask
+
+    def compute_3d_position_ids(
+        self,
+        input_ids,
+        image_grid_thw,
+        video_grid_thw,
+        inputs_embeds,
+        attention_mask,
+        past_key_values,
+        second_per_grid_ts=None,
+        mm_token_type_ids=None,
+    ):
+        self.position_calls += 1
+        assert mm_token_type_ids is not None
+        assert past_key_values is None
+        return torch.arange(input_ids.shape[1]).view(1, 1, -1).repeat(3, 1, 1)
+
+
+class FakeConditional(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = FakeCore()
+        self.config = SimpleNamespace(text_config=self.model.language_model.config)
+        self.lm_head = torch.nn.Linear(4, 10, bias=False)
+
+    def get_input_embeddings(self):
+        return self.model.get_input_embeddings()
+
+
+def test_qwen_multimodal_inputs_use_pooler_output_placeholder_mask_and_compute_3d_positions():
+    model = FakeConditional()
+    inputs = {
+        "input_ids": torch.tensor([[1, 92, 92, 2]]),
+        "pixel_values_videos": torch.zeros((1, 3, 2, 2)),
+        "video_grid_thw": torch.tensor([[2, 1, 1]]),
+        "mm_token_type_ids": torch.tensor([[0, 2, 2, 0]], dtype=torch.int32),
+        "attention_mask": torch.ones((1, 4), dtype=torch.long),
+        "second_per_grid_ts": torch.tensor([0.5]),
+    }
+    embeds, position_ids = qwen_multimodal_decoder_inputs(model, inputs)
+    assert model.model.video_feature_calls == 1
+    assert model.model.position_calls == 1
+    assert embeds.shape == (1, 4, 4)
+    assert torch.all(embeds[0, 1:3] == 7.0)
+    assert position_ids.shape == (3, 1, 4)
+
+
+def test_qwen_decoder_stack_exposes_language_model_rotary_and_layer_types():
+    model = FakeConditional()
+    stack = qwen_decoder_stack(model)
+    assert len(stack["layers"]) == 2
+    assert stack["rotary_emb"] is model.model.language_model.rotary_emb
+    assert stack["layer_types"] == ("full_attention", "full_attention")
+
+
+def test_decoder_layer_without_position_embeddings_fails_loudly():
+    class BadLayer(torch.nn.Module):
+        def forward(self, hidden_states, attention_mask=None):
+            return hidden_states
+
+    layout = fake_layout()
+    config = TemporalHandoffConfig(condition="dense_custom", handoff_layer=0, memory_tokens_per_region=0)
+    with pytest.raises(RuntimeError, match="position_embeddings"):
+        run_custom_decoder_prefill(
+            layers=[BadLayer()],
+            hidden_states=torch.zeros((1, 16, 4)),
+            position_ids=torch.arange(16).view(1, 1, 16).repeat(3, 1, 1),
+            layout=layout,
+            config=config,
+            lm_head=None,
+            norm=None,
+            num_attention_heads=2,
+            head_dim=2,
+            rotary_emb=FakeRotary(),
+            layer_types=("full_attention",),
+        )
+
+
+def test_custom_loop_returns_final_token_only_logits_with_lm_head():
+    layout = fake_layout()
+    hidden = torch.zeros((1, 16, 4))
+    position_ids = torch.arange(16).view(1, 1, 16).repeat(3, 1, 1)
+    lm_head = torch.nn.Linear(4, 11, bias=False)
+    result = run_custom_decoder_prefill(
+        layers=[IdentityLayer()],
+        hidden_states=hidden,
+        position_ids=position_ids,
+        layout=layout,
+        config=TemporalHandoffConfig(condition="dense_custom", handoff_layer=0, memory_tokens_per_region=0),
+        lm_head=lm_head,
+        norm=None,
+        num_attention_heads=2,
+        head_dim=2,
+        rotary_emb=FakeRotary(),
+        layer_types=("full_attention",),
+    )
+    assert result.logits.shape == (1, 1, 11)
+    assert result.final_token_hidden_state.shape == (1, 1, 4)

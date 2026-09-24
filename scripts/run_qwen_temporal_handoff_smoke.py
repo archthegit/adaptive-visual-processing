@@ -55,8 +55,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--retain-regions", type=int, default=2)
     parser.add_argument("--memory-tokens-per-region", type=int, default=2, choices=[1, 2, 4])
     parser.add_argument("--seed", type=int, default=20260830)
-    parser.add_argument("--warmup", type=int, default=1)
-    parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--warmup", type=int, default=3)
+    parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--dense-equivalence-atol", type=float, default=1e-4)
     return parser.parse_args()
 
@@ -198,7 +198,7 @@ def _stock_logits(model: Qwen25VLWrapper, inputs: Any) -> Any:
 
     assert model._model is not None
     with torch.inference_mode():
-        return model._model(**inputs, output_attentions=False, use_cache=False).logits
+        return model._model(**inputs, output_attentions=False, use_cache=False, logits_to_keep=1).logits
 
 
 def main() -> None:
@@ -272,9 +272,34 @@ def main() -> None:
                 norm=stack["norm"],
                 num_attention_heads=stack["num_attention_heads"],
                 head_dim=stack["head_dim"],
+                rotary_emb=stack["rotary_emb"],
+                layer_types=stack["layer_types"],
+                sliding_window=stack["sliding_window"],
+            )
+
+        def execute_stack_only() -> Any:
+            return run_custom_decoder_prefill(
+                layers=stack["layers"],
+                hidden_states=decoder_inputs.clone(),
+                position_ids=position_ids.clone() if position_ids is not None else None,
+                layout=layout,
+                config=config,
+                lm_head=None,
+                norm=stack["norm"],
+                num_attention_heads=stack["num_attention_heads"],
+                head_dim=stack["head_dim"],
+                rotary_emb=stack["rotary_emb"],
+                layer_types=stack["layer_types"],
+                sliding_window=stack["sliding_window"],
             )
 
         result, profile = cuda_profile_prefill(execute_condition, warmup=args.warmup, repeats=args.repeats)
+        stack_result, stack_profile = cuda_profile_prefill(execute_stack_only, warmup=args.warmup, repeats=args.repeats)
+        lm_logits, lm_profile = cuda_profile_prefill(
+            lambda: stack["lm_head"](stack_result.final_token_hidden_state),
+            warmup=args.warmup,
+            repeats=args.repeats,
+        )
         logits = result.logits
         next_logits = logits[0, -1]
         scores = score_answer_choice_logits(
@@ -319,7 +344,12 @@ def main() -> None:
                 "input_token_count": int(inputs["input_ids"].shape[1]),
                 "original_sequence_length": int(decoder_inputs.shape[1]),
                 "final_sequence_length": int(result.final_hidden_states.shape[1]),
-                "cuda_profile": profile,
+                "cuda_profile": {
+                    "combined_prefill": profile,
+                    "decoder_stack_excluding_lm_head": stack_profile,
+                    "final_token_lm_head": lm_profile,
+                },
+                "final_token_lm_head_shape": list(lm_logits.shape),
             },
         }
         artifact_path = output_dir / f"{condition}.json"

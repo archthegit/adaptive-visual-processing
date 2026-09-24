@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import math
 import random
+import statistics
 import time
-from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -136,12 +136,15 @@ class LayerInstrumentation:
 class DecoderPrefillResult:
     logits: Any
     final_hidden_states: Any
+    final_token_hidden_state: Any
     instrumentation: list[LayerInstrumentation]
     compaction_plan: CompactionPlan | None
     final_question_token_indices: tuple[int, ...]
     final_visual_token_indices: tuple[int, ...]
     final_memory_token_indices: tuple[int, ...]
     total_estimated_attention_flops: int
+    attention_mask_mode: str
+    layer_types: tuple[str, ...]
 
     def instrumentation_metadata(self) -> dict[str, Any]:
         return {
@@ -151,6 +154,8 @@ class DecoderPrefillResult:
             "final_question_token_indices": list(self.final_question_token_indices),
             "final_visual_token_indices": list(self.final_visual_token_indices),
             "final_memory_token_indices": list(self.final_memory_token_indices),
+            "attention_mask_mode": self.attention_mask_mode,
+            "layer_types": list(self.layer_types),
         }
 
 
@@ -377,6 +382,18 @@ def build_additive_causal_mask(seq_len: int, dtype: Any, device: Any) -> Any:
     return mask
 
 
+def build_additive_sliding_causal_mask(seq_len: int, sliding_window: int, dtype: Any, device: Any) -> Any:
+    torch = _torch_module()
+    if sliding_window <= 0:
+        raise ValueError("sliding_window must be positive.")
+    mask = build_additive_causal_mask(seq_len, dtype, device)
+    row = torch.arange(seq_len, device=device).view(seq_len, 1)
+    col = torch.arange(seq_len, device=device).view(1, seq_len)
+    too_old = col < (row - sliding_window + 1)
+    mask[:, :, too_old] = torch.finfo(dtype).min
+    return mask
+
+
 def compact_hidden_states_and_positions(
     hidden_states: Any,
     position_ids: Any | None,
@@ -424,23 +441,38 @@ def remap_indices(indices: Iterable[int], old_to_new: dict[int, int]) -> tuple[i
     return tuple(old_to_new[int(index)] for index in indices)
 
 
-def _call_decoder_layer(layer: Any, hidden_states: Any, attention_mask: Any, position_ids: Any | None) -> Any:
+def _call_decoder_layer(
+    layer: Any,
+    hidden_states: Any,
+    attention_mask: Any,
+    position_embeddings: Any,
+    text_position_ids: Any | None,
+) -> Any:
+    import inspect
+
+    signature = inspect.signature(layer.forward if hasattr(layer, "forward") else layer)
+    parameters = signature.parameters
+    accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+    required = {"attention_mask", "position_embeddings"}
+    missing = [name for name in required if name not in parameters and not accepts_kwargs]
+    if missing:
+        raise RuntimeError(
+            "Installed Qwen decoder layer does not expose the expected Transformers 5.14.1 "
+            f"arguments: missing {missing}."
+        )
     kwargs = {
         "attention_mask": attention_mask,
-        "position_ids": position_ids,
+        "position_embeddings": position_embeddings,
+        "position_ids": text_position_ids,
+        "past_key_values": None,
         "use_cache": False,
-        "output_attentions": False,
     }
-    kwargs = {key: value for key, value in kwargs.items() if value is not None}
-    try:
-        output = layer(hidden_states, **kwargs)
-    except TypeError:
-        kwargs.pop("output_attentions", None)
-        try:
-            output = layer(hidden_states, **kwargs)
-        except TypeError:
-            kwargs.pop("use_cache", None)
-            output = layer(hidden_states, **kwargs)
+    kwargs = {
+        key: value
+        for key, value in kwargs.items()
+        if value is not None and (key in parameters or accepts_kwargs)
+    }
+    output = layer(hidden_states, **kwargs)
     if isinstance(output, tuple):
         return output[0]
     if hasattr(output, "last_hidden_state"):
@@ -475,6 +507,9 @@ def run_custom_decoder_prefill(
     norm: Any | None,
     num_attention_heads: int,
     head_dim: int,
+    rotary_emb: Any | None = None,
+    layer_types: Sequence[str] | None = None,
+    sliding_window: int | None = None,
 ) -> DecoderPrefillResult:
     torch = _torch_module()
     if config.condition != "dense_custom" and not config.retained_temporal_regions:
@@ -487,6 +522,21 @@ def run_custom_decoder_prefill(
     compaction_plan: CompactionPlan | None = None
     instrumentation: list[LayerInstrumentation] = []
     total_flops = 0
+    if rotary_emb is None and layers:
+        # Tests may use tiny fake layers. Real Qwen callers must pass rotary_emb.
+        if position_ids is not None:
+            raise RuntimeError("Real Qwen execution requires language_model.rotary_emb.")
+    active_layer_types = tuple(layer_types or ("full_attention",) * len(layers))
+    if len(active_layer_types) != len(layers):
+        raise ValueError("layer_types length must match decoder layer count.")
+    supported_layer_types = {"full_attention", "sliding_attention"}
+    unsupported = sorted(set(active_layer_types).difference(supported_layer_types))
+    if unsupported:
+        raise RuntimeError(f"Unsupported Qwen attention layer types: {unsupported}")
+    if "sliding_attention" in active_layer_types and not sliding_window:
+        raise RuntimeError("Qwen sliding_attention layers require a sliding_window value.")
+    text_position_ids = _official_text_position_ids(position_ids)
+    attention_mask_mode = "full_attention_only" if set(active_layer_types) == {"full_attention"} else "mixed_full_and_sliding_attention"
 
     with torch.inference_mode():
         for layer_idx, layer in enumerate(layers):
@@ -499,8 +549,24 @@ def run_custom_decoder_prefill(
                 batch_size=int(hidden_states.shape[0]),
             )
             total_flops += qk + av
-            attention_mask = build_additive_causal_mask(seq_in, hidden_states.dtype, hidden_states.device)
-            hidden_states = _call_decoder_layer(layer, hidden_states, attention_mask, position_ids)
+            full_attention_mask = build_additive_causal_mask(seq_in, hidden_states.dtype, hidden_states.device)
+            if active_layer_types[layer_idx] == "full_attention":
+                attention_mask = full_attention_mask
+            else:
+                attention_mask = build_additive_sliding_causal_mask(
+                    seq_in,
+                    int(sliding_window),
+                    hidden_states.dtype,
+                    hidden_states.device,
+                )
+            position_embeddings = _position_embeddings(rotary_emb, hidden_states, position_ids)
+            hidden_states = _call_decoder_layer(
+                layer,
+                hidden_states,
+                attention_mask,
+                position_embeddings,
+                text_position_ids,
+            )
             seq_out = int(hidden_states.shape[1])
             compaction_applied = False
             if config.condition != "dense_custom" and layer_idx == config.handoff_layer:
@@ -519,6 +585,7 @@ def run_custom_decoder_prefill(
                 current_visual_indices = compaction_plan.retained_visual_token_positions
                 current_memory_indices = compaction_plan.memory_token_positions
                 current_question_indices = remap_indices(current_question_indices, compaction_plan.old_to_new)
+                text_position_ids = _official_text_position_ids(position_ids)
                 seq_out = int(hidden_states.shape[1])
                 compaction_applied = True
             visual_out, memory_out, text_out = _counts(seq_out, current_visual_indices, current_memory_indices)
@@ -542,55 +609,127 @@ def run_custom_decoder_prefill(
             )
         if norm is not None:
             hidden_states = norm(hidden_states)
-        logits = lm_head(hidden_states) if lm_head is not None else hidden_states
+        final_token_hidden_state = hidden_states[:, -1:, :]
+        logits = lm_head(final_token_hidden_state) if lm_head is not None else final_token_hidden_state
     return DecoderPrefillResult(
         logits=logits,
         final_hidden_states=hidden_states,
+        final_token_hidden_state=final_token_hidden_state,
         instrumentation=instrumentation,
         compaction_plan=compaction_plan,
         final_question_token_indices=current_question_indices,
         final_visual_token_indices=tuple(current_visual_indices),
         final_memory_token_indices=tuple(current_memory_indices),
         total_estimated_attention_flops=total_flops,
+        attention_mask_mode=attention_mask_mode,
+        layer_types=active_layer_types,
     )
 
 
-def cuda_profile_prefill(callable_obj: Any, *, warmup: int = 1, repeats: int = 1) -> tuple[Any, dict[str, Any]]:
+def _official_text_position_ids(position_ids: Any | None) -> Any | None:
+    if position_ids is None:
+        return None
+    if position_ids.dim() == 3 and position_ids.shape[0] == 4:
+        return position_ids[0]
+    return None
+
+
+def _position_embeddings(rotary_emb: Any | None, hidden_states: Any, position_ids: Any | None) -> Any | None:
+    if rotary_emb is None:
+        return None
+    if position_ids is None:
+        raise RuntimeError("Qwen rotary_emb requires multimodal position_ids.")
+    if position_ids.dim() != 3:
+        raise RuntimeError(f"Expected Qwen multimodal position_ids rank 3, got shape {tuple(position_ids.shape)}.")
+    rotary_position_ids = position_ids[1:] if position_ids.shape[0] == 4 else position_ids
+    if rotary_position_ids.shape[0] != 3:
+        raise RuntimeError(
+            "Expected Qwen rotary position_ids with three multimodal axes "
+            f"after optional text row removal, got shape {tuple(rotary_position_ids.shape)}."
+        )
+    if rotary_position_ids.shape[-1] != hidden_states.shape[1]:
+        raise RuntimeError(
+            "Qwen position_ids sequence length does not match hidden_states: "
+            f"{rotary_position_ids.shape[-1]} != {hidden_states.shape[1]}"
+        )
+    return rotary_emb(hidden_states, rotary_position_ids)
+
+
+def cuda_profile_prefill(callable_obj: Any, *, warmup: int = 3, repeats: int = 10) -> tuple[Any, dict[str, Any]]:
     torch = _torch_module()
+    repeats = max(1, repeats)
+    warmup = max(0, warmup)
     if not torch.cuda.is_available():
-        started = time.perf_counter()
-        result = callable_obj()
-        elapsed = time.perf_counter() - started
+        for _ in range(warmup):
+            callable_obj()
+        timings: list[float] = []
+        result = None
+        for _ in range(repeats):
+            started = time.perf_counter()
+            result = callable_obj()
+            timings.append(time.perf_counter() - started)
         return result, {
             "cuda_available": False,
             "warmup": warmup,
             "repeats": repeats,
-            "prefill_latency_seconds": elapsed,
-            "peak_allocated_bytes": None,
-            "peak_reserved_bytes": None,
+            "prefill_latency_seconds_median": statistics.median(timings),
+            "prefill_latency_seconds_mean": statistics.fmean(timings),
+            "prefill_latency_seconds_stddev": statistics.stdev(timings) if len(timings) > 1 else 0.0,
+            "incremental_peak_allocated_bytes": None,
+            "incremental_peak_reserved_bytes": None,
+            "absolute_peak_allocated_bytes": None,
+            "absolute_peak_reserved_bytes": None,
         }
     for _ in range(max(0, warmup)):
         callable_obj()
     torch.cuda.synchronize()
     torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
     result = None
-    start.record()
-    for _ in range(max(1, repeats)):
+    timings_ms: list[float] = []
+    baseline_allocated = int(torch.cuda.memory_allocated())
+    baseline_reserved = int(torch.cuda.memory_reserved())
+    peak_allocated = baseline_allocated
+    peak_reserved = baseline_reserved
+    for _ in range(repeats):
+        torch.cuda.reset_peak_memory_stats()
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
         result = callable_obj()
-    end.record()
-    torch.cuda.synchronize()
-    elapsed_ms = start.elapsed_time(end) / max(1, repeats)
+        end.record()
+        torch.cuda.synchronize()
+        timings_ms.append(float(start.elapsed_time(end)))
+        peak_allocated = max(peak_allocated, int(torch.cuda.max_memory_allocated()))
+        peak_reserved = max(peak_reserved, int(torch.cuda.max_memory_reserved()))
     return result, {
         "cuda_available": True,
         "warmup": warmup,
         "repeats": repeats,
-        "prefill_latency_seconds": elapsed_ms / 1000.0,
-        "peak_allocated_bytes": int(torch.cuda.max_memory_allocated()),
-        "peak_reserved_bytes": int(torch.cuda.max_memory_reserved()),
+        "prefill_latency_seconds_median": statistics.median(timings_ms) / 1000.0,
+        "prefill_latency_seconds_mean": statistics.fmean(timings_ms) / 1000.0,
+        "prefill_latency_seconds_stddev": (statistics.stdev(timings_ms) / 1000.0) if len(timings_ms) > 1 else 0.0,
+        "baseline_allocated_bytes": baseline_allocated,
+        "baseline_reserved_bytes": baseline_reserved,
+        "incremental_peak_allocated_bytes": max(0, peak_allocated - baseline_allocated),
+        "incremental_peak_reserved_bytes": max(0, peak_reserved - baseline_reserved),
+        "absolute_peak_allocated_bytes": peak_allocated,
+        "absolute_peak_reserved_bytes": peak_reserved,
     }
+
+
+def cuda_profile_stages(
+    stage_callables: dict[str, Any],
+    *,
+    warmup: int = 3,
+    repeats: int = 10,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    results: dict[str, Any] = {}
+    profiles: dict[str, Any] = {}
+    for name, callable_obj in stage_callables.items():
+        result, profile = cuda_profile_prefill(callable_obj, warmup=warmup, repeats=repeats)
+        results[name] = result
+        profiles[name] = profile
+    return results, profiles
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -646,14 +785,24 @@ def qwen_decoder_stack(model: Any) -> dict[str, Any]:
     core = getattr(model, "model", None)
     if core is None:
         raise RuntimeError("Could not locate Qwen core model at model.model.")
-    layers = getattr(core, "layers", None)
-    if layers is None:
-        layers = getattr(getattr(core, "language_model", None), "layers", None)
+    language_model = getattr(core, "language_model", None)
+    if language_model is None:
+        raise RuntimeError("Could not locate Qwen language_model.")
+    layers = getattr(language_model, "layers", None)
     if layers is None:
         raise RuntimeError("Could not locate Qwen decoder layers.")
-    norm = getattr(core, "norm", None)
-    if norm is None and getattr(core, "language_model", None) is not None:
-        norm = getattr(core.language_model, "norm", None)
+    norm = getattr(language_model, "norm", None)
+    rotary_emb = getattr(language_model, "rotary_emb", None)
+    if rotary_emb is None:
+        raise RuntimeError("Could not locate Qwen language_model.rotary_emb.")
+    lm_config = getattr(language_model, "config", None)
+    if lm_config is None:
+        lm_config = getattr(getattr(model, "config", None), "text_config", None)
+    if lm_config is None:
+        raise RuntimeError("Could not locate Qwen text config.")
+    layer_types = tuple(getattr(lm_config, "layer_types", ("full_attention",) * len(tuple(layers))))
+    if len(layer_types) != len(tuple(layers)):
+        raise RuntimeError("Qwen text config layer_types length does not match decoder layer count.")
     lm_head = getattr(model, "lm_head", None)
     if lm_head is None:
         raise RuntimeError("Could not locate Qwen lm_head.")
@@ -666,6 +815,10 @@ def qwen_decoder_stack(model: Any) -> dict[str, Any]:
         "layers": tuple(layers),
         "norm": norm,
         "lm_head": lm_head,
+        "language_model": language_model,
+        "rotary_emb": rotary_emb,
+        "layer_types": layer_types,
+        "sliding_window": getattr(lm_config, "sliding_window", None),
         "num_attention_heads": num_heads,
         "head_dim": head_dim,
     }
@@ -692,64 +845,112 @@ def qwen_multimodal_decoder_inputs(model: Any, inputs: Any) -> tuple[Any, Any | 
         if embed_tokens is None:
             raise RuntimeError("Could not locate Qwen text embedding module.")
         inputs_embeds = embed_tokens(input_ids)
-        visual = getattr(model, "visual", None)
-        if visual is None:
-            visual = getattr(core, "visual", None)
-        if visual is None:
-            raise RuntimeError("Could not locate Qwen visual encoder.")
-
         if inputs.get("pixel_values") is not None:
-            image_embeds = visual(inputs["pixel_values"], grid_thw=inputs.get("image_grid_thw"))
-            image_token_id = int(getattr(getattr(model, "config", None), "image_token_id"))
-            image_mask = input_ids == image_token_id
-            inputs_embeds = _scatter_visual_embeds(inputs_embeds, image_mask, image_embeds)
+            if not hasattr(core, "get_image_features"):
+                raise RuntimeError("Qwen core model lacks get_image_features.")
+            image_outputs = core.get_image_features(inputs["pixel_values"], inputs.get("image_grid_thw"))
+            image_pooler = getattr(image_outputs, "pooler_output", None)
+            if image_pooler is None:
+                raise RuntimeError("Qwen get_image_features did not return pooler_output.")
+            image_embeds = _cat_qwen_pooler_output(image_pooler).to(inputs_embeds.device, inputs_embeds.dtype)
+            image_mask, _ = _placeholder_masks(core, input_ids, inputs_embeds, image_features=image_embeds)
+            inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
         if inputs.get("pixel_values_videos") is not None:
-            video_embeds = visual(inputs["pixel_values_videos"], grid_thw=inputs.get("video_grid_thw"))
-            video_token_id = int(getattr(getattr(model, "config", None), "video_token_id"))
-            video_mask = input_ids == video_token_id
-            inputs_embeds = _scatter_visual_embeds(inputs_embeds, video_mask, video_embeds)
+            if not hasattr(core, "get_video_features"):
+                raise RuntimeError("Qwen core model lacks get_video_features.")
+            video_outputs = core.get_video_features(inputs["pixel_values_videos"], inputs.get("video_grid_thw"))
+            video_pooler = getattr(video_outputs, "pooler_output", None)
+            if video_pooler is None:
+                raise RuntimeError("Qwen get_video_features did not return pooler_output.")
+            video_embeds = _cat_qwen_pooler_output(video_pooler).to(inputs_embeds.device, inputs_embeds.dtype)
+            _, video_mask = _placeholder_masks(core, input_ids, inputs_embeds, video_features=video_embeds)
+            inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
         position_ids = None
-        if hasattr(core, "get_rope_index"):
+        if hasattr(core, "compute_3d_position_ids"):
             attention_mask = inputs.get("attention_mask")
             second_per_grid_ts = inputs.get("second_per_grid_ts")
-            candidates = [
-                {
-                    "input_ids": input_ids,
-                    "image_grid_thw": inputs.get("image_grid_thw"),
-                    "video_grid_thw": inputs.get("video_grid_thw"),
-                    "second_per_grid_ts": second_per_grid_ts,
-                    "attention_mask": attention_mask,
-                },
-                {
-                    "input_ids": input_ids,
-                    "image_grid_thw": inputs.get("image_grid_thw"),
-                    "video_grid_thw": inputs.get("video_grid_thw"),
-                    "attention_mask": attention_mask,
-                },
-            ]
-            last_error: Exception | None = None
-            for kwargs in candidates:
-                try:
-                    rope_result = core.get_rope_index(**kwargs)
-                    position_ids = rope_result[0] if isinstance(rope_result, tuple) else rope_result
-                    break
-                except TypeError as exc:
-                    last_error = exc
-            if position_ids is None and last_error is not None:
-                raise RuntimeError("Could not call Qwen get_rope_index with known signatures.") from last_error
+            position_ids = core.compute_3d_position_ids(
+                input_ids=input_ids,
+                image_grid_thw=inputs.get("image_grid_thw"),
+                video_grid_thw=inputs.get("video_grid_thw"),
+                second_per_grid_ts=second_per_grid_ts,
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                past_key_values=None,
+                mm_token_type_ids=inputs.get("mm_token_type_ids"),
+            )
+        elif hasattr(core, "get_rope_index"):
+            rope_result = core.get_rope_index(
+                input_ids,
+                mm_token_type_ids=inputs.get("mm_token_type_ids"),
+                image_grid_thw=inputs.get("image_grid_thw"),
+                video_grid_thw=inputs.get("video_grid_thw"),
+                second_per_grid_ts=inputs.get("second_per_grid_ts"),
+                attention_mask=inputs.get("attention_mask"),
+            )
+            position_ids = rope_result[0] if isinstance(rope_result, tuple) else rope_result
+        if position_ids is None and (inputs.get("pixel_values") is not None or inputs.get("pixel_values_videos") is not None):
+            raise RuntimeError("Qwen multimodal input requires official 3D position IDs; scalar arange fallback is forbidden.")
         if position_ids is None:
             seq_len = int(input_ids.shape[1])
             position_ids = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
+        _assert_qwen_position_ids(position_ids, inputs_embeds.shape[1])
     return inputs_embeds, position_ids
 
 
-def _scatter_visual_embeds(inputs_embeds: Any, placeholder_mask: Any, visual_embeds: Any) -> Any:
-    if visual_embeds.dim() == 3:
-        visual_embeds = visual_embeds.reshape(-1, visual_embeds.shape[-1])
-    expected = int(placeholder_mask.sum().item())
-    actual = int(visual_embeds.shape[0])
-    if expected != actual:
-        raise RuntimeError(f"Visual feature count mismatch: placeholders={expected}, visual_embeds={actual}.")
-    mask = placeholder_mask.unsqueeze(-1).expand_as(inputs_embeds)
-    return inputs_embeds.masked_scatter(mask, visual_embeds.to(inputs_embeds.device, inputs_embeds.dtype))
+def _cat_qwen_pooler_output(pooler_output: Any) -> Any:
+    torch = _torch_module()
+    if isinstance(pooler_output, torch.Tensor):
+        raise RuntimeError(
+            "Qwen get_*_features pooler_output was a tensor, but Transformers 5.14.1 "
+            "should return per-input feature chunks. Refusing to guess feature boundaries."
+        )
+    chunks = tuple(pooler_output)
+    if not chunks:
+        raise RuntimeError("Qwen get_*_features returned no visual feature chunks.")
+    return torch.cat(chunks, dim=0)
+
+
+def _placeholder_masks(
+    core: Any,
+    input_ids: Any,
+    inputs_embeds: Any,
+    *,
+    image_features: Any | None = None,
+    video_features: Any | None = None,
+) -> tuple[Any, Any]:
+    if hasattr(core, "get_placeholder_mask"):
+        image_mask, video_mask = core.get_placeholder_mask(
+            input_ids,
+            inputs_embeds=inputs_embeds,
+            image_features=image_features,
+            video_features=video_features,
+        )
+    else:
+        config = getattr(core, "config", None)
+        if config is None:
+            raise RuntimeError("Cannot build placeholder masks without core.config.")
+        image_mask = (input_ids == int(config.image_token_id)).unsqueeze(-1).to(inputs_embeds.device)
+        video_mask = (input_ids == int(config.video_token_id)).unsqueeze(-1).to(inputs_embeds.device)
+    hidden = int(inputs_embeds.shape[-1])
+    if image_features is not None:
+        expected = int(image_mask.sum().item())
+        actual = int(image_features.numel() // hidden)
+        if expected != actual:
+            raise RuntimeError(f"Image features and placeholders do not match: {actual} != {expected}.")
+    if video_features is not None:
+        expected = int(video_mask.sum().item())
+        actual = int(video_features.numel() // hidden)
+        if expected != actual:
+            raise RuntimeError(f"Video features and placeholders do not match: {actual} != {expected}.")
+    return image_mask, video_mask
+
+
+def _assert_qwen_position_ids(position_ids: Any, seq_len: int) -> None:
+    if position_ids.dim() != 3:
+        raise RuntimeError(f"Expected Qwen position_ids rank 3, got shape {tuple(position_ids.shape)}.")
+    if position_ids.shape[0] not in {3, 4}:
+        raise RuntimeError(f"Expected Qwen position_ids first dimension 3 or 4, got {position_ids.shape[0]}.")
+    if int(position_ids.shape[-1]) != int(seq_len):
+        raise RuntimeError(f"Qwen position_ids length {position_ids.shape[-1]} does not match sequence length {seq_len}.")
