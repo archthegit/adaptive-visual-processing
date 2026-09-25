@@ -12,9 +12,28 @@ from scripts.run_qwen_temporal_handoff_dev import (
     gate_decision,
     latest_artifacts,
     per_example_rows,
+    prepare_run_config,
     summarize_analysis,
+    validate_resumed_condition_artifact,
     validate_all_outputs,
 )
+
+
+BASE_RUN_CONFIG = {
+    "schema_version": "qwen_temporal_handoff_dev_pilot_v1",
+    "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "resolution_config": "medium",
+    "sampling_mode": "cross_model_8",
+    "handoff_layer": 8,
+    "retain_regions": 2,
+    "memory_tokens_per_region": 2,
+    "seed": 20260818,
+    "warmup": 3,
+    "repeats": 10,
+    "git_commit": "abc123",
+    "conditions": list(CONDITIONS),
+    "timing_scope": "test fixture",
+}
 
 
 def _profile(latency: float, peak: int = 100) -> dict:
@@ -113,6 +132,7 @@ def _artifact(
         },
         "metadata": {
             "git_commit": "abc123",
+            "run_config": dict(BASE_RUN_CONFIG),
             "resolution": {"name": "medium"},
             "sampling_mode": "cross_model_8",
             "query_scope": "question",
@@ -130,6 +150,10 @@ def _artifact(
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload))
+
+
+def _write_run_config(root: Path, config: dict | None = None) -> None:
+    _write_json(root / "run_config.json", dict(config or BASE_RUN_CONFIG))
 
 
 def _write_complete_record(root: Path, artifact: dict) -> None:
@@ -163,6 +187,105 @@ def test_latest_artifacts_supports_condition_level_resume_records(tmp_path: Path
     artifacts = latest_artifacts(root)
     assert set(artifacts["q00"]) == set(CONDITIONS)
     assert artifacts["q00"]["handoff_mean"]["answer_choice_scores"]["correct_choice_log_probability"] == -0.9
+
+
+def test_same_configuration_resume_succeeds_and_validates_artifact(tmp_path: Path):
+    root = tmp_path / "run"
+    _write_fixture(root, ["q00"])
+    _write_run_config(root)
+    saved = prepare_run_config(root, dict(BASE_RUN_CONFIG), overwrite=False)
+    assert saved["handoff_layer"] == 8
+    artifact = validate_resumed_condition_artifact(
+        artifact_path(root, "q00", "dense_custom"),
+        question_id="q00",
+        condition="dense_custom",
+        saved_run_config=saved,
+    )
+    assert artifact["status"] == "complete"
+
+
+def test_changed_handoff_layer_is_rejected_without_overwriting_config(tmp_path: Path):
+    root = tmp_path / "run"
+    _write_fixture(root, ["q00"])
+    _write_run_config(root)
+    requested = dict(BASE_RUN_CONFIG)
+    requested["handoff_layer"] = 12
+    before = (root / "run_config.json").read_text()
+    with pytest.raises(RuntimeError, match="handoff_layer"):
+        prepare_run_config(root, requested, overwrite=False)
+    assert (root / "run_config.json").read_text() == before
+
+
+def test_changed_memory_token_count_is_rejected(tmp_path: Path):
+    root = tmp_path / "run"
+    _write_fixture(root, ["q00"])
+    _write_run_config(root)
+    requested = dict(BASE_RUN_CONFIG)
+    requested["memory_tokens_per_region"] = 4
+    with pytest.raises(RuntimeError, match="memory_tokens_per_region"):
+        prepare_run_config(root, requested, overwrite=False)
+
+
+def test_changed_git_commit_is_rejected(tmp_path: Path):
+    root = tmp_path / "run"
+    _write_fixture(root, ["q00"])
+    _write_run_config(root)
+    requested = dict(BASE_RUN_CONFIG)
+    requested["git_commit"] = "different"
+    with pytest.raises(RuntimeError, match="git_commit"):
+        prepare_run_config(root, requested, overwrite=False)
+
+
+def test_corrupted_or_missing_resumed_artifact_is_rejected(tmp_path: Path):
+    root = tmp_path / "run"
+    _write_fixture(root, ["q00"])
+    _write_run_config(root)
+    path = artifact_path(root, "q00", "handoff_mean")
+    path.write_text("")
+    with pytest.raises(RuntimeError, match="missing or empty"):
+        validate_resumed_condition_artifact(
+            path,
+            question_id="q00",
+            condition="handoff_mean",
+            saved_run_config=BASE_RUN_CONFIG,
+        )
+    path.unlink()
+    with pytest.raises(RuntimeError, match="missing or empty"):
+        validate_resumed_condition_artifact(
+            path,
+            question_id="q00",
+            condition="handoff_mean",
+            saved_run_config=BASE_RUN_CONFIG,
+        )
+
+
+def test_overwrite_clears_stale_experiment_outputs_only(tmp_path: Path):
+    root = tmp_path / "run"
+    _write_fixture(root, ["q00"])
+    _write_run_config(root)
+    for name in (
+        "run_summary.json",
+        "per_example.csv",
+        "analysis_summary.json",
+        "report.md",
+        "latency_speedup.png",
+        "quality_delta.png",
+        "margin_delta.png",
+        "accuracy_and_flip_rate.png",
+        "sequence_and_flops_reduction.png",
+    ):
+        (root / name).write_text("stale")
+    unrelated = root / "notes.txt"
+    unrelated.write_text("keep")
+    requested = dict(BASE_RUN_CONFIG)
+    requested["git_commit"] = "newcommit"
+    saved = prepare_run_config(root, requested, overwrite=True)
+    assert saved["git_commit"] == "newcommit"
+    assert not (root / "records.jsonl").exists()
+    assert not (root / "artifacts").exists()
+    assert not (root / "run_summary.json").exists()
+    assert unrelated.read_text() == "keep"
+    assert json.loads((root / "run_config.json").read_text())["git_commit"] == "newcommit"
 
 
 def test_pairing_validation_and_analysis_outputs(tmp_path: Path):

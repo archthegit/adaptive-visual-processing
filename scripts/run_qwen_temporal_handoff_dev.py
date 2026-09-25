@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import math
+import shutil
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -20,6 +21,33 @@ from src.experiment1.temporal_handoff import SCHEMA_VERSION, append_jsonl, write
 CONDITIONS = ("dense_custom", "handoff_mean", "hard_evict", "random_handoff")
 EXPECTED_DEV_EXAMPLES = 15
 DEFAULT_SEED = 20260818
+IMMUTABLE_RUN_CONFIG_FIELDS = (
+    "schema_version",
+    "model_id",
+    "resolution_config",
+    "sampling_mode",
+    "handoff_layer",
+    "retain_regions",
+    "memory_tokens_per_region",
+    "seed",
+    "warmup",
+    "repeats",
+    "conditions",
+    "git_commit",
+)
+EXPERIMENT_OUTPUT_FILES = (
+    "records.jsonl",
+    "run_summary.json",
+    "per_example.csv",
+    "analysis_summary.json",
+    "report.md",
+    "latency_speedup.png",
+    "quality_delta.png",
+    "margin_delta.png",
+    "accuracy_and_flip_rate.png",
+    "sequence_and_flops_reduction.png",
+    "run_config.json",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +96,135 @@ def completed_conditions(output_dir: Path) -> set[tuple[str, str]]:
         if record.get("status") == "complete":
             completed.add((str(record.get("question_id")), str(record.get("condition"))))
     return completed
+
+
+def completed_condition_records(output_dir: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    records = output_dir / "records.jsonl"
+    completed: dict[tuple[str, str], dict[str, Any]] = {}
+    if not records.exists():
+        return completed
+    for record in read_jsonl(records):
+        if record.get("status") == "complete":
+            completed[(str(record.get("question_id")), str(record.get("condition")))] = record
+    return completed
+
+
+def immutable_config_subset(config: dict[str, Any]) -> dict[str, Any]:
+    return {field: config.get(field) for field in IMMUTABLE_RUN_CONFIG_FIELDS}
+
+
+def immutable_config_mismatches(saved: dict[str, Any], requested: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    saved_subset = immutable_config_subset(saved)
+    requested_subset = immutable_config_subset(requested)
+    return {
+        field: {"saved": saved_subset.get(field), "requested": requested_subset.get(field)}
+        for field in IMMUTABLE_RUN_CONFIG_FIELDS
+        if saved_subset.get(field) != requested_subset.get(field)
+    }
+
+
+def experiment_outputs_present(output_dir: Path) -> bool:
+    if (output_dir / "artifacts").exists():
+        return True
+    return any((output_dir / name).exists() for name in EXPERIMENT_OUTPUT_FILES)
+
+
+def clean_experiment_outputs(output_dir: Path) -> None:
+    for name in EXPERIMENT_OUTPUT_FILES:
+        path = output_dir / name
+        if path.exists():
+            path.unlink()
+    artifacts = output_dir / "artifacts"
+    if artifacts.exists():
+        shutil.rmtree(artifacts)
+
+
+def prepare_run_config(output_dir: Path, requested_config: dict[str, Any], *, overwrite: bool) -> dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    config_path = output_dir / "run_config.json"
+    if overwrite:
+        clean_experiment_outputs(output_dir)
+        write_json(config_path, requested_config)
+        return requested_config
+    if experiment_outputs_present(output_dir):
+        if not config_path.exists():
+            raise RuntimeError(
+                f"Existing temporal-handoff outputs are present in {output_dir}, but run_config.json is missing. "
+                "Use a new output directory or explicitly use --overwrite."
+            )
+        saved_config = read_json(config_path)
+        mismatches = immutable_config_mismatches(saved_config, requested_config)
+        if mismatches:
+            details = "; ".join(
+                f"{field}: saved={values['saved']!r}, requested={values['requested']!r}"
+                for field, values in sorted(mismatches.items())
+            )
+            raise RuntimeError(
+                "Refusing to resume temporal-handoff development run because immutable run configuration differs: "
+                f"{details}. Use a new output directory or explicitly use --overwrite."
+            )
+        return saved_config
+    write_json(config_path, requested_config)
+    return requested_config
+
+
+def resolve_record_artifact_path(record: dict[str, Any], output_dir: Path) -> Path:
+    raw = record.get("artifact")
+    if not raw:
+        raise RuntimeError("Complete record is missing artifact path.")
+    path = Path(raw)
+    candidates = (path, output_dir / path.name, output_dir / "artifacts" / str(record.get("question_id")) / path.name)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return path
+
+
+def validate_resumed_condition_artifact(
+    artifact_path_: Path,
+    *,
+    question_id: str,
+    condition: str,
+    saved_run_config: dict[str, Any],
+) -> dict[str, Any]:
+    if not artifact_path_.exists() or artifact_path_.stat().st_size <= 0:
+        raise RuntimeError(f"{question_id}/{condition}: resumed artifact path is missing or empty: {artifact_path_}")
+    artifact = read_json(artifact_path_)
+    if artifact.get("question_id") != question_id:
+        raise RuntimeError(f"{question_id}/{condition}: resumed artifact question_id mismatch.")
+    if artifact.get("condition") != condition:
+        raise RuntimeError(f"{question_id}/{condition}: resumed artifact condition mismatch.")
+    if artifact.get("status") != "complete":
+        raise RuntimeError(f"{question_id}/{condition}: resumed artifact is not complete.")
+    metadata = artifact.get("metadata") or {}
+    if metadata.get("git_commit") != saved_run_config.get("git_commit"):
+        raise RuntimeError(
+            f"{question_id}/{condition}: artifact git_commit {metadata.get('git_commit')!r} "
+            f"does not match run_config git_commit {saved_run_config.get('git_commit')!r}."
+        )
+    artifact_config = metadata.get("run_config")
+    if not isinstance(artifact_config, dict):
+        raise RuntimeError(f"{question_id}/{condition}: resumed artifact lacks metadata.run_config.")
+    mismatches = immutable_config_mismatches(artifact_config, saved_run_config)
+    if mismatches:
+        details = "; ".join(
+            f"{field}: artifact={values['saved']!r}, run_config={values['requested']!r}"
+            for field, values in sorted(mismatches.items())
+        )
+        raise RuntimeError(f"{question_id}/{condition}: resumed artifact run_config mismatch: {details}")
+    validate_condition_artifact(artifact)
+    return artifact
+
+
+def validate_existing_equivalence_report(path: Path, *, question_id: str) -> dict[str, Any]:
+    if not path.exists() or path.stat().st_size <= 0:
+        raise RuntimeError(f"{question_id}: dense-equivalence report is missing or empty: {path}")
+    report = read_json(path)
+    if report.get("question_id") != question_id:
+        raise RuntimeError(f"{question_id}: dense-equivalence report question_id mismatch.")
+    if report.get("passed") is not True:
+        raise RuntimeError(f"{question_id}: dense-equivalence report did not pass.")
+    return report
 
 
 def latest_artifacts(output_dir: str | Path) -> dict[str, dict[str, dict[str, Any]]]:
@@ -598,8 +755,6 @@ def run_development_pilot(args: argparse.Namespace) -> dict[str, Any]:
     from src.models.qwen import Qwen25VLWrapper, QwenConfig
 
     output = Path(args.output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    records_path = output / "records.jsonl"
     manifest_records_list = load_manifest(args.manifest)
     if len(manifest_records_list) != EXPECTED_DEV_EXAMPLES:
         raise RuntimeError(f"Expected {EXPECTED_DEV_EXAMPLES} development examples, found {len(manifest_records_list)}.")
@@ -622,14 +777,15 @@ def run_development_pilot(args: argparse.Namespace) -> dict[str, Any]:
         "conditions": list(CONDITIONS),
         "timing_scope": "Profiles include only custom decoder prefill calls; video decoding, preprocessing, model loading, serialization and route selection are outside timing.",
     }
-    write_json(output / "run_config.json", run_config)
+    saved_run_config = prepare_run_config(output, run_config, overwrite=args.overwrite)
+    records_path = output / "records.jsonl"
 
     model = Qwen25VLWrapper(QwenConfig(model_id=args.model_id, max_new_tokens=1, attn_implementation="sdpa"))
     model._load()
     assert model._model is not None
     assert model._processor is not None
     stack = qwen_decoder_stack(model._model)
-    completed = completed_conditions(output) if not args.overwrite else set()
+    completed = completed_condition_records(output) if not args.overwrite else {}
 
     for qid in sorted(manifest_records):
         example = examples[qid]
@@ -665,9 +821,16 @@ def run_development_pilot(args: argparse.Namespace) -> dict[str, Any]:
 
         for condition in CONDITIONS:
             out_path = artifact_path(output, qid, condition)
-            if not args.overwrite and (qid, condition) in completed and out_path.exists():
+            if not args.overwrite and (qid, condition) in completed:
+                resumed_path = resolve_record_artifact_path(completed[(qid, condition)], output)
+                resumed_artifact = validate_resumed_condition_artifact(
+                    resumed_path,
+                    question_id=qid,
+                    condition=condition,
+                    saved_run_config=saved_run_config,
+                )
                 if condition == "dense_custom":
-                    dense_scores = read_json(out_path)["answer_choice_scores"]
+                    dense_scores = resumed_artifact["answer_choice_scores"]
                 continue
             config = condition_from_baseline_scores(
                 condition=condition,
@@ -764,7 +927,7 @@ def run_development_pilot(args: argparse.Namespace) -> dict[str, Any]:
                 },
                 "metadata": {
                     "git_commit": git_commit,
-                    "run_config": run_config,
+                    "run_config": saved_run_config,
                     "resolution": resolution.to_metadata(),
                     "sampling_mode": "cross_model_8",
                     "query_scope": "question",
@@ -780,6 +943,12 @@ def run_development_pilot(args: argparse.Namespace) -> dict[str, Any]:
                 },
             }
             write_json(out_path, artifact)
+            validate_resumed_condition_artifact(
+                out_path,
+                question_id=qid,
+                condition=condition,
+                saved_run_config=saved_run_config,
+            )
             append_jsonl(records_path, {"question_id": qid, "condition": condition, "status": "complete", "artifact": str(out_path)})
             if condition == "dense_custom":
                 dense_custom_logits = result.logits
@@ -808,9 +977,11 @@ def run_development_pilot(args: argparse.Namespace) -> dict[str, Any]:
             write_json(eq_path, equivalence)
             if not equivalence["passed"]:
                 raise RuntimeError(f"{qid}: dense_custom failed BF16-aware equivalence gate.")
+        else:
+            validate_existing_equivalence_report(eq_path, question_id=qid)
 
         group = {condition: read_json(artifact_path(output, qid, condition)) for condition in CONDITIONS}
-        validate_example_group(qid, group, read_json(eq_path))
+        validate_example_group(qid, group, validate_existing_equivalence_report(eq_path, question_id=qid))
 
     summary = analyze_outputs(
         output_dir=output,
@@ -822,7 +993,7 @@ def run_development_pilot(args: argparse.Namespace) -> dict[str, Any]:
     write_json(
         output / "run_summary.json",
         {
-            "run_config": run_config,
+            "run_config": saved_run_config,
             "num_examples": EXPECTED_DEV_EXAMPLES,
             "conditions": list(CONDITIONS),
             "analysis_summary": summary,
