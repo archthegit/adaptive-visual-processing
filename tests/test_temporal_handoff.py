@@ -12,6 +12,7 @@ from src.experiment1.temporal_handoff import (
     build_compaction_plan,
     compact_hidden_states_and_positions,
     condition_from_baseline_scores,
+    cuda_profile_prefill,
     qwen_decoder_stack,
     qwen_multimodal_decoder_inputs,
     run_custom_decoder_prefill,
@@ -512,6 +513,50 @@ def test_qwen_decoder_stack_exposes_language_model_rotary_and_layer_types():
     assert len(stack["layers"]) == 2
     assert stack["rotary_emb"] is model.model.language_model.rotary_emb
     assert stack["layer_types"] == ("full_attention", "full_attention")
+
+
+def test_cuda_profile_prefill_runs_callable_under_inference_mode_on_cpu():
+    states = []
+
+    def callable_obj():
+        states.append(torch.is_inference_mode_enabled())
+        return {"ok": True}
+
+    result, profile = cuda_profile_prefill(callable_obj, warmup=0, repeats=1)
+    assert result == {"ok": True}
+    assert states == [True]
+    assert profile["warmup"] == 0
+    assert profile["repeats"] == 1
+    assert "prefill_latency_seconds_median" in profile
+    assert "prefill_latency_seconds_mean" in profile
+    assert "prefill_latency_seconds_stddev" in profile
+
+
+def test_cuda_profile_prefill_all_warmups_and_repeats_use_inference_mode_on_cpu():
+    states = []
+
+    def callable_obj():
+        states.append(torch.is_inference_mode_enabled())
+        return len(states)
+
+    result, profile = cuda_profile_prefill(callable_obj, warmup=2, repeats=3)
+    assert result == 5
+    assert states == [True, True, True, True, True]
+    assert profile["warmup"] == 2
+    assert profile["repeats"] == 3
+
+
+def test_cuda_profile_prefill_allows_inference_tensor_through_trainable_linear_on_cpu():
+    linear = torch.nn.Linear(4, 3)
+    with torch.inference_mode():
+        inference_tensor = torch.ones((1, 4))
+    assert inference_tensor.is_inference()
+
+    result, profile = cuda_profile_prefill(lambda: linear(inference_tensor), warmup=0, repeats=1)
+    assert result.shape == (1, 3)
+    assert torch.isfinite(result).all()
+    assert profile["repeats"] == 1
+    assert "incremental_peak_allocated_bytes" in profile
 
 
 def test_decoder_layer_without_position_embeddings_fails_loudly():

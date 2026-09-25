@@ -863,14 +863,19 @@ def cuda_profile_prefill(callable_obj: Any, *, warmup: int = 3, repeats: int = 1
     torch = _torch_module()
     repeats = max(1, repeats)
     warmup = max(0, warmup)
+
+    def invoke() -> Any:
+        with torch.inference_mode():
+            return callable_obj()
+
     if not torch.cuda.is_available():
         for _ in range(warmup):
-            callable_obj()
+            invoke()
         timings: list[float] = []
         result = None
         for _ in range(repeats):
             started = time.perf_counter()
-            result = callable_obj()
+            result = invoke()
             timings.append(time.perf_counter() - started)
         return result, {
             "cuda_available": False,
@@ -883,9 +888,9 @@ def cuda_profile_prefill(callable_obj: Any, *, warmup: int = 3, repeats: int = 1
             "incremental_peak_reserved_bytes": None,
             "absolute_peak_allocated_bytes": None,
             "absolute_peak_reserved_bytes": None,
-        }
+    }
     for _ in range(max(0, warmup)):
-        callable_obj()
+        invoke()
     torch.cuda.synchronize()
     torch.cuda.empty_cache()
     result = None
@@ -899,7 +904,7 @@ def cuda_profile_prefill(callable_obj: Any, *, warmup: int = 3, repeats: int = 1
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
         start.record()
-        result = callable_obj()
+        result = invoke()
         end.record()
         torch.cuda.synchronize()
         timings_ms.append(float(start.elapsed_time(end)))
