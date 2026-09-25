@@ -13,6 +13,7 @@ from src.experiment1.temporal_handoff import (
     compact_hidden_states_and_positions,
     condition_from_baseline_scores,
     cuda_profile_prefill,
+    dense_equivalence_report,
     qwen_decoder_stack,
     qwen_multimodal_decoder_inputs,
     run_custom_decoder_prefill,
@@ -557,6 +558,144 @@ def test_cuda_profile_prefill_allows_inference_tensor_through_trainable_linear_o
     assert torch.isfinite(result).all()
     assert profile["repeats"] == 1
     assert "incremental_peak_allocated_bytes" in profile
+
+
+def answer_scores(
+    logits: list[float],
+    *,
+    correct_logp: float = -1.0,
+    margin: float = 0.25,
+) -> dict:
+    return {
+        "choice_logits": logits,
+        "correct_choice_log_probability": correct_logp,
+        "correct_vs_strongest_incorrect_margin": margin,
+    }
+
+
+def make_vocab_logits(choice_logits: list[float], tail: list[float] | None = None) -> torch.Tensor:
+    values = list(choice_logits) + list(tail or [0.01 * idx for idx in range(5, 64)])
+    return torch.tensor(values, dtype=torch.bfloat16).view(1, 1, -1)
+
+
+def test_dense_equivalence_allows_bf16_sized_perturbation_with_same_choice():
+    stock = make_vocab_logits([0.0, 1.0, 2.0, 3.0, 4.0])
+    dense = stock.float()
+    dense[0, 0, 0] += 0.125
+    dense[0, 0, 10:] += 0.01
+    report = dense_equivalence_report(
+        stock,
+        dense.to(torch.bfloat16),
+        stock_scores=answer_scores([0.0, 1.0, 2.0, 3.0, 4.0]),
+        dense_scores=answer_scores([0.125, 1.0, 2.0, 3.0, 4.0], correct_logp=-1.04, margin=0.25),
+        stock_sequence_length=20,
+        dense_sequence_length=20,
+        legacy_dense_equivalence_atol=1e-4,
+    )
+    assert report["passed"] is True
+    assert report["stock_vs_dense_custom_max_logit_difference"] >= 0.125
+    assert report["legacy_dense_equivalence_atol_report_only"] == 1e-4
+    assert report["checks"]["max_answer_choice_logit_abs_diff"]["passed"] is True
+
+
+def test_dense_equivalence_prediction_flip_fails():
+    stock = make_vocab_logits([0, 1, 2, 3, 4])
+    dense = make_vocab_logits([0, 1, 2, 5, 4])
+    report = dense_equivalence_report(
+        stock,
+        dense,
+        stock_scores=answer_scores([0, 1, 2, 3, 4]),
+        dense_scores=answer_scores([0, 1, 2, 5, 4]),
+        stock_sequence_length=20,
+        dense_sequence_length=20,
+    )
+    assert report["passed"] is False
+    assert report["checks"]["predicted_choices_match"]["passed"] is False
+
+
+def test_dense_equivalence_excessive_choice_logit_divergence_fails():
+    stock = make_vocab_logits([0, 1, 2, 3, 4])
+    dense = make_vocab_logits([0.5, 1, 2, 3, 4])
+    report = dense_equivalence_report(
+        stock,
+        dense,
+        stock_scores=answer_scores([0, 1, 2, 3, 4]),
+        dense_scores=answer_scores([0.5, 1, 2, 3, 4]),
+        stock_sequence_length=20,
+        dense_sequence_length=20,
+    )
+    assert report["passed"] is False
+    assert report["checks"]["max_answer_choice_logit_abs_diff"]["passed"] is False
+
+
+def test_dense_equivalence_excessive_logp_or_margin_divergence_fails():
+    stock = make_vocab_logits([0, 1, 2, 3, 4])
+    dense = make_vocab_logits([0, 1, 2, 3, 4])
+    logp_report = dense_equivalence_report(
+        stock,
+        dense,
+        stock_scores=answer_scores([0, 1, 2, 3, 4], correct_logp=-1.0, margin=0.25),
+        dense_scores=answer_scores([0, 1, 2, 3, 4], correct_logp=-1.2, margin=0.25),
+        stock_sequence_length=20,
+        dense_sequence_length=20,
+    )
+    margin_report = dense_equivalence_report(
+        stock,
+        dense,
+        stock_scores=answer_scores([0, 1, 2, 3, 4], correct_logp=-1.0, margin=0.25),
+        dense_scores=answer_scores([0, 1, 2, 3, 4], correct_logp=-1.0, margin=0.5),
+        stock_sequence_length=20,
+        dense_sequence_length=20,
+    )
+    assert logp_report["checks"]["correct_choice_log_probability_abs_diff"]["passed"] is False
+    assert margin_report["checks"]["answer_margin_abs_diff"]["passed"] is False
+
+
+def test_dense_equivalence_low_cosine_or_excessive_relative_l2_fails():
+    stock = make_vocab_logits([0, 1, 2, 3, 4], tail=[float(i) for i in range(5, 65)])
+    dense = -stock
+    report = dense_equivalence_report(
+        stock,
+        dense,
+        stock_scores=answer_scores([0, 1, 2, 3, 4]),
+        dense_scores=answer_scores([0, 1, 2, 3, 4]),
+        stock_sequence_length=20,
+        dense_sequence_length=20,
+    )
+    assert report["passed"] is False
+    assert report["checks"]["full_vocab_cosine_similarity"]["passed"] is False
+    assert report["checks"]["relative_l2_error"]["passed"] is False
+
+
+def test_dense_equivalence_sequence_length_mismatch_fails():
+    stock = make_vocab_logits([0, 1, 2, 3, 4])
+    dense = make_vocab_logits([0, 1, 2, 3, 4])
+    report = dense_equivalence_report(
+        stock,
+        dense,
+        stock_scores=answer_scores([0, 1, 2, 3, 4]),
+        dense_scores=answer_scores([0, 1, 2, 3, 4]),
+        stock_sequence_length=20,
+        dense_sequence_length=19,
+    )
+    assert report["passed"] is False
+    assert report["checks"]["sequence_lengths_match"]["passed"] is False
+
+
+def test_dense_equivalence_nan_or_inf_fails():
+    stock = make_vocab_logits([0, 1, 2, 3, 4])
+    dense = make_vocab_logits([0, 1, 2, 3, 4])
+    dense[0, 0, 8] = float("nan")
+    report = dense_equivalence_report(
+        stock,
+        dense,
+        stock_scores=answer_scores([0, 1, 2, 3, 4]),
+        dense_scores=answer_scores([0, 1, 2, 3, 4]),
+        stock_sequence_length=20,
+        dense_sequence_length=20,
+    )
+    assert report["passed"] is False
+    assert report["checks"]["finite_values"]["passed"] is False
 
 
 def test_decoder_layer_without_position_embeddings_fails_loudly():

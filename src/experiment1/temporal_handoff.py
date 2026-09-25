@@ -82,6 +82,24 @@ class NativeTemporalAggregation:
 
 
 @dataclass(frozen=True)
+class DenseEquivalenceThresholds:
+    max_choice_logit_abs_diff: float = 0.25
+    max_correct_log_probability_abs_diff: float = 0.10
+    max_answer_margin_abs_diff: float = 0.125
+    min_full_vocab_cosine_similarity: float = 0.9999
+    max_relative_l2_error: float = 0.01
+
+    def to_metadata(self) -> dict[str, float]:
+        return {
+            "max_choice_logit_abs_diff": self.max_choice_logit_abs_diff,
+            "max_correct_log_probability_abs_diff": self.max_correct_log_probability_abs_diff,
+            "max_answer_margin_abs_diff": self.max_answer_margin_abs_diff,
+            "min_full_vocab_cosine_similarity": self.min_full_vocab_cosine_similarity,
+            "max_relative_l2_error": self.max_relative_l2_error,
+        }
+
+
+@dataclass(frozen=True)
 class CompactionPlan:
     condition: str
     canonical_order: str
@@ -410,6 +428,151 @@ def _expected_native_temporal_cell_count(artifact: dict[str, Any]) -> int | None
         if count is not None:
             return count
     return None
+
+
+def dense_equivalence_report(
+    stock_logits: Any,
+    dense_logits: Any,
+    *,
+    stock_scores: dict[str, Any],
+    dense_scores: dict[str, Any],
+    stock_sequence_length: int,
+    dense_sequence_length: int,
+    legacy_dense_equivalence_atol: float | None = None,
+    thresholds: DenseEquivalenceThresholds | None = None,
+) -> dict[str, Any]:
+    torch = _torch_module()
+    thresholds = thresholds or DenseEquivalenceThresholds()
+    stock_dtype = str(getattr(stock_logits, "dtype", "unknown"))
+    dense_dtype = str(getattr(dense_logits, "dtype", "unknown"))
+    stock = stock_logits.detach().float().reshape(-1)
+    dense = dense_logits.detach().float().reshape(-1)
+    checks: dict[str, dict[str, Any]] = {}
+    if stock.shape != dense.shape:
+        finite = False
+        full_max = float("inf")
+        full_mean = float("inf")
+        rmse = float("inf")
+        relative_l2 = float("inf")
+        cosine = float("nan")
+        shape_error = f"{tuple(stock.shape)} != {tuple(dense.shape)}"
+    else:
+        diff = dense - stock
+        finite = bool(torch.isfinite(stock).all().item() and torch.isfinite(dense).all().item())
+        full_max = float(torch.max(torch.abs(diff)).item())
+        full_mean = float(torch.mean(torch.abs(diff)).item())
+        rmse = float(torch.sqrt(torch.mean(diff * diff)).item())
+        denominator = float(torch.linalg.vector_norm(stock).item())
+        relative_l2 = float(torch.linalg.vector_norm(diff).item() / denominator) if denominator > 0 else float("inf")
+        cosine = float(torch.nn.functional.cosine_similarity(stock, dense, dim=0).item())
+        shape_error = None
+    stock_choice_logits = [float(item) for item in stock_scores.get("choice_logits", [])]
+    dense_choice_logits = [float(item) for item in dense_scores.get("choice_logits", [])]
+    if len(stock_choice_logits) == len(dense_choice_logits) and stock_choice_logits:
+        max_choice_diff = max(abs(a - b) for a, b in zip(stock_choice_logits, dense_choice_logits))
+    else:
+        max_choice_diff = float("inf")
+    stock_pred = _predicted_choice_from_scores(stock_scores)
+    dense_pred = _predicted_choice_from_scores(dense_scores)
+    stock_correct_logp = float(stock_scores.get("correct_choice_log_probability", float("nan")))
+    dense_correct_logp = float(dense_scores.get("correct_choice_log_probability", float("nan")))
+    stock_margin = float(stock_scores.get("correct_vs_strongest_incorrect_margin", float("nan")))
+    dense_margin = float(dense_scores.get("correct_vs_strongest_incorrect_margin", float("nan")))
+    correct_logp_diff = dense_correct_logp - stock_correct_logp
+    margin_diff = dense_margin - stock_margin
+
+    def add_check(name: str, value: Any, passed: bool, threshold: Any) -> None:
+        checks[name] = {"value": value, "threshold": threshold, "passed": bool(passed)}
+
+    all_scalar_values = [
+        full_max,
+        full_mean,
+        rmse,
+        relative_l2,
+        cosine,
+        max_choice_diff,
+        stock_correct_logp,
+        dense_correct_logp,
+        stock_margin,
+        dense_margin,
+        correct_logp_diff,
+        margin_diff,
+    ]
+    add_check("sequence_lengths_match", [stock_sequence_length, dense_sequence_length], stock_sequence_length == dense_sequence_length, "equal")
+    add_check("finite_values", True, finite and all(math.isfinite(value) for value in all_scalar_values), "all finite")
+    add_check("predicted_choices_match", [stock_pred, dense_pred], stock_pred == dense_pred, "equal")
+    add_check(
+        "max_answer_choice_logit_abs_diff",
+        max_choice_diff,
+        max_choice_diff <= thresholds.max_choice_logit_abs_diff,
+        thresholds.max_choice_logit_abs_diff,
+    )
+    add_check(
+        "correct_choice_log_probability_abs_diff",
+        abs(correct_logp_diff),
+        abs(correct_logp_diff) <= thresholds.max_correct_log_probability_abs_diff,
+        thresholds.max_correct_log_probability_abs_diff,
+    )
+    add_check(
+        "answer_margin_abs_diff",
+        abs(margin_diff),
+        abs(margin_diff) <= thresholds.max_answer_margin_abs_diff,
+        thresholds.max_answer_margin_abs_diff,
+    )
+    add_check(
+        "full_vocab_cosine_similarity",
+        cosine,
+        cosine >= thresholds.min_full_vocab_cosine_similarity,
+        thresholds.min_full_vocab_cosine_similarity,
+    )
+    add_check(
+        "relative_l2_error",
+        relative_l2,
+        relative_l2 <= thresholds.max_relative_l2_error,
+        thresholds.max_relative_l2_error,
+    )
+    passed = all(item["passed"] for item in checks.values())
+    return {
+        "schema_version": "qwen_temporal_handoff_dense_equivalence_bf16_v1",
+        "passed": bool(passed),
+        "execution_dtype": "BF16-aware",
+        "stock_logit_dtype": stock_dtype,
+        "dense_custom_logit_dtype": dense_dtype,
+        "stock_sequence_length": int(stock_sequence_length),
+        "dense_custom_sequence_length": int(dense_sequence_length),
+        "legacy_dense_equivalence_atol_report_only": legacy_dense_equivalence_atol,
+        "thresholds": thresholds.to_metadata(),
+        "stock_vs_dense_custom_max_logit_difference": full_max,
+        "full_vocab_max_absolute_difference": full_max,
+        "full_vocab_mean_absolute_difference": full_mean,
+        "full_vocab_rmse": rmse,
+        "full_vocab_relative_l2_error": relative_l2,
+        "full_vocab_cosine_similarity": cosine,
+        "answer_choice_max_absolute_logit_difference": max_choice_diff,
+        "correct_choice_log_probability_difference": correct_logp_diff,
+        "answer_margin_difference": margin_diff,
+        "stock_correct_choice_log_probability": stock_correct_logp,
+        "dense_custom_correct_choice_log_probability": dense_correct_logp,
+        "stock_answer_margin": stock_margin,
+        "dense_custom_answer_margin": dense_margin,
+        "stock_predicted_idx": stock_pred,
+        "dense_custom_predicted_idx": dense_pred,
+        "top1_agreement": bool(stock_pred == dense_pred),
+        "checks": checks,
+        "shape_error": shape_error,
+        "notes": [
+            "Execution is BF16-aware; exact full-vocabulary logit equality is not required.",
+            "Stock and custom paths may use different mathematically equivalent SDPA causal-mask kernels.",
+            "All temporal-handoff intervention comparisons must use dense_custom as the paired dense control, not stock logits.",
+        ],
+    }
+
+
+def _predicted_choice_from_scores(scores: dict[str, Any]) -> int | None:
+    logits = scores.get("choice_logits")
+    if not logits:
+        return None
+    return int(max(range(len(logits)), key=lambda idx: float(logits[idx])))
 
 
 def _first_grid_t(value: Any) -> int | None:

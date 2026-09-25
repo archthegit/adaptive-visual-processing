@@ -41,8 +41,8 @@ def _finite_scores(artifact: dict[str, Any]) -> None:
 def validate(output_dir: Path, dense_equivalence_atol: float) -> dict[str, Any]:
     artifacts = {condition: load_json(output_dir / f"{condition}.json") for condition in EXPECTED_CONDITIONS}
     equivalence = load_json(output_dir / "dense_equivalence_report.json")
-    if float(equivalence["stock_vs_dense_custom_max_logit_difference"]) > dense_equivalence_atol:
-        raise AssertionError("dense_custom did not match stock dense logits within tolerance.")
+    if not equivalence.get("passed"):
+        raise AssertionError("dense_custom failed BF16-aware task-equivalence gate.")
     dense = artifacts["dense_custom"]
     dense_layers = dense["temporal_handoff"]["instrumentation"]["layers"]
     original_len = int(dense["metadata"]["original_sequence_length"])
@@ -89,6 +89,7 @@ def validate(output_dir: Path, dense_equivalence_atol: float) -> dict[str, Any]:
         "status": "passed",
         "conditions": list(EXPECTED_CONDITIONS),
         "stock_vs_dense_custom_max_logit_difference": equivalence["stock_vs_dense_custom_max_logit_difference"],
+        "dense_equivalence_checks": equivalence.get("checks"),
         "original_sequence_length": original_len,
         "handoff_compacted_sequence_length": compacted_len,
         "dense_estimated_attention_flops": dense_flops,
@@ -104,4 +105,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

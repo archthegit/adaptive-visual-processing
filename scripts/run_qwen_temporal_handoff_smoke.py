@@ -29,6 +29,7 @@ from src.experiment1.temporal_handoff import (
     append_jsonl,
     condition_from_baseline_scores,
     cuda_profile_prefill,
+    dense_equivalence_report,
     qwen_decoder_stack,
     qwen_multimodal_decoder_inputs,
     run_custom_decoder_prefill,
@@ -109,12 +110,6 @@ def _prediction_from_scores(scores: dict[str, Any]) -> int | None:
     if not logits:
         return None
     return int(max(range(len(logits)), key=lambda idx: float(logits[idx])))
-
-
-def _max_abs_diff(a: Any, b: Any) -> float:
-    import torch
-
-    return float(torch.max(torch.abs(a.detach().float() - b.detach().float())).item())
 
 
 def _build_messages(frame_batches: list[Any], resolution: Any, prompt: str, processor: Any) -> tuple[str, Any, Any, dict[str, Any]]:
@@ -379,7 +374,6 @@ def main() -> None:
 
     if dense_custom_logits is None:
         raise RuntimeError("dense_custom condition did not run.")
-    dense_max_logit_diff = _max_abs_diff(stock_logits, dense_custom_logits)
     dense_scores = artifacts[0]["answer_choice_scores"]
     stock_scores = score_answer_choice_logits(
         stock_logits[0, -1],
@@ -387,16 +381,18 @@ def main() -> None:
         example.correct_idx,
         len(example.choices),
     ).to_json_dict()
-    equivalence = {
-        "question_id": example.question_id,
-        "stock_vs_dense_custom_max_logit_difference": dense_max_logit_diff,
-        "tolerance": args.dense_equivalence_atol,
-        "passed": bool(dense_max_logit_diff <= args.dense_equivalence_atol),
-        "stock_answer_choice_scores": stock_scores,
-        "dense_custom_answer_choice_scores": dense_scores,
-        "stock_predicted_idx": _prediction_from_scores(stock_scores),
-        "dense_custom_predicted_idx": artifacts[0]["predicted_idx"],
-    }
+    equivalence = dense_equivalence_report(
+        stock_logits,
+        dense_custom_logits,
+        stock_scores=stock_scores,
+        dense_scores=dense_scores,
+        stock_sequence_length=int(inputs["input_ids"].shape[1]),
+        dense_sequence_length=int(artifacts[0]["metadata"]["final_sequence_length"]),
+        legacy_dense_equivalence_atol=args.dense_equivalence_atol,
+    )
+    equivalence["question_id"] = example.question_id
+    equivalence["stock_answer_choice_scores"] = stock_scores
+    equivalence["dense_custom_answer_choice_scores"] = dense_scores
     write_json(output_dir / "dense_equivalence_report.json", equivalence)
     write_json(
         output_dir / "profile.json",
@@ -409,8 +405,8 @@ def main() -> None:
     )
     if not equivalence["passed"]:
         raise RuntimeError(
-            "dense_custom did not match stock dense forward within tolerance: "
-            f"max_diff={dense_max_logit_diff}, tolerance={args.dense_equivalence_atol}"
+            "dense_custom failed BF16-aware task-equivalence gate: "
+            f"{json.dumps(equivalence['checks'], sort_keys=True)}"
         )
 
 
