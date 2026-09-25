@@ -164,6 +164,7 @@ def _write_complete_record(root: Path, artifact: dict) -> None:
 
 
 def _write_fixture(root: Path, qids: list[str], *, handoff_logp: float = -0.95, hard_logp: float = -1.20, random_logp: float = -1.10) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
     manifest = root / "manifest.jsonl"
     with manifest.open("w") as handle:
         for qid in qids:
