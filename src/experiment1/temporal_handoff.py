@@ -161,6 +161,7 @@ class CompactionPlan:
 @dataclass
 class LayerInstrumentation:
     layer: int
+    layer_type: str
     sequence_length_in: int
     sequence_length_out: int
     visual_token_count_in: int
@@ -173,6 +174,10 @@ class LayerInstrumentation:
     attention_k_len: int
     estimated_qk_flops: int
     estimated_av_flops: int
+    causal_path: str
+    explicit_mask_materialized: bool
+    mask_shape: tuple[int, ...] | None
+    native_sdpa_is_causal_used: bool
     compaction_applied_after_layer: bool = False
 
 
@@ -841,6 +846,23 @@ def _call_decoder_layer(
     return output
 
 
+def _validate_native_causal_attention_route(layer: Any, layer_type: str) -> None:
+    if layer_type != "full_attention":
+        return
+    self_attn = getattr(layer, "self_attn", None)
+    if self_attn is None:
+        raise RuntimeError("Native causal full-attention route requires layer.self_attn metadata.")
+    if getattr(self_attn, "is_causal", None) is not True:
+        raise RuntimeError("Native causal full-attention route requires self_attn.is_causal=True.")
+    config = getattr(self_attn, "config", None)
+    attn_impl = getattr(config, "_attn_implementation", None)
+    if attn_impl != "sdpa":
+        raise RuntimeError(
+            "Native causal full-attention route is only validated for Qwen SDPA attention; "
+            f"got _attn_implementation={attn_impl!r}."
+        )
+
+
 def _estimate_attention_flops(seq_len: int, num_heads: int, head_dim: int, batch_size: int = 1) -> tuple[int, int]:
     # One multiply-add pair is counted as two FLOPs. QK and AV have the same leading cost.
     qk = int(2 * batch_size * num_heads * seq_len * seq_len * head_dim)
@@ -914,9 +936,13 @@ def run_custom_decoder_prefill(
                 batch_size=int(hidden_states.shape[0]),
             )
             total_flops += qk + av
-            full_attention_mask = build_additive_causal_mask(seq_in, hidden_states.dtype, hidden_states.device)
             if active_layer_types[layer_idx] == "full_attention":
-                attention_mask = full_attention_mask
+                _validate_native_causal_attention_route(layer, active_layer_types[layer_idx])
+                attention_mask = None
+                causal_path = "native_sdpa_is_causal"
+                explicit_mask_materialized = False
+                mask_shape = None
+                native_sdpa_is_causal_used = True
             else:
                 attention_mask = build_additive_sliding_causal_mask(
                     seq_in,
@@ -924,6 +950,10 @@ def run_custom_decoder_prefill(
                     hidden_states.dtype,
                     hidden_states.device,
                 )
+                causal_path = "explicit_sliding_attention_mask"
+                explicit_mask_materialized = True
+                mask_shape = tuple(int(dim) for dim in attention_mask.shape)
+                native_sdpa_is_causal_used = False
             hidden_states = _call_decoder_layer(
                 layer,
                 hidden_states,
@@ -958,6 +988,7 @@ def run_custom_decoder_prefill(
             instrumentation.append(
                 LayerInstrumentation(
                     layer=layer_idx,
+                    layer_type=active_layer_types[layer_idx],
                     sequence_length_in=seq_in,
                     sequence_length_out=seq_out,
                     visual_token_count_in=visual_in,
@@ -970,6 +1001,10 @@ def run_custom_decoder_prefill(
                     attention_k_len=seq_in,
                     estimated_qk_flops=qk,
                     estimated_av_flops=av,
+                    causal_path=causal_path,
+                    explicit_mask_materialized=explicit_mask_materialized,
+                    mask_shape=mask_shape,
+                    native_sdpa_is_causal_used=native_sdpa_is_causal_used,
                     compaction_applied_after_layer=compaction_applied,
                 )
             )

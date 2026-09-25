@@ -103,6 +103,14 @@ def native_mapping_artifact(
 
 
 class IdentityLayer(torch.nn.Module):
+    def __init__(self, *, is_causal: bool = True, attn_implementation: str = "sdpa"):
+        super().__init__()
+        self.self_attn = SimpleNamespace(
+            is_causal=is_causal,
+            config=SimpleNamespace(_attn_implementation=attn_implementation),
+        )
+        self.seen_attention_masks = []
+
     def forward(
         self,
         hidden_states,
@@ -112,8 +120,9 @@ class IdentityLayer(torch.nn.Module):
         past_key_values=None,
         use_cache=False,
     ):
-        assert attention_mask is not None
-        assert attention_mask.shape[-1] == hidden_states.shape[1]
+        self.seen_attention_masks.append(attention_mask)
+        if attention_mask is not None:
+            assert attention_mask.shape[-1] == hidden_states.shape[1]
         assert position_embeddings is not None
         return (hidden_states + 0.01,)
 
@@ -232,6 +241,109 @@ def test_custom_dense_prefill_preserves_sequence_length_and_matches_manual_loop(
     assert rotary.calls == [((1, 16, 6), (3, 1, 16))]
     assert result.rotary_embedding_computations == 1
     assert result.instrumentation_metadata()["rotary_embedding_computations"] == 1
+    assert all(layer.seen_attention_masks == [None] for layer in layers)
+    assert all(item.causal_path == "native_sdpa_is_causal" for item in result.instrumentation)
+    assert all(item.native_sdpa_is_causal_used for item in result.instrumentation)
+    assert all(not item.explicit_mask_materialized for item in result.instrumentation)
+    assert all(item.mask_shape is None for item in result.instrumentation)
+
+
+def test_full_attention_unpadded_prefill_uses_native_causal_route_without_nxn_mask():
+    layout = fake_layout()
+    layers = torch.nn.ModuleList([IdentityLayer() for _ in range(2)])
+    result = run_custom_decoder_prefill(
+        layers=layers,
+        hidden_states=torch.zeros((1, 16, 6)),
+        position_ids=torch.arange(16).view(1, 1, 16).repeat(3, 1, 1),
+        layout=layout,
+        config=TemporalHandoffConfig(condition="dense_custom", handoff_layer=1, memory_tokens_per_region=0),
+        lm_head=None,
+        norm=None,
+        num_attention_heads=2,
+        head_dim=3,
+        rotary_emb=FakeRotary(),
+        layer_types=("full_attention", "full_attention"),
+    )
+    assert [layer.seen_attention_masks for layer in layers] == [[None], [None]]
+    for item in result.instrumentation:
+        assert item.layer_type == "full_attention"
+        assert item.causal_path == "native_sdpa_is_causal"
+        assert item.native_sdpa_is_causal_used is True
+        assert item.explicit_mask_materialized is False
+        assert item.mask_shape is None
+
+
+def test_compacted_full_attention_prefill_remains_on_native_causal_route():
+    layout = fake_layout()
+    layers = torch.nn.ModuleList([IdentityLayer() for _ in range(4)])
+    result = run_custom_decoder_prefill(
+        layers=layers,
+        hidden_states=torch.zeros((1, 16, 6)),
+        position_ids=torch.arange(16).view(1, 1, 16).repeat(3, 1, 1),
+        layout=layout,
+        config=TemporalHandoffConfig(
+            condition="handoff_mean",
+            handoff_layer=1,
+            retained_temporal_regions=(1, 3),
+            memory_tokens_per_region=1,
+        ),
+        lm_head=None,
+        norm=None,
+        num_attention_heads=2,
+        head_dim=3,
+        rotary_emb=FakeRotary(),
+        layer_types=("full_attention",) * 4,
+    )
+    assert result.instrumentation[1].sequence_length_out < result.instrumentation[1].sequence_length_in
+    assert result.instrumentation[2].sequence_length_in == result.instrumentation[1].sequence_length_out
+    assert all(layer.seen_attention_masks == [None] for layer in layers)
+    assert all(item.causal_path == "native_sdpa_is_causal" for item in result.instrumentation)
+    assert all(not item.explicit_mask_materialized for item in result.instrumentation)
+
+
+def test_sliding_attention_materializes_required_explicit_mask():
+    layout = fake_layout()
+    layers = torch.nn.ModuleList([IdentityLayer()])
+    result = run_custom_decoder_prefill(
+        layers=layers,
+        hidden_states=torch.zeros((1, 16, 6)),
+        position_ids=torch.arange(16).view(1, 1, 16).repeat(3, 1, 1),
+        layout=layout,
+        config=TemporalHandoffConfig(condition="dense_custom", handoff_layer=0, memory_tokens_per_region=0),
+        lm_head=None,
+        norm=None,
+        num_attention_heads=2,
+        head_dim=3,
+        rotary_emb=FakeRotary(),
+        layer_types=("sliding_attention",),
+        sliding_window=4,
+    )
+    assert layers[0].seen_attention_masks[0] is not None
+    assert result.instrumentation[0].layer_type == "sliding_attention"
+    assert result.instrumentation[0].causal_path == "explicit_sliding_attention_mask"
+    assert result.instrumentation[0].native_sdpa_is_causal_used is False
+    assert result.instrumentation[0].explicit_mask_materialized is True
+    assert result.instrumentation[0].mask_shape == (1, 1, 16, 16)
+
+
+def test_full_attention_native_route_fails_without_validated_sdpa_causality():
+    layout = fake_layout()
+    common = dict(
+        hidden_states=torch.zeros((1, 16, 6)),
+        position_ids=torch.arange(16).view(1, 1, 16).repeat(3, 1, 1),
+        layout=layout,
+        config=TemporalHandoffConfig(condition="dense_custom", handoff_layer=0, memory_tokens_per_region=0),
+        lm_head=None,
+        norm=None,
+        num_attention_heads=2,
+        head_dim=3,
+        rotary_emb=FakeRotary(),
+        layer_types=("full_attention",),
+    )
+    with pytest.raises(RuntimeError, match="is_causal=True"):
+        run_custom_decoder_prefill(layers=[IdentityLayer(is_causal=False)], **common)
+    with pytest.raises(RuntimeError, match="_attn_implementation='eager'"):
+        run_custom_decoder_prefill(layers=[IdentityLayer(attn_implementation="eager")], **common)
 
 
 def test_custom_handoff_shortens_sequence_and_reduces_later_flops():
@@ -703,6 +815,13 @@ def test_dense_equivalence_nan_or_inf_fails():
 
 def test_decoder_layer_without_position_embeddings_fails_loudly():
     class BadLayer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.self_attn = SimpleNamespace(
+                is_causal=True,
+                config=SimpleNamespace(_attn_implementation="sdpa"),
+            )
+
         def forward(self, hidden_states, attention_mask=None):
             return hidden_states
 
