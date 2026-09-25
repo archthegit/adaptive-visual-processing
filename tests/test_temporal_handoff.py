@@ -579,15 +579,17 @@ def make_vocab_logits(choice_logits: list[float], tail: list[float] | None = Non
 
 
 def test_dense_equivalence_allows_bf16_sized_perturbation_with_same_choice():
-    stock = make_vocab_logits([0.0, 1.0, 2.0, 3.0, 4.0])
+    choice_logits = [22.0, 22.5, 23.0, 23.5, 24.0]
+    tail = [23.0 + 0.125 * float((idx % 9) - 4) for idx in range(5, 32768)]
+    stock = make_vocab_logits(choice_logits, tail=tail)
     dense = stock.float()
     dense[0, 0, 0] += 0.125
-    dense[0, 0, 10:] += 0.01
+    assert float(dense[0, 0, 0] - stock.float()[0, 0, 0]) == pytest.approx(0.125)
     report = dense_equivalence_report(
         stock,
         dense.to(torch.bfloat16),
-        stock_scores=answer_scores([0.0, 1.0, 2.0, 3.0, 4.0]),
-        dense_scores=answer_scores([0.125, 1.0, 2.0, 3.0, 4.0], correct_logp=-1.04, margin=0.25),
+        stock_scores=answer_scores(choice_logits),
+        dense_scores=answer_scores([22.125, 22.5, 23.0, 23.5, 24.0], correct_logp=-1.04, margin=0.25),
         stock_sequence_length=20,
         dense_sequence_length=20,
         legacy_dense_equivalence_atol=1e-4,
@@ -595,7 +597,8 @@ def test_dense_equivalence_allows_bf16_sized_perturbation_with_same_choice():
     assert report["passed"] is True
     assert report["stock_vs_dense_custom_max_logit_difference"] >= 0.125
     assert report["legacy_dense_equivalence_atol_report_only"] == 1e-4
-    assert report["checks"]["max_answer_choice_logit_abs_diff"]["passed"] is True
+    for check_name, check in report["checks"].items():
+        assert check["passed"] is True, f"{check_name} failed: {check}"
 
 
 def test_dense_equivalence_prediction_flip_fails():
