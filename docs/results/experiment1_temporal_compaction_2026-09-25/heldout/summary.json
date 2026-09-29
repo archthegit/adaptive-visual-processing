@@ -1,0 +1,207 @@
+{
+  "conditions": {
+    "dense_custom": {
+      "accuracy_difference": {
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 56
+      },
+      "answer_margin_delta": {
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 56
+      },
+      "condition_accuracy": 0.4107142857142857,
+      "correct_choice_log_probability_delta": {
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 56
+      },
+      "dense_accuracy": 0.4107142857142857,
+      "fraction_logp_degradation_below_minus_0_10": 0.0,
+      "fraction_logp_degradation_below_minus_0_50": 0.0,
+      "median_attention_flop_reduction_fraction": 0.0,
+      "median_sequence_reduction_fraction": 0.0,
+      "median_stack_latency_reduction_fraction": 0.0,
+      "median_stack_latency_speedup": 1.0,
+      "num_examples": 56,
+      "num_profiled_examples": 8,
+      "peak_memory_difference_incremental_allocated_bytes": {
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 8
+      },
+      "prediction_flip_rate": 0.0
+    },
+    "handoff_mean": {
+      "accuracy_difference": {
+        "ci95": [
+          -0.10714285714285714,
+          0.10714285714285714
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 56
+      },
+      "answer_margin_delta": {
+        "ci95": [
+          -0.17410714285714285,
+          0.10267857142857142
+        ],
+        "mean": -0.033482142857142856,
+        "median": 0.0,
+        "n": 56
+      },
+      "condition_accuracy": 0.4107142857142857,
+      "correct_choice_log_probability_delta": {
+        "ci95": [
+          -0.10549477292983729,
+          0.08497299156448442
+        ],
+        "mean": -0.008105890601782618,
+        "median": -0.009963203486567908,
+        "n": 56
+      },
+      "dense_accuracy": 0.4107142857142857,
+      "fraction_logp_degradation_below_minus_0_10": 0.25,
+      "fraction_logp_degradation_below_minus_0_50": 0.08928571428571429,
+      "median_attention_flop_reduction_fraction": 0.48879699228830314,
+      "median_sequence_reduction_fraction": 0.47116392869626006,
+      "median_stack_latency_reduction_fraction": 0.24397514452813907,
+      "median_stack_latency_speedup": 1.3227082170067206,
+      "num_examples": 56,
+      "num_profiled_examples": 8,
+      "peak_memory_difference_incremental_allocated_bytes": {
+        "ci95": [
+          -10575176.0,
+          -9808960.0
+        ],
+        "mean": -10195392.0,
+        "median": -10312960.0,
+        "n": 8
+      },
+      "prediction_flip_rate": 0.25
+    },
+    "hard_evict": {
+      "accuracy_difference": {
+        "ci95": [
+          -0.10714285714285714,
+          0.08928571428571429
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 56
+      },
+      "answer_margin_delta": {
+        "ci95": [
+          -0.18978794642857136,
+          0.09375
+        ],
+        "mean": -0.044642857142857144,
+        "median": 0.0,
+        "n": 56
+      },
+      "condition_accuracy": 0.4107142857142857,
+      "correct_choice_log_probability_delta": {
+        "ci95": [
+          -0.11585690686964872,
+          0.07593115779542489
+        ],
+        "mean": -0.01696484086453488,
+        "median": -0.012184102858618795,
+        "n": 56
+      },
+      "dense_accuracy": 0.4107142857142857,
+      "fraction_logp_degradation_below_minus_0_10": 0.2857142857142857,
+      "fraction_logp_degradation_below_minus_0_50": 0.10714285714285714,
+      "median_attention_flop_reduction_fraction": 0.4897990997717569,
+      "median_sequence_reduction_fraction": 0.47256204124432016,
+      "median_stack_latency_reduction_fraction": 0.28957740323609643,
+      "median_stack_latency_speedup": 1.407613053032903,
+      "num_examples": 56,
+      "num_profiled_examples": 8,
+      "peak_memory_difference_incremental_allocated_bytes": {
+        "ci95": [
+          -10330510.4,
+          -9235072.0
+        ],
+        "mean": -9845888.0,
+        "median": -10231296.0,
+        "n": 8
+      },
+      "prediction_flip_rate": 0.23214285714285715
+    }
+  },
+  "num_examples": 56,
+  "paired_condition_differences": {
+    "handoff_mean_minus_hard_evict": {
+      "accuracy_difference": {
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 56
+      },
+      "answer_margin_delta": {
+        "ci95": [
+          -0.006696428571428571,
+          0.029017857142857144
+        ],
+        "mean": 0.011160714285714286,
+        "median": 0.0,
+        "n": 56
+      },
+      "correct_choice_log_probability_delta": {
+        "ci95": [
+          -0.0030150026675874815,
+          0.02165550161304271
+        ],
+        "mean": 0.008858950262752257,
+        "median": 6.990857331912181e-05,
+        "n": 56
+      }
+    }
+  },
+  "primary_condition": "hard_evict",
+  "primary_heldout_gate": {
+    "efficiency_pass": true,
+    "hard_evict_median_decoder_stack_latency_reduction_fraction": 0.28957740323609643,
+    "hard_minus_dense_logp_lower_ci95": -0.11585690686964872,
+    "quality_noninferiority_pass": false,
+    "rules": [
+      "lower 95% paired-bootstrap bound for hard_evict minus dense log probability must be greater than -0.10",
+      "median decoder-stack latency reduction must be at least 20%"
+    ],
+    "status": "FAIL"
+  },
+  "retained_native_temporal_cells": [
+    1,
+    3
+  ],
+  "schema_version": "qwen_temporal_compaction_heldout_analysis_v1",
+  "secondary_condition": "handoff_mean",
+  "secondary_memory_comparison": {
+    "interpretation": "Do not claim memory benefit if the paired confidence interval crosses zero.",
+    "memory_benefit_supported_logp": false,
+    "memory_benefit_supported_margin": false
+  },
+  "timing_scope": "Repeated profiling is limited to the frozen profiling subset; quality rows use deterministic single forwards."
+}

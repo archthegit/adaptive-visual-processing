@@ -1,0 +1,105 @@
+{
+  "attention_predictiveness": {
+    "per_example_spearman_mass_vs_logp": {
+      "ci95": [
+        -0.1885714285714286,
+        0.2876190476190476
+      ],
+      "mean": 0.05142857142857144,
+      "median": 0.14285714285714288,
+      "n": 15
+    },
+    "per_example_spearman_mass_vs_margin": {
+      "ci95": [
+        -0.3080782707934098,
+        0.23682091458000484
+      ],
+      "mean": -0.03406437805091656,
+      "median": 0.08827348295047496,
+      "n": 15
+    },
+    "pooled_spearman_mass_vs_logp_descriptive_only": -0.014281598551261473,
+    "pooled_spearman_mass_vs_margin_descriptive_only": -0.008865712638058519
+  },
+  "conclusions": {
+    "attention_ranked_vs_arbitrary_routes": "development descriptive; compare selected_minus_mean_other_five metrics",
+    "compact_memory_vs_hard_deletion": "development descriptive; see memory_benefit CIs",
+    "extreme_random_route_wins": "inspect route_quality_range and selection ranks; no held-out claim",
+    "retained_attention_mass_predictiveness": "development descriptive; see per-example Spearman summaries"
+  },
+  "memory_benefit": {
+    "mean_handoff_minus_hard_evict_logp": {
+      "ci95": [
+        -0.006136580830218755,
+        0.017978674534258905
+      ],
+      "mean": 0.005179421838457776,
+      "median": -6.506414596050651e-05,
+      "n": 15
+    },
+    "mean_handoff_minus_hard_evict_margin": {
+      "ci95": [
+        -0.013888888888888888,
+        0.02083333333333333
+      ],
+      "mean": 0.0027777777777777788,
+      "median": 0.0,
+      "n": 15
+    }
+  },
+  "num_examples": 15,
+  "num_pair_condition_rows": 180,
+  "robustness": {
+    "fraction_attention_selection_avoids_catastrophic_minus_0_5": 0.8666666666666667,
+    "fraction_pairs_logp_degradation_below_minus_0_1": {
+      "ci95": [
+        0.13333333333333333,
+        0.4222222222222223
+      ],
+      "mean": 0.26666666666666666,
+      "median": 0.16666666666666666,
+      "n": 15
+    },
+    "fraction_pairs_logp_degradation_below_minus_0_5": {
+      "ci95": [
+        0.01111111111111111,
+        0.15555555555555556
+      ],
+      "mean": 0.07777777777777777,
+      "median": 0.0,
+      "n": 15
+    },
+    "pair_logp_range": {
+      "ci95": [
+        0.5440913662391486,
+        1.187334355482464
+      ],
+      "mean": 0.8442354416095604,
+      "median": 0.573068380254921,
+      "n": 15
+    }
+  },
+  "selection_benefit": {
+    "fraction_best": 0.2,
+    "fraction_top_two": 0.4666666666666667,
+    "fraction_worst": 0.13333333333333333,
+    "selected_minus_mean_other_five_logp": {
+      "ci95": [
+        -0.3011424557440604,
+        0.2795640093807446
+      ],
+      "mean": 0.02102962302576284,
+      "median": 0.06771693284426972,
+      "n": 15
+    },
+    "selected_minus_mean_other_five_margin": {
+      "ci95": [
+        -0.31833333333333336,
+        0.40499999999999997
+      ],
+      "mean": 0.06999999999999997,
+      "median": 0.10000000000000009,
+      "n": 15
+    }
+  }
+}

@@ -1,0 +1,256 @@
+{
+  "analysis_summary": {
+    "conditions": {
+      "dense_custom": {
+        "answer_margin_delta": {
+          "ci95": [
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "median": 0.0,
+          "n": 15
+        },
+        "condition_accuracy": 0.2,
+        "correct_choice_log_probability_delta": {
+          "ci95": [
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "median": 0.0,
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "mean_stack_latency_speedup": 1.0,
+        "median_attention_flop_reduction_fraction": 0.0,
+        "median_sequence_reduction_fraction": 0.0,
+        "median_stack_latency_seconds": 0.19508999633789062,
+        "median_stack_latency_speedup": 1.0,
+        "num_examples": 15,
+        "peak_memory_difference_incremental_allocated_bytes": {
+          "ci95": [
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "median": 0.0,
+          "n": 15
+        },
+        "prediction_flip_rate": 0.0
+      },
+      "handoff_mean": {
+        "answer_margin_delta": {
+          "ci95": [
+            -0.19166666666666668,
+            0.6166666666666667
+          ],
+          "mean": 0.225,
+          "median": 0.25,
+          "n": 15
+        },
+        "condition_accuracy": 0.2,
+        "correct_choice_log_probability_delta": {
+          "ci95": [
+            -0.30357680024869305,
+            0.3325591266611408
+          ],
+          "mean": 0.042232491901376644,
+          "median": 0.147989011557224,
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "mean_stack_latency_speedup": 1.3707490131263915,
+        "median_attention_flop_reduction_fraction": 0.48879699228830314,
+        "median_sequence_reduction_fraction": 0.47116392869626006,
+        "median_stack_latency_seconds": 0.14218705749511718,
+        "median_stack_latency_speedup": 1.3737285208259056,
+        "num_examples": 15,
+        "peak_memory_difference_incremental_allocated_bytes": {
+          "ci95": [
+            -9760540.16,
+            -9033911.466666667
+          ],
+          "mean": -9399739.733333332,
+          "median": -9576448.0,
+          "n": 15
+        },
+        "prediction_flip_rate": 0.26666666666666666
+      },
+      "hard_evict": {
+        "answer_margin_delta": {
+          "ci95": [
+            -0.25020833333333314,
+            0.575
+          ],
+          "mean": 0.18333333333333332,
+          "median": 0.25,
+          "n": 15
+        },
+        "condition_accuracy": 0.2,
+        "correct_choice_log_probability_delta": {
+          "ci95": [
+            -0.33108318062966446,
+            0.2978382087161108
+          ],
+          "mean": 0.016588044418303645,
+          "median": 0.1353630626653164,
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "mean_stack_latency_speedup": 1.406001031148663,
+        "median_attention_flop_reduction_fraction": 0.4897990997717569,
+        "median_sequence_reduction_fraction": 0.47256204124432016,
+        "median_stack_latency_seconds": 0.1386476516723633,
+        "median_stack_latency_speedup": 1.4081638883362233,
+        "num_examples": 15,
+        "peak_memory_difference_incremental_allocated_bytes": {
+          "ci95": [
+            -10120744.959999999,
+            -9438875.306666667
+          ],
+          "mean": -9771895.466666667,
+          "median": -9718784.0,
+          "n": 15
+        },
+        "prediction_flip_rate": 0.26666666666666666
+      },
+      "random_handoff": {
+        "answer_margin_delta": {
+          "ci95": [
+            0.03333333333333333,
+            0.4583333333333333
+          ],
+          "mean": 0.23333333333333334,
+          "median": 0.25,
+          "n": 15
+        },
+        "condition_accuracy": 0.26666666666666666,
+        "correct_choice_log_probability_delta": {
+          "ci95": [
+            -0.0033270108388594893,
+            0.2895066402020473
+          ],
+          "mean": 0.13898383098362288,
+          "median": 0.09129762949458664,
+          "n": 15
+        },
+        "dense_accuracy": 0.2,
+        "mean_stack_latency_speedup": 1.3330265153661935,
+        "median_attention_flop_reduction_fraction": 0.48879699228830314,
+        "median_sequence_reduction_fraction": 0.47116392869626006,
+        "median_stack_latency_seconds": 0.14721402740478515,
+        "median_stack_latency_speedup": 1.3242104490460247,
+        "num_examples": 15,
+        "peak_memory_difference_incremental_allocated_bytes": {
+          "ci95": [
+            -10314412.373333333,
+            -9434967.040000001
+          ],
+          "mean": -9883033.6,
+          "median": -9884672.0,
+          "n": 15
+        },
+        "prediction_flip_rate": 0.06666666666666667
+      }
+    },
+    "dense_equivalence": {
+      "all_passed": true,
+      "failed_question_ids": [],
+      "num_examples": 15
+    },
+    "development_kill_test_gate": {
+      "dense_accuracy": 0.2,
+      "equivalence_passed": true,
+      "handoff_accuracy": 0.2,
+      "handoff_median_stack_latency_reduction_fraction": 0.27205413235594367,
+      "materially_reduces_accuracy": false,
+      "rules": {
+        "promising": [
+          "every dense equivalence check passes",
+          "handoff_mean provides at least 20% median measured decoder-stack latency reduction",
+          "handoff_mean does not materially reduce development accuracy relative to dense_custom",
+          "handoff_mean mean log-probability delta is better than hard_evict and random_handoff",
+          "handoff_mean mean answer-margin delta is better than hard_evict and random_handoff"
+        ],
+        "reject": [
+          "dense equivalence fails",
+          "measured latency reduction is below 10%",
+          "handoff_mean is no better than hard_evict or random_handoff on both continuous quality metrics"
+        ]
+      },
+      "scope": "15-example development kill test; not held-out confirmatory evidence.",
+      "status": "INCONCLUSIVE"
+    },
+    "paired_condition_differences": {
+      "handoff_mean_minus_hard_evict": {
+        "answer_margin_delta": {
+          "ci95": [
+            0.0,
+            0.075
+          ],
+          "mean": 0.041666666666666664,
+          "median": 0.0,
+          "n": 15
+        },
+        "correct_choice_log_probability_delta": {
+          "ci95": [
+            -0.00024422709188060845,
+            0.05314679964592648
+          ],
+          "mean": 0.025644447483073,
+          "median": 0.012625948891907601,
+          "n": 15
+        }
+      },
+      "handoff_mean_minus_random_handoff": {
+        "answer_margin_delta": {
+          "ci95": [
+            -0.375,
+            0.3333333333333333
+          ],
+          "mean": -0.008333333333333333,
+          "median": 0.0,
+          "n": 15
+        },
+        "correct_choice_log_probability_delta": {
+          "ci95": [
+            -0.3886286479668532,
+            0.12863007291254497
+          ],
+          "mean": -0.09675133908224623,
+          "median": 0.031283502339401914,
+          "n": 15
+        }
+      }
+    },
+    "timing_scope": "Profiling covers custom decoder prefill calls only; it excludes video decoding, preprocessing, model loading, artifact serialization and route selection."
+  },
+  "conditions": [
+    "dense_custom",
+    "handoff_mean",
+    "hard_evict",
+    "random_handoff"
+  ],
+  "num_examples": 15,
+  "run_config": {
+    "conditions": [
+      "dense_custom",
+      "handoff_mean",
+      "hard_evict",
+      "random_handoff"
+    ],
+    "git_commit": "bc58b130fe8025d18a91d7d094f128ccb154ad8b",
+    "handoff_layer": 8,
+    "memory_tokens_per_region": 2,
+    "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "repeats": 10,
+    "resolution_config": "medium",
+    "retain_regions": 2,
+    "sampling_mode": "cross_model_8",
+    "schema_version": "qwen_temporal_handoff_dev_pilot_v1",
+    "seed": 20260818,
+    "timing_scope": "Profiles include only custom decoder prefill calls; video decoding, preprocessing, model loading, serialization and route selection are outside timing.",
+    "warmup": 3
+  }
+}

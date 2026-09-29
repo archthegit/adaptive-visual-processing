@@ -1,0 +1,1188 @@
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=4.022s peak_rss=987996160
+[experiment1] start model_load
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]Fetching 5 files: 100%|██████████| 5/5 [00:00<00:00, 1024.15it/s]
+Loading weights:   0%|          | 0/729 [00:00<?, ?it/s]Loading weights:   0%|          | 1/729 [00:00<01:14,  9.80it/s]Loading weights:   0%|          | 2/729 [00:00<01:41,  7.13it/s]Loading weights:   2%|▏         | 17/729 [00:00<00:12, 57.99it/s]Loading weights:   5%|▍         | 36/729 [00:00<00:06, 101.12it/s]Loading weights:   7%|▋         | 53/729 [00:00<00:05, 118.75it/s]Loading weights:  10%|█         | 76/729 [00:00<00:04, 144.85it/s]Loading weights:  12%|█▏        | 91/729 [00:00<00:04, 141.50it/s]Loading weights:  15%|█▌        | 112/729 [00:00<00:04, 149.29it/s]Loading weights:  19%|█▊        | 136/729 [00:01<00:03, 156.35it/s]Loading weights:  21%|██        | 154/729 [00:01<00:03, 162.28it/s]Loading weights:  24%|██▎       | 173/729 [00:01<00:03, 160.33it/s]Loading weights:  26%|██▌       | 190/729 [00:01<00:03, 161.99it/s]Loading weights:  29%|██▊       | 208/729 [00:01<00:03, 156.66it/s]Loading weights:  31%|███▏      | 228/729 [00:01<00:02, 167.16it/s]Loading weights:  34%|███▎      | 245/729 [00:01<00:03, 159.62it/s]Loading weights:  36%|███▌      | 262/729 [00:01<00:02, 161.65it/s]Loading weights:  38%|███▊      | 280/729 [00:01<00:02, 163.84it/s]Loading weights:  41%|████      | 297/729 [00:02<00:02, 158.70it/s]Loading weights:  43%|████▎     | 317/729 [00:02<00:02, 159.44it/s]Loading weights:  49%|████▉     | 357/729 [00:02<00:01, 224.04it/s]Loading weights:  75%|███████▍  | 545/729 [00:02<00:00, 682.56it/s]Loading weights: 100%|█████████▉| 726/729 [00:02<00:00, 982.64it/s]Loading weights: 100%|██████████| 729/729 [00:02<00:00, 288.68it/s]
+[experiment1] end model_load elapsed=10.891s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.419s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=9.916s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.506s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.356s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.343s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.709s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.294s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.841s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.480s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.285s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.337s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.703s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.295s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.875s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.483s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.288s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.342s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.325s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.424s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.872s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.560s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.285s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.346s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.323s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.010s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.335s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.902s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.497s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.293s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.326s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.197s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.213s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.885s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.511s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.282s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.331s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.391s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.942s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.275s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.920s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.586s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.284s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.337s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=4.800s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=0.779s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.939s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.520s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.295s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.338s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.235s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.134s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.922s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.483s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.304s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.327s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.862s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.211s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.892s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.507s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.282s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.345s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.940s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.092s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.894s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.475s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.323s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.334s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.451s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.328s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.902s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.490s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.280s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.348s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.847s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.379s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.954s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.477s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.284s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.359s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.895s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.298s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=9.035s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.525s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.283s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.325s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.525s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.365s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.980s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.494s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.312s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.329s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.392s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.001s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.376s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.917s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.509s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.301s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.317s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.285s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.338s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.928s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.483s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.305s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.353s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=4.825s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.001s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.235s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.964s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.511s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.283s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.350s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.721s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.286s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.944s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.487s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.293s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.327s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=4.756s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.271s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.960s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.491s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.283s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.334s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=4.622s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.062s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.893s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.550s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.282s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.337s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.313s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.235s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.984s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.481s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.305s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.332s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.854s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.242s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.971s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.488s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.290s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.336s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.267s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.217s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.974s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.504s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.282s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.328s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.987s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.372s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.898s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.499s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.304s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.346s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.278s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.235s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.963s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.550s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.288s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.320s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.055s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.191s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.946s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.542s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.285s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.338s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.948s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.362s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.941s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.490s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.305s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.340s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.453s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.291s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.920s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.482s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.280s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.323s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.803s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=0.934s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.179s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.952s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.496s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.289s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.325s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.080s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=0.637s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.945s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.489s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.283s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.335s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.548s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.251s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.953s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.529s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.291s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.337s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.709s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.736s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.258s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.931s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.497s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.286s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.334s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.671s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.001s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.130s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.891s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.496s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.283s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.339s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.989s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.153s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.945s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.529s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.285s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.332s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.738s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.317s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.948s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.541s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.293s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.332s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=5.042s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=5.518s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.248s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.965s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.492s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.298s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.329s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.971s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.206s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.928s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.490s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.282s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.329s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.646s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.170s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.939s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.478s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.287s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.317s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.356s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.276s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.862s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.495s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.284s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.353s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=5.311s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=0.991s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.949s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.495s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.311s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.351s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.986s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.146s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.910s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.497s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.282s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.346s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=0.904s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=0.869s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.012s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.947s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.555s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.289s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.338s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.994s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.319s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.931s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.485s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.296s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.314s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=0.724s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=0.498s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.920s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.481s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.276s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.340s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=0.990s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.257s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.989s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.524s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.287s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.337s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.463s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.001s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.217s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.905s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.518s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.284s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.329s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=0.894s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.327s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.884s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.484s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.283s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.325s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.830s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.253s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.905s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.538s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.297s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.334s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.911s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.404s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.954s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.483s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.278s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.323s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.457s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.274s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.899s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.493s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.307s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.336s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=0.850s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.428s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.953s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.482s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.284s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.328s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=6.274s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.254s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.945s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.481s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.308s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.329s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.853s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.341s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.870s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.474s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.292s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.320s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=7.734s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.376s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.998s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.489s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.296s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.347s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.436s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.395s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.976s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.536s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.292s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.330s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.538s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.048s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.958s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.502s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.286s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.342s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.528s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.309s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.967s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.496s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.325s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.340s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.608s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.001s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.232s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.941s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.485s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.321s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.331s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.289s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.397s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.953s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.481s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.288s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.329s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=6.456s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.353s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.930s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.473s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.318s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.335s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.546s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.139s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.970s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.505s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.291s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.338s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.711s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.304s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.956s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.476s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.285s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.333s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.960s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.217s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.974s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.517s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.303s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.338s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.208s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.220s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.957s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.508s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.291s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.344s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=5.370s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.241s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.949s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.493s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.295s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.339s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.353s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.286s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.965s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.478s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.291s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.320s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.698s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.091s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.880s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.528s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.322s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.325s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=2.240s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.364s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.991s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.473s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.302s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.325s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=3.281s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.413s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.879s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.503s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.293s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.336s peak_rss=17774505984
+[experiment1] start video_decoding_sampling
+[experiment1] end video_decoding_sampling elapsed=1.269s peak_rss=17774505984
+[experiment1] start model_load
+[experiment1] end model_load elapsed=0.000s peak_rss=17774505984
+[experiment1] start frame_control
+[experiment1] end frame_control elapsed=0.000s peak_rss=17774505984
+[experiment1] start video_decoding_preprocessing
+[experiment1] end video_decoding_preprocessing elapsed=1.370s peak_rss=17774505984
+[experiment1] start decoder_prefill_attention_extraction
+[experiment1] end decoder_prefill_attention_extraction elapsed=8.943s peak_rss=17774505984
+[experiment1] start answer_scoring
+[experiment1] end answer_scoring elapsed=1.493s peak_rss=17774505984
+[experiment1] start generation
+[experiment1] end generation elapsed=1.315s peak_rss=17774505984
+[experiment1] start artifact_serialization
+[experiment1] end artifact_serialization elapsed=0.330s peak_rss=17774505984
+{
+  "num_records": 77,
+  "output_jsonl": "outputs/experiment1_v3_cross_model/runs/qwen/baseline/records.jsonl",
+  "runtime_seconds": 1217.2556629180908,
+  "config": {
+    "manifest": "outputs/experiment1_v3/primary_manifest.jsonl",
+    "num_frames": 8,
+    "sampling_mode": "cross_model_8",
+    "sampling_policy_json": null,
+    "frames_per_bin": null,
+    "model_backend": "qwen",
+    "model_checkpoint": null,
+    "frame_budget_mode": "total",
+    "resolution": {
+      "name": "medium",
+      "min_pixels": 200704,
+      "max_pixels": 602112,
+      "description": "Moderate visual-token budget."
+    },
+    "vision_access_through_layer": "none",
+    "decoder_direct_access_mask_temporal_bin_cli": [],
+    "decoder_direct_access_through_layer_cli": null,
+    "pre_encoder_mask_temporal_bin_cli": [],
+    "pre_encoder_keep_temporal_bin_cli": [],
+    "condition": "baseline",
+    "query_scope": "question",
+    "attention_extraction": "reduced_sdpa",
+    "max_new_tokens": 16,
+    "dry_run": false,
+    "allow_7b_inference": true,
+    "resume": true,
+    "shard_index": 0,
+    "num_shards": 1,
+    "seed": 20260818,
+    "git_commit": "0d96e3c5e2259c926b234ff9b2232623c3d4fec7"
+  }
+}

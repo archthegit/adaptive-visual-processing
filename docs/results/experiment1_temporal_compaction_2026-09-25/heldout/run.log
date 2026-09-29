@@ -1,0 +1,35 @@
+Traceback (most recent call last):
+  File "/workspace/code/adaptive-visual-processing/src/models/qwen.py", line 36, in _load
+    from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+ModuleNotFoundError: No module named 'transformers'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/code/adaptive-visual-processing/scripts/run_qwen_temporal_compaction_heldout.py", line 978, in <module>
+    main()
+  File "/workspace/code/adaptive-visual-processing/scripts/run_qwen_temporal_compaction_heldout.py", line 973, in main
+    summary = run_heldout(args)
+              ^^^^^^^^^^^^^^^^^
+  File "/workspace/code/adaptive-visual-processing/scripts/run_qwen_temporal_compaction_heldout.py", line 842, in run_heldout
+    model._load()
+  File "/workspace/code/adaptive-visual-processing/src/models/qwen.py", line 38, in _load
+    raise RuntimeError(
+RuntimeError: Qwen inference requires torch and transformers with Qwen2.5-VL support.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]Fetching 5 files: 100%|██████████| 5/5 [00:00<00:00, 929.18it/s]
+Loading weights:   0%|          | 0/729 [00:00<?, ?it/s]Loading weights:   0%|          | 2/729 [00:00<00:49, 14.81it/s]Loading weights:   4%|▍         | 29/729 [00:00<00:05, 137.30it/s]Loading weights:   7%|▋         | 54/729 [00:00<00:03, 182.77it/s]Loading weights:  12%|█▏        | 88/729 [00:00<00:02, 215.85it/s]Loading weights:  17%|█▋        | 124/729 [00:00<00:02, 257.90it/s]Loading weights:  21%|██        | 151/729 [00:00<00:02, 248.01it/s]Loading weights:  24%|██▍       | 177/729 [00:00<00:02, 247.00it/s]Loading weights:  28%|██▊       | 202/729 [00:00<00:02, 246.09it/s]Loading weights:  31%|███       | 227/729 [00:01<00:02, 231.48it/s]Loading weights:  34%|███▍      | 251/729 [00:01<00:02, 226.85it/s]Loading weights:  38%|███▊      | 274/729 [00:01<00:02, 225.50it/s]Loading weights:  42%|████▏     | 304/729 [00:01<00:01, 236.55it/s]Loading weights:  45%|████▌     | 329/729 [00:01<00:01, 238.92it/s]Loading weights:  75%|███████▍  | 546/729 [00:01<00:00, 786.49it/s]Loading weights: 100%|██████████| 729/729 [00:01<00:00, 444.82it/s]
+{
+  "output_dir": "outputs/experiment1_v3_temporal_compaction/heldout_qwen_pair_1_3",
+  "primary_gate": {
+    "status": "FAIL",
+    "quality_noninferiority_pass": false,
+    "hard_minus_dense_logp_lower_ci95": -0.11585690686964872,
+    "efficiency_pass": true,
+    "hard_evict_median_decoder_stack_latency_reduction_fraction": 0.28957740323609643,
+    "rules": [
+      "lower 95% paired-bootstrap bound for hard_evict minus dense log probability must be greater than -0.10",
+      "median decoder-stack latency reduction must be at least 20%"
+    ]
+  }
+}

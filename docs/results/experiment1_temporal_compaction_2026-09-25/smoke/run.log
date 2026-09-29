@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/workspace/code/adaptive-visual-processing/scripts/run_qwen_temporal_handoff_smoke.py", line 409, in <module>
+    main()
+  File "/workspace/code/adaptive-visual-processing/scripts/run_qwen_temporal_handoff_smoke.py", line 235, in main
+    raise RuntimeError("Expected four native temporal cells in the cross-model Qwen baseline.")
+RuntimeError: Expected four native temporal cells in the cross-model Qwen baseline.

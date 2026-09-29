@@ -1,0 +1,355 @@
+{
+  "answers": {
+    "does_compact_memory_improve_oracle_ceiling_over_hard_deletion": true,
+    "globally_safe_fixed_pairs_by_development_criterion": [
+      "1_2",
+      "1_3"
+    ],
+    "is_there_globally_safe_fixed_temporal_pair": true,
+    "is_there_oracle_headroom_for_better_selector": true,
+    "recommendation": "develop a better selector",
+    "scope": "Development-only oracle analysis. This is not held-out evidence and does not test new inference."
+  },
+  "conditions": {
+    "handoff_mean": {
+      "attention_selected_regret_logp": {
+        "ci95": [
+          0.13662477244678578,
+          0.605694144356532
+        ],
+        "mean": 0.33496150787252693,
+        "median": 0.18334494126313183,
+        "n": 15
+      },
+      "best_pair_delta_logp_vs_dense": {
+        "ci95": [
+          0.22544019343730606,
+          0.5582037164601845
+        ],
+        "mean": 0.3771939997739036,
+        "median": 0.3348795802435194,
+        "n": 15
+      },
+      "best_pair_frequency": {
+        "cell_inclusion_counts": {
+          "0": 5,
+          "1": 11,
+          "2": 6,
+          "3": 8
+        },
+        "cell_inclusion_fractions": {
+          "0": 0.3333333333333333,
+          "1": 0.7333333333333333,
+          "2": 0.4,
+          "3": 0.5333333333333333
+        },
+        "interpretation": "Concentration is descriptive on the 15-example development set; no inferential position-universality claim is made.",
+        "pair_counts": {
+          "0_1": 2,
+          "0_2": 1,
+          "0_3": 2,
+          "1_2": 4,
+          "1_3": 5,
+          "2_3": 1
+        },
+        "pair_fractions": {
+          "0_1": 0.13333333333333333,
+          "0_2": 0.06666666666666667,
+          "0_3": 0.13333333333333333,
+          "1_2": 0.26666666666666666,
+          "1_3": 0.3333333333333333,
+          "2_3": 0.06666666666666667
+        }
+      },
+      "fraction_any_pair_preserves_or_improves_dense_logp": {
+        "ci95": [
+          0.8,
+          1.0
+        ],
+        "mean": 0.9333333333333333,
+        "median": 1.0,
+        "n": 15
+      },
+      "fraction_no_pair_within_0_10_logp_of_dense": {
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 15
+      },
+      "num_examples": 15,
+      "worst_pair_delta_logp_vs_dense": {
+        "ci95": [
+          -0.7995057693052923,
+          -0.1873064973749083
+        ],
+        "mean": -0.4670414418356568,
+        "median": -0.12897369568485173,
+        "n": 15
+      }
+    },
+    "hard_evict": {
+      "attention_selected_regret_logp": {
+        "ci95": [
+          0.1612638715546484,
+          0.6283130242445913
+        ],
+        "mean": 0.35860851427950813,
+        "median": 0.20323631404934472,
+        "n": 15
+      },
+      "best_pair_delta_logp_vs_dense": {
+        "ci95": [
+          0.22160796032669103,
+          0.5567474789804319
+        ],
+        "mean": 0.37519655869781177,
+        "median": 0.31944152701119455,
+        "n": 15
+      },
+      "best_pair_frequency": {
+        "cell_inclusion_counts": {
+          "0": 4,
+          "1": 9,
+          "2": 7,
+          "3": 10
+        },
+        "cell_inclusion_fractions": {
+          "0": 0.26666666666666666,
+          "1": 0.6,
+          "2": 0.4666666666666667,
+          "3": 0.6666666666666666
+        },
+        "interpretation": "Concentration is descriptive on the 15-example development set; no inferential position-universality claim is made.",
+        "pair_counts": {
+          "0_1": 1,
+          "0_2": 1,
+          "0_3": 2,
+          "1_2": 3,
+          "1_3": 5,
+          "2_3": 3
+        },
+        "pair_fractions": {
+          "0_1": 0.06666666666666667,
+          "0_2": 0.06666666666666667,
+          "0_3": 0.13333333333333333,
+          "1_2": 0.2,
+          "1_3": 0.3333333333333333,
+          "2_3": 0.2
+        }
+      },
+      "fraction_any_pair_preserves_or_improves_dense_logp": {
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "mean": 1.0,
+        "median": 1.0,
+        "n": 15
+      },
+      "fraction_no_pair_within_0_10_logp_of_dense": {
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "mean": 0.0,
+        "median": 0.0,
+        "n": 15
+      },
+      "num_examples": 15,
+      "worst_pair_delta_logp_vs_dense": {
+        "ci95": [
+          -0.8063836384983686,
+          -0.17955758159393467
+        ],
+        "mean": -0.4603162075617016,
+        "median": -0.1335123859860028,
+        "n": 15
+      }
+    }
+  },
+  "fixed_pair_summary": [
+    {
+      "accuracy": 0.2,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.13333333333333333,
+      "condition": "handoff_mean",
+      "delta_logp_ci95_high": 0.2850348545995718,
+      "delta_logp_ci95_low": -0.3212654050720409,
+      "delta_margin_ci95_high": 0.5666666666666667,
+      "delta_margin_ci95_low": -0.23333333333333334,
+      "mean_delta_answer_margin_vs_dense": 0.18333333333333332,
+      "mean_delta_logp_vs_dense": 0.016674547058944535,
+      "median_delta_answer_margin_vs_dense": 0.375,
+      "median_delta_logp_vs_dense": 0.1684156777502548,
+      "rank_across_fixed_pairs": 4,
+      "retained_pair": "0_1"
+    },
+    {
+      "accuracy": 0.26666666666666666,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.06666666666666667,
+      "condition": "handoff_mean",
+      "delta_logp_ci95_high": 0.20165996456326718,
+      "delta_logp_ci95_low": -0.1513395991135712,
+      "delta_margin_ci95_high": 0.43333333333333335,
+      "delta_margin_ci95_low": -0.041666666666666664,
+      "mean_delta_answer_margin_vs_dense": 0.175,
+      "mean_delta_logp_vs_dense": 0.018915377779221882,
+      "median_delta_answer_margin_vs_dense": 0.125,
+      "median_delta_logp_vs_dense": -0.053260567430128414,
+      "rank_across_fixed_pairs": 3,
+      "retained_pair": "0_2"
+    },
+    {
+      "accuracy": 0.26666666666666666,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.13333333333333333,
+      "condition": "handoff_mean",
+      "delta_logp_ci95_high": 0.2762891960915303,
+      "delta_logp_ci95_low": -0.3185122846875704,
+      "delta_margin_ci95_high": 0.49166666666666664,
+      "delta_margin_ci95_low": -0.15833333333333333,
+      "mean_delta_answer_margin_vs_dense": 0.16666666666666666,
+      "mean_delta_logp_vs_dense": -0.0022824757666404386,
+      "median_delta_answer_margin_vs_dense": 0.25,
+      "median_delta_logp_vs_dense": 0.1319530004493048,
+      "rank_across_fixed_pairs": 5,
+      "retained_pair": "0_3"
+    },
+    {
+      "accuracy": 0.26666666666666666,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.0,
+      "condition": "handoff_mean",
+      "delta_logp_ci95_high": 0.24923408543960693,
+      "delta_logp_ci95_low": -0.02096657973189937,
+      "delta_margin_ci95_high": 0.38333333333333336,
+      "delta_margin_ci95_low": 0.058333333333333334,
+      "mean_delta_answer_margin_vs_dense": 0.20833333333333334,
+      "mean_delta_logp_vs_dense": 0.10458998687780784,
+      "median_delta_answer_margin_vs_dense": 0.125,
+      "median_delta_logp_vs_dense": -0.018519767196421594,
+      "rank_across_fixed_pairs": 2,
+      "retained_pair": "1_2"
+    },
+    {
+      "accuracy": 0.26666666666666666,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.0,
+      "condition": "handoff_mean",
+      "delta_logp_ci95_high": 0.24341510574916417,
+      "delta_logp_ci95_low": 0.04027687397225471,
+      "delta_margin_ci95_high": 0.49166666666666664,
+      "delta_margin_ci95_low": 0.14166666666666666,
+      "mean_delta_answer_margin_vs_dense": 0.325,
+      "mean_delta_logp_vs_dense": 0.14959486217807735,
+      "median_delta_answer_margin_vs_dense": 0.375,
+      "median_delta_logp_vs_dense": 0.1786077872445695,
+      "rank_across_fixed_pairs": 1,
+      "retained_pair": "1_3"
+    },
+    {
+      "accuracy": 0.2,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.13333333333333333,
+      "condition": "handoff_mean",
+      "delta_logp_ci95_high": 0.17457715271048843,
+      "delta_logp_ci95_low": -0.4849468930229918,
+      "delta_margin_ci95_high": 0.31666666666666665,
+      "delta_margin_ci95_low": -0.4166666666666667,
+      "mean_delta_answer_margin_vs_dense": -0.058333333333333334,
+      "mean_delta_logp_vs_dense": -0.1392454618479655,
+      "median_delta_answer_margin_vs_dense": 0.125,
+      "median_delta_logp_vs_dense": -0.036432250450038506,
+      "rank_across_fixed_pairs": 6,
+      "retained_pair": "2_3"
+    },
+    {
+      "accuracy": 0.2,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.13333333333333333,
+      "condition": "hard_evict",
+      "delta_logp_ci95_high": 0.24857457049197065,
+      "delta_logp_ci95_low": -0.3531595996669492,
+      "delta_margin_ci95_high": 0.5083333333333333,
+      "delta_margin_ci95_low": -0.275,
+      "mean_delta_answer_margin_vs_dense": 0.14166666666666666,
+      "mean_delta_logp_vs_dense": -0.01576244133262185,
+      "median_delta_answer_margin_vs_dense": 0.375,
+      "median_delta_logp_vs_dense": 0.14822602215398684,
+      "rank_across_fixed_pairs": 5,
+      "retained_pair": "0_1"
+    },
+    {
+      "accuracy": 0.2,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.06666666666666667,
+      "condition": "hard_evict",
+      "delta_logp_ci95_high": 0.2068243157995648,
+      "delta_logp_ci95_low": -0.1390689990484384,
+      "delta_margin_ci95_high": 0.45,
+      "delta_margin_ci95_low": -0.03333333333333333,
+      "mean_delta_answer_margin_vs_dense": 0.19166666666666668,
+      "mean_delta_logp_vs_dense": 0.025159128779076334,
+      "median_delta_answer_margin_vs_dense": 0.125,
+      "median_delta_logp_vs_dense": -0.0295790681662913,
+      "rank_across_fixed_pairs": 3,
+      "retained_pair": "0_2"
+    },
+    {
+      "accuracy": 0.26666666666666666,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.13333333333333333,
+      "condition": "hard_evict",
+      "delta_logp_ci95_high": 0.2684690443775439,
+      "delta_logp_ci95_low": -0.3031455719684699,
+      "delta_margin_ci95_high": 0.5,
+      "delta_margin_ci95_low": -0.15,
+      "mean_delta_answer_margin_vs_dense": 0.175,
+      "mean_delta_logp_vs_dense": -0.0014344028429400524,
+      "median_delta_answer_margin_vs_dense": 0.25,
+      "median_delta_logp_vs_dense": 0.18043555482019924,
+      "rank_across_fixed_pairs": 4,
+      "retained_pair": "0_3"
+    },
+    {
+      "accuracy": 0.26666666666666666,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.0,
+      "condition": "hard_evict",
+      "delta_logp_ci95_high": 0.23969547105124303,
+      "delta_logp_ci95_low": -0.032040426274306213,
+      "delta_margin_ci95_high": 0.375,
+      "delta_margin_ci95_low": 0.05,
+      "mean_delta_answer_margin_vs_dense": 0.2,
+      "mean_delta_logp_vs_dense": 0.0949790122919468,
+      "median_delta_answer_margin_vs_dense": 0.125,
+      "median_delta_logp_vs_dense": -0.01746285010473475,
+      "rank_across_fixed_pairs": 2,
+      "retained_pair": "1_2"
+    },
+    {
+      "accuracy": 0.26666666666666666,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.0,
+      "condition": "hard_evict",
+      "delta_logp_ci95_high": 0.2377600121934223,
+      "delta_logp_ci95_low": 0.04289918459489222,
+      "delta_margin_ci95_high": 0.475,
+      "delta_margin_ci95_low": 0.125,
+      "mean_delta_answer_margin_vs_dense": 0.30833333333333335,
+      "mean_delta_logp_vs_dense": 0.14832728400655795,
+      "median_delta_answer_margin_vs_dense": 0.375,
+      "median_delta_logp_vs_dense": 0.1819817894660769,
+      "rank_across_fixed_pairs": 1,
+      "retained_pair": "1_3"
+    },
+    {
+      "accuracy": 0.2,
+      "catastrophic_degradation_rate_below_minus_0_5": 0.13333333333333333,
+      "condition": "hard_evict",
+      "delta_logp_ci95_high": 0.19355021651434778,
+      "delta_logp_ci95_low": -0.48807504191891943,
+      "delta_margin_ci95_high": 0.35,
+      "delta_margin_ci95_low": -0.4,
+      "mean_delta_answer_margin_vs_dense": -0.03333333333333333,
+      "mean_delta_logp_vs_dense": -0.13409827565332016,
+      "median_delta_answer_margin_vs_dense": 0.125,
+      "median_delta_logp_vs_dense": -0.010529901370595951,
+      "rank_across_fixed_pairs": 6,
+      "retained_pair": "2_3"
+    }
+  ]
+}

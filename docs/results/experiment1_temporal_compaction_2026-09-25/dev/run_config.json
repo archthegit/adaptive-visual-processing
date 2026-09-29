@@ -1,0 +1,20 @@
+{
+  "conditions": [
+    "dense_custom",
+    "handoff_mean",
+    "hard_evict",
+    "random_handoff"
+  ],
+  "git_commit": "bc58b130fe8025d18a91d7d094f128ccb154ad8b",
+  "handoff_layer": 8,
+  "memory_tokens_per_region": 2,
+  "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "repeats": 10,
+  "resolution_config": "medium",
+  "retain_regions": 2,
+  "sampling_mode": "cross_model_8",
+  "schema_version": "qwen_temporal_handoff_dev_pilot_v1",
+  "seed": 20260818,
+  "timing_scope": "Profiles include only custom decoder prefill calls; video decoding, preprocessing, model loading, serialization and route selection are outside timing.",
+  "warmup": 3
+}
