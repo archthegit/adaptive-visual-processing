@@ -11,6 +11,7 @@ from src.experiment1.adaptive_compaction import (
     create_source_video_disjoint_splits,
     extract_router_features,
     retention_count,
+    shard_records,
     stable_action_id,
     validate_compact_action_artifact,
 )
@@ -21,6 +22,7 @@ from src.experiment1.temporal_handoff import (
     run_dense_decoder_with_prefix_cache,
 )
 from scripts.run_qwen_adaptive_compaction import config_mismatches, validate_resumed_dense_artifact
+from scripts.run_qwen_adaptive_compaction import prepare_run_config, shard_metadata_path
 
 
 def _example(qid: str, qtype: str, video: str, participant: str = "P01") -> VQAExample:
@@ -250,15 +252,72 @@ def test_immutable_config_rejection_and_compact_artifact_schema():
         validate_compact_action_artifact(artifact)
 
 
+def test_shared_output_directory_accepts_multiple_shards(tmp_path):
+    requested = {
+        "schema_version": "x",
+        "model_id": "qwen",
+        "resolution_config": "medium",
+        "sampling_mode": "adaptive_fixed_count",
+        "sampling_policy": "adaptive_fixed_center_frames_exact_count",
+        "frame_counts": [8, 16, 32],
+        "compaction_layers": [4, 8],
+        "retention_fractions": [0.5],
+        "condition": "physical_hard_deletion",
+        "seed": 1,
+        "num_shards": 2,
+        "git_commit": "abc",
+        "shard_index": 0,
+    }
+    shard0 = prepare_run_config(tmp_path, dict(requested), overwrite=False)
+    requested["shard_index"] = 1
+    shard1 = prepare_run_config(tmp_path, dict(requested), overwrite=False)
+
+    assert shard0 == shard1
+    assert "shard_index" not in shard0
+    assert shard_metadata_path(tmp_path, 0, 2).exists()
+    assert shard_metadata_path(tmp_path, 1, 2).exists()
+
+
+def test_shared_output_directory_rejects_changed_num_shards(tmp_path):
+    requested = {
+        "schema_version": "x",
+        "model_id": "qwen",
+        "resolution_config": "medium",
+        "sampling_mode": "adaptive_fixed_count",
+        "sampling_policy": "adaptive_fixed_center_frames_exact_count",
+        "frame_counts": [8],
+        "compaction_layers": [4],
+        "retention_fractions": [0.5],
+        "condition": "physical_hard_deletion",
+        "seed": 1,
+        "num_shards": 2,
+        "git_commit": "abc",
+        "shard_index": 0,
+    }
+    prepare_run_config(tmp_path, dict(requested), overwrite=False)
+    requested["num_shards"] = 3
+    with pytest.raises(RuntimeError, match="num_shards"):
+        prepare_run_config(tmp_path, dict(requested), overwrite=False)
+
+
+def test_shard_assignments_cover_manifest_once_without_overlap():
+    records = [{"question_id": f"q{i}"} for i in range(31)]
+    shards = [shard_records(records, num_shards=4, shard_index=index) for index in range(4)]
+    flattened = [record["question_id"] for shard in shards for record in shard]
+    assert sorted(flattened) == sorted(record["question_id"] for record in records)
+    assert len(flattened) == len(set(flattened))
+
+
 def test_validate_resumed_dense_artifact_requires_finite_router_features(tmp_path):
     torch = pytest.importorskip("torch")
-    run_config = {"schema_version": "x", "git_commit": "abc"}
+    run_config = {"schema_version": "x", "git_commit": "abc", "compaction_layers": [8]}
     artifact_dir = tmp_path / "artifacts" / "q" / "frames_8"
     feature_dir = tmp_path / "features" / "q" / "frames_8"
     artifact_dir.mkdir(parents=True)
     feature_dir.mkdir(parents=True)
     feature = {
         "layer": 8,
+        "frame_count": 8,
         "native_temporal_cell_ids": [0, 1],
         "cell_mean_residual": torch.ones((2, 4)),
         "question_mean_residual": torch.ones((4,)),
@@ -272,7 +331,16 @@ def test_validate_resumed_dense_artifact_requires_finite_router_features(tmp_pat
         "native_temporal_cell_count": 2,
         "correct_choice_log_probability": -1.0,
         "answer_margin": 0.1,
-        "router_features": [{"layer": 8, "feature_file": str(feature_path)}],
+        "router_features": [
+            {
+                "layer": 8,
+                "frame_count": 8,
+                "feature_file": str(feature_path),
+                "dtype": "torch.float32",
+                "cell_mean_residual_shape": [2, 4],
+                "question_mean_residual_shape": [4],
+            }
+        ],
         "status": "complete",
         "git_commit": "abc",
         "run_config": run_config,
@@ -287,4 +355,104 @@ def test_validate_resumed_dense_artifact_requires_finite_router_features(tmp_pat
     feature["cell_mean_residual"][0, 0] = float("nan")
     torch.save(feature, feature_path)
     with pytest.raises(RuntimeError, match="non-finite"):
+        validate_resumed_dense_artifact(dense_path, run_config=run_config, output_dir=tmp_path)
+
+
+def test_validate_resumed_dense_artifact_requires_complete_feature_layers(tmp_path):
+    torch = pytest.importorskip("torch")
+    run_config = {"schema_version": "x", "git_commit": "abc", "compaction_layers": [4, 8]}
+    artifact_dir = tmp_path / "artifacts" / "q" / "frames_8"
+    feature_dir = tmp_path / "features" / "q" / "frames_8"
+    artifact_dir.mkdir(parents=True)
+    feature_dir.mkdir(parents=True)
+    feature_path = feature_dir / "layer_4.pt"
+    feature = {
+        "layer": 4,
+        "frame_count": 8,
+        "native_temporal_cell_ids": [0, 1],
+        "cell_mean_residual": torch.ones((2, 4)),
+        "question_mean_residual": torch.ones((4,)),
+    }
+    torch.save(feature, feature_path)
+    dense = {
+        "question_id": "q",
+        "frame_count": 8,
+        "condition": "dense_custom",
+        "native_temporal_cell_count": 2,
+        "correct_choice_log_probability": -1.0,
+        "answer_margin": 0.1,
+        "router_features": [
+            {
+                "layer": 4,
+                "frame_count": 8,
+                "feature_file": str(feature_path),
+                "dtype": "torch.float32",
+                "cell_mean_residual_shape": [2, 4],
+                "question_mean_residual_shape": [4],
+            }
+        ],
+        "status": "complete",
+        "git_commit": "abc",
+        "run_config": run_config,
+    }
+    dense_path = artifact_dir / "dense_custom.json"
+    dense_path.write_text(__import__("json").dumps(dense))
+    (artifact_dir / "dense_equivalence_report.json").write_text('{"passed": true}')
+
+    with pytest.raises(RuntimeError, match="configured compaction layers"):
+        validate_resumed_dense_artifact(dense_path, run_config=run_config, output_dir=tmp_path)
+
+
+def test_validate_resumed_dense_artifact_rejects_duplicate_wrong_frame_and_wrong_dtype(tmp_path):
+    torch = pytest.importorskip("torch")
+    run_config = {"schema_version": "x", "git_commit": "abc", "compaction_layers": [8]}
+    artifact_dir = tmp_path / "artifacts" / "q" / "frames_8"
+    feature_dir = tmp_path / "features" / "q" / "frames_8"
+    artifact_dir.mkdir(parents=True)
+    feature_dir.mkdir(parents=True)
+    feature_path = feature_dir / "layer_8.pt"
+    feature = {
+        "layer": 8,
+        "frame_count": 16,
+        "native_temporal_cell_ids": [0, 1],
+        "cell_mean_residual": torch.ones((2, 4)),
+        "question_mean_residual": torch.ones((4,)),
+    }
+    torch.save(feature, feature_path)
+    dense = {
+        "question_id": "q",
+        "frame_count": 8,
+        "condition": "dense_custom",
+        "native_temporal_cell_count": 2,
+        "correct_choice_log_probability": -1.0,
+        "answer_margin": 0.1,
+        "router_features": [
+            {
+                "layer": 8,
+                "frame_count": 8,
+                "feature_file": str(feature_path),
+                "dtype": "torch.float16",
+                "cell_mean_residual_shape": [2, 4],
+                "question_mean_residual_shape": [4],
+            }
+        ],
+        "status": "complete",
+        "git_commit": "abc",
+        "run_config": run_config,
+    }
+    dense_path = artifact_dir / "dense_custom.json"
+    dense_path.write_text(__import__("json").dumps(dense))
+    (artifact_dir / "dense_equivalence_report.json").write_text('{"passed": true}')
+
+    with pytest.raises(RuntimeError, match="frame_count mismatch"):
+        validate_resumed_dense_artifact(dense_path, run_config=run_config, output_dir=tmp_path)
+
+    feature["frame_count"] = 8
+    torch.save(feature, feature_path)
+    with pytest.raises(RuntimeError, match="dtype mismatch"):
+        validate_resumed_dense_artifact(dense_path, run_config=run_config, output_dir=tmp_path)
+
+    dense["router_features"].append(dict(dense["router_features"][0]))
+    dense_path.write_text(__import__("json").dumps(dense))
+    with pytest.raises(RuntimeError, match="duplicate"):
         validate_resumed_dense_artifact(dense_path, run_config=run_config, output_dir=tmp_path)

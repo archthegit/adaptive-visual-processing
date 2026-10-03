@@ -365,8 +365,25 @@ def _sampling_plan_for_record(
     )
 
     info = _probe_video_for_sampling(video_path)
-    start = float(record.get("analyzed_start_seconds", 0.0) or 0.0)
-    end = float(record.get("analyzed_end_seconds") or info["num_frames"] / float(info["fps"]))
+    decodable_video_end = info["num_frames"] / float(info["fps"])
+    if record.get("analyzed_start_seconds") is not None:
+        start = float(record["analyzed_start_seconds"])
+        start_field = "analyzed_start_seconds"
+    elif record.get("start_seconds") is not None:
+        start = float(record["start_seconds"])
+        start_field = "start_seconds"
+    else:
+        start = 0.0
+        start_field = "default_zero"
+    if record.get("analyzed_end_seconds") is not None:
+        end = float(record["analyzed_end_seconds"])
+        end_field = "analyzed_end_seconds"
+    elif record.get("end_seconds") is not None:
+        end = float(record["end_seconds"])
+        end_field = "end_seconds"
+    else:
+        end = decodable_video_end
+        end_field = "decodable_video_end"
     decord_length = _decord_video_length(video_path)
     if sampling_mode == "realtime":
         frozen = record.get("_realtime_sampling_policy")
@@ -432,6 +449,23 @@ def _sampling_plan_for_record(
         )
     else:
         raise ValueError(f"Unsupported v2 sampling mode: {sampling_mode}")
+    effective_start = plan[0].get("effective_analyzed_start_seconds") if plan else start
+    effective_end = plan[-1].get("effective_analyzed_end_seconds") if plan else end
+    sampled_timestamps = [
+        float(timestamp)
+        for item in plan
+        for timestamp in item.get("source_timestamps", [])
+    ]
+    outside = [
+        timestamp
+        for timestamp in sampled_timestamps
+        if timestamp < float(effective_start) - 1e-6 or timestamp > float(effective_end) + 1e-6
+    ]
+    if outside:
+        raise ValueError(
+            "Sampled timestamps fall outside the effective annotated interval: "
+            f"outside={outside}, effective_start={effective_start}, effective_end={effective_end}."
+        )
     return plan, {
         "mode": sampling_mode,
         "policy": policy.to_json(),
@@ -439,10 +473,19 @@ def _sampling_plan_for_record(
         "source_num_frames": int(info["num_frames"]),
         "ffprobe_frame_count": int(info["num_frames"]),
         "decord_frame_count": plan[0].get("decord_frame_count") if plan else None,
+        "interval_resolution": {
+            "start_field": start_field,
+            "end_field": end_field,
+            "requested_start_seconds": start,
+            "requested_end_seconds": end,
+            "decodable_video_end_seconds": decodable_video_end,
+        },
         "start_seconds": start,
         "end_seconds": end,
-        "effective_analyzed_start_seconds": plan[0].get("effective_analyzed_start_seconds") if plan else start,
-        "effective_analyzed_end_seconds": plan[-1].get("effective_analyzed_end_seconds") if plan else end,
+        "requested_start_seconds": start,
+        "requested_end_seconds": end,
+        "effective_analyzed_start_seconds": effective_start,
+        "effective_analyzed_end_seconds": effective_end,
         "analyzed_end_adjustment": plan[0].get("analyzed_end_adjustment") if plan else None,
         "target_delta_t_seconds": plan[0].get("target_delta_t_seconds") if plan else None,
         "effective_seconds_per_bin": plan[0].get("effective_seconds_per_bin") if plan else None,

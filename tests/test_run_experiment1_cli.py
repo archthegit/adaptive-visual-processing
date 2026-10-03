@@ -238,6 +238,46 @@ def test_adaptive_fixed_count_sampling_rejects_duplicate_center_frames(monkeypat
         _sampling_plan_for_record(record, "video.mp4", "adaptive_fixed_count")
 
 
+def test_sampling_uses_start_and_end_seconds_when_analyzed_fields_absent(monkeypatch):
+    from scripts import run_experiment1
+
+    monkeypatch.setattr(run_experiment1, "_probe_video_for_sampling", lambda path: {"fps": 10.0, "num_frames": 2000})
+    monkeypatch.setattr(run_experiment1, "_decord_video_length", lambda path: 2000)
+    record = {"start_seconds": 100.0, "end_seconds": 120.0, "_adaptive_fixed_frame_count": 8}
+
+    plan, metadata = _sampling_plan_for_record(record, "video.mp4", "adaptive_fixed_count")
+
+    timestamps = [item["source_timestamps"][0] for item in plan]
+    assert min(timestamps) >= 100.0
+    assert max(timestamps) <= 120.0
+    assert plan[0]["source_frame_indices"][0] >= 1000
+    assert metadata["interval_resolution"]["start_field"] == "start_seconds"
+    assert metadata["interval_resolution"]["end_field"] == "end_seconds"
+
+
+def test_sampling_analyzed_fields_take_precedence_over_start_end_seconds(monkeypatch):
+    from scripts import run_experiment1
+
+    monkeypatch.setattr(run_experiment1, "_probe_video_for_sampling", lambda path: {"fps": 10.0, "num_frames": 2000})
+    monkeypatch.setattr(run_experiment1, "_decord_video_length", lambda path: 2000)
+    record = {
+        "start_seconds": 100.0,
+        "end_seconds": 120.0,
+        "analyzed_start_seconds": 10.0,
+        "analyzed_end_seconds": 18.0,
+        "_adaptive_fixed_frame_count": 8,
+    }
+
+    plan, metadata = _sampling_plan_for_record(record, "video.mp4", "adaptive_fixed_count")
+
+    timestamps = [item["source_timestamps"][0] for item in plan]
+    assert min(timestamps) >= 10.0
+    assert max(timestamps) <= 18.0
+    assert plan[0]["source_frame_indices"][0] < 200
+    assert metadata["interval_resolution"]["start_field"] == "analyzed_start_seconds"
+    assert metadata["interval_resolution"]["end_field"] == "analyzed_end_seconds"
+
+
 def test_v2_sampling_mode_requires_manifest_record():
     example = SimpleNamespace(inputs=(SimpleNamespace(is_image=False),))
     with pytest.raises(ValueError, match="manifest record"):

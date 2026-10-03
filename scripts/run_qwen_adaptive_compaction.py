@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -49,7 +51,6 @@ IMMUTABLE_CONFIG_FIELDS = (
     "condition",
     "seed",
     "num_shards",
-    "shard_index",
     "git_commit",
 )
 
@@ -100,6 +101,10 @@ def summary_path(output_dir: Path, shard_index: int, num_shards: int) -> Path:
     return output_dir / f"summary_shard_{shard_index}_of_{num_shards}.json"
 
 
+def shard_metadata_path(output_dir: Path, shard_index: int, num_shards: int) -> Path:
+    return output_dir / f"shard_config_{shard_index}_of_{num_shards}.json"
+
+
 def immutable_subset(config: dict[str, Any]) -> dict[str, Any]:
     return {field: config.get(field) for field in IMMUTABLE_CONFIG_FIELDS}
 
@@ -115,7 +120,11 @@ def config_mismatches(saved: dict[str, Any], requested: dict[str, Any]) -> dict[
 
 
 def clean_outputs(output_dir: Path, shard_index: int, num_shards: int) -> None:
-    for path in (records_path(output_dir, shard_index, num_shards), summary_path(output_dir, shard_index, num_shards)):
+    for path in (
+        records_path(output_dir, shard_index, num_shards),
+        summary_path(output_dir, shard_index, num_shards),
+        shard_metadata_path(output_dir, shard_index, num_shards),
+    ):
         if path.exists():
             path.unlink()
 
@@ -126,21 +135,44 @@ def outputs_present(output_dir: Path, shard_index: int, num_shards: int) -> bool
         or (output_dir / "features").exists()
         or records_path(output_dir, shard_index, num_shards).exists()
         or summary_path(output_dir, shard_index, num_shards).exists()
+        or shard_metadata_path(output_dir, shard_index, num_shards).exists()
     )
+
+
+def write_json_if_absent_or_validate(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    except FileExistsError:
+        return json.loads(path.read_text())
+    with os.fdopen(fd, "w") as handle:
+        handle.write(encoded)
+    return payload
 
 
 def prepare_run_config(output_dir: Path, requested: dict[str, Any], *, overwrite: bool) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "run_config.json"
+    shard_index = int(requested["shard_index"])
+    num_shards = int(requested["num_shards"])
+    global_requested = dict(requested)
+    global_requested.pop("shard_index", None)
+    shard_payload = {
+        "schema_version": "adaptive_compaction_shard_config_v1",
+        "shard_index": shard_index,
+        "num_shards": num_shards,
+    }
     if overwrite:
         if (output_dir / "artifacts").exists() or (output_dir / "features").exists():
             raise RuntimeError(
                 "--overwrite refuses to clean adaptive-compaction artifacts/features in place. "
                 "Use a new output directory to avoid mixing stale action or feature artifacts."
             )
-        clean_outputs(output_dir, requested["shard_index"], requested["num_shards"])
-        write_json(path, requested)
-        return requested
+        clean_outputs(output_dir, shard_index, num_shards)
+        write_json(path, global_requested)
+        write_json(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
+        return global_requested
     if outputs_present(output_dir, requested["shard_index"], requested["num_shards"]) and not path.exists():
         raise RuntimeError(
             "Existing adaptive-compaction outputs are present but run_config.json is missing. "
@@ -148,12 +180,17 @@ def prepare_run_config(output_dir: Path, requested: dict[str, Any], *, overwrite
         )
     if path.exists():
         saved = json.loads(path.read_text())
-        mismatches = config_mismatches(saved, requested)
+        mismatches = config_mismatches(saved, global_requested)
         if mismatches:
             raise RuntimeError(f"Refusing to resume adaptive compaction run; immutable configuration differs: {mismatches}")
+        write_json(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
         return saved
-    write_json(path, requested)
-    return requested
+    saved = write_json_if_absent_or_validate(path, global_requested)
+    mismatches = config_mismatches(saved, global_requested)
+    if mismatches:
+        raise RuntimeError(f"Refusing to resume adaptive compaction run; immutable configuration differs: {mismatches}")
+    write_json(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
+    return saved
 
 
 def current_completed_records(output_dir: Path, shard_index: int, num_shards: int) -> set[tuple[str, int, str]]:
@@ -178,7 +215,14 @@ def validate_resumed_action_artifact(path: Path, run_config: dict[str, Any]) -> 
     return artifact
 
 
-def validate_router_feature_file(path: Path, *, expected_layer: int, expected_cell_count: int) -> None:
+def validate_router_feature_file(
+    path: Path,
+    *,
+    expected_layer: int,
+    expected_cell_count: int,
+    expected_frame_count: int,
+    expected_dtype: str | None = None,
+) -> dict[str, Any]:
     if not path.exists() or path.stat().st_size <= 0:
         raise RuntimeError(f"Router feature file is missing or empty: {path}")
     import torch
@@ -186,6 +230,8 @@ def validate_router_feature_file(path: Path, *, expected_layer: int, expected_ce
     payload = torch.load(path, map_location="cpu")
     if int(payload.get("layer")) != int(expected_layer):
         raise RuntimeError(f"Router feature layer mismatch in {path}.")
+    if int(payload.get("frame_count")) != int(expected_frame_count):
+        raise RuntimeError(f"Router feature frame_count mismatch in {path}.")
     cell_ids = payload.get("native_temporal_cell_ids") or []
     if len(cell_ids) != expected_cell_count:
         raise RuntimeError(f"Router feature native-cell count mismatch in {path}.")
@@ -195,8 +241,14 @@ def validate_router_feature_file(path: Path, *, expected_layer: int, expected_ce
         raise RuntimeError(f"Router feature tensors are missing in {path}.")
     if list(cell_mean.shape)[0] != expected_cell_count:
         raise RuntimeError(f"Router cell feature shape mismatch in {path}: {tuple(cell_mean.shape)}")
+    if question_mean.ndim != 1 or int(question_mean.shape[0]) != int(cell_mean.shape[1]):
+        raise RuntimeError(f"Router question feature shape mismatch in {path}: {tuple(question_mean.shape)}")
+    loaded_dtype = str(cell_mean.dtype)
+    if expected_dtype is not None and loaded_dtype != expected_dtype:
+        raise RuntimeError(f"Router feature dtype mismatch in {path}: saved={expected_dtype}, loaded={loaded_dtype}")
     if not torch.isfinite(cell_mean).all() or not torch.isfinite(question_mean).all():
         raise RuntimeError(f"Router features contain non-finite values in {path}.")
+    return payload
 
 
 def validate_resumed_dense_artifact(
@@ -204,6 +256,7 @@ def validate_resumed_dense_artifact(
     *,
     run_config: dict[str, Any],
     output_dir: Path,
+    expected_feature_layers: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     if not path.exists() or path.stat().st_size <= 0:
         raise RuntimeError(f"Completed dense artifact is missing or empty: {path}")
@@ -235,15 +288,38 @@ def validate_resumed_dense_artifact(
     if eq.get("passed") is not True:
         raise RuntimeError(f"Dense equivalence report did not pass: {eq_path}")
     expected_cells = int(artifact["native_temporal_cell_count"])
-    for feature_meta in artifact.get("router_features") or []:
+    expected_layers = tuple(int(layer) for layer in (expected_feature_layers or run_config.get("compaction_layers") or ()))
+    features = artifact.get("router_features") or []
+    feature_layers = [int(item.get("layer")) for item in features]
+    duplicate_layers = sorted({layer for layer in feature_layers if feature_layers.count(layer) > 1})
+    if duplicate_layers:
+        raise RuntimeError(f"Dense artifact has duplicate router feature layers: {duplicate_layers}")
+    if expected_layers and sorted(feature_layers) != sorted(expected_layers):
+        raise RuntimeError(
+            "Dense artifact router feature layers do not match configured compaction layers: "
+            f"expected={sorted(expected_layers)}, actual={sorted(feature_layers)}."
+        )
+    for feature_meta in features:
+        layer = int(feature_meta["layer"])
+        if int(feature_meta.get("frame_count")) != int(artifact["frame_count"]):
+            raise RuntimeError(f"Router feature metadata frame_count mismatch for layer {layer}.")
         feature_file = Path(feature_meta["feature_file"])
         if not feature_file.exists() and not feature_file.is_absolute():
             feature_file = output_dir / feature_file
-        validate_router_feature_file(
+        expected_name = f"layer_{layer}.pt"
+        if feature_file.name != expected_name:
+            raise RuntimeError(f"Router feature filename mismatch: expected {expected_name}, got {feature_file.name}.")
+        payload = validate_router_feature_file(
             feature_file,
-            expected_layer=int(feature_meta["layer"]),
+            expected_layer=layer,
             expected_cell_count=expected_cells,
+            expected_frame_count=int(artifact["frame_count"]),
+            expected_dtype=str(feature_meta.get("dtype")) if feature_meta.get("dtype") is not None else None,
         )
+        if list(payload["cell_mean_residual"].shape) != list(feature_meta.get("cell_mean_residual_shape", [])):
+            raise RuntimeError(f"Router feature cell shape does not match metadata for {feature_file}.")
+        if list(payload["question_mean_residual"].shape) != list(feature_meta.get("question_mean_residual_shape", [])):
+            raise RuntimeError(f"Router feature question shape does not match metadata for {feature_file}.")
     return artifact
 
 
@@ -295,6 +371,51 @@ def validate_manifest_leakage_summary(manifest_path: str | Path) -> dict[str, An
         "passed": passed,
         "source_video_overlap_counts": source,
         "question_id_overlap_counts": questions,
+    }
+
+
+def _file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def validate_completed_smoke_resume(
+    *,
+    output_dir: Path,
+    run_config: dict[str, Any],
+    shard_index: int,
+    num_shards: int,
+) -> dict[str, Any]:
+    records_file = records_path(output_dir, shard_index, num_shards)
+    if not records_file.exists():
+        return {"passed": False, "reason": "records file missing"}
+    records = [record for record in read_jsonl(records_file) if record.get("status") == "complete"]
+    artifact_paths = [Path(record["artifact"]) for record in records]
+    before = {str(path): {"sha256": _file_sha256(path), "mtime_ns": path.stat().st_mtime_ns} for path in artifact_paths}
+    dense_count = 0
+    action_count = 0
+    for record in records:
+        path = Path(record["artifact"])
+        if record.get("action_id") == "dense_custom":
+            validate_resumed_dense_artifact(path, run_config=run_config, output_dir=output_dir)
+            dense_count += 1
+        else:
+            validate_resumed_action_artifact(path, run_config)
+            action_count += 1
+    after = {str(path): {"sha256": _file_sha256(path), "mtime_ns": path.stat().st_mtime_ns} for path in artifact_paths}
+    mismatch = config_mismatches(run_config, {**run_config, "frame_counts": [999]})
+    unchanged = before == after
+    return {
+        "passed": bool(records) and dense_count > 0 and action_count > 0 and unchanged and "frame_counts" in mismatch,
+        "validated_without_model_execution": True,
+        "stock_inference_skipped": True,
+        "dense_artifacts_validated": dense_count,
+        "action_artifacts_validated": action_count,
+        "artifact_hashes_unchanged": unchanged,
+        "immutable_configuration_drift_rejected": "frame_counts" in mismatch,
     }
 
 
@@ -601,7 +722,13 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
                         torch.save(features, fpath)
                         feature_metadata.append(router_feature_metadata(fpath, features))
                         if args.smoke:
-                            validate_router_feature_file(fpath, expected_layer=layer, expected_cell_count=native_count)
+                            validate_router_feature_file(
+                                fpath,
+                                expected_layer=layer,
+                                expected_cell_count=native_count,
+                                expected_frame_count=frame_count,
+                                expected_dtype=str(features["cell_mean_residual"].dtype),
+                            )
                     dense_artifact = make_dense_artifact(
                         qid=qid,
                         split=args.split,
@@ -789,6 +916,12 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
             and {item["layer"] for item in smoke_validation["cached_full_comparisons"]} == set(args.compaction_layers),
             "num_comparisons": len(smoke_validation["cached_full_comparisons"]),
         }
+        smoke_validation["checks"]["resume_validation"] = validate_completed_smoke_resume(
+            output_dir=output,
+            run_config=run_config,
+            shard_index=args.shard_index,
+            num_shards=args.num_shards,
+        )
         smoke_validation["passed"] = all(
             bool(value.get("passed")) for value in smoke_validation["checks"].values() if isinstance(value, dict)
         )

@@ -146,7 +146,19 @@ The smoke run writes `smoke_validation.json` and exits nonzero if any required c
 
 ## Sharded Train Commands
 
-Eight-frame train labels:
+```bash
+python scripts/run_qwen_adaptive_compaction.py \
+  --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
+  --mp4-dir /workspace/data/hd_epic_mp4 \
+  --manifest outputs/experiment1_v3_adaptive_compaction/manifests/train.jsonl \
+  --split train \
+  --output-dir outputs/experiment1_v3_adaptive_compaction/train_labels \
+  --frame-counts 8 16 32 \
+  --num-shards 4 \
+  --shard-index 0
+```
+
+Use the same shared `--output-dir` for all shards. The global `run_config.json` stores the scientific configuration and `num_shards`; each shard writes its own `shard_config_*`, records, and summary files. Question-level artifact paths remain disjoint because each question is assigned to exactly one shard.
 
 ```bash
 python scripts/run_qwen_adaptive_compaction.py \
@@ -154,38 +166,13 @@ python scripts/run_qwen_adaptive_compaction.py \
   --mp4-dir /workspace/data/hd_epic_mp4 \
   --manifest outputs/experiment1_v3_adaptive_compaction/manifests/train.jsonl \
   --split train \
-  --frame-counts 8 \
+  --output-dir outputs/experiment1_v3_adaptive_compaction/train_labels \
+  --frame-counts 8 16 32 \
   --num-shards 4 \
-  --shard-index 0
+  --shard-index 1
 ```
 
-Sixteen-frame train labels:
-
-```bash
-python scripts/run_qwen_adaptive_compaction.py \
-  --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
-  --mp4-dir /workspace/data/hd_epic_mp4 \
-  --manifest outputs/experiment1_v3_adaptive_compaction/manifests/train.jsonl \
-  --split train \
-  --frame-counts 16 \
-  --num-shards 4 \
-  --shard-index 0
-```
-
-Thirty-two-frame train labels:
-
-```bash
-python scripts/run_qwen_adaptive_compaction.py \
-  --questions-dir /workspace/data/hd-epic-annotations/vqa-benchmark \
-  --mp4-dir /workspace/data/hd_epic_mp4 \
-  --manifest outputs/experiment1_v3_adaptive_compaction/manifests/train.jsonl \
-  --split train \
-  --frame-counts 32 \
-  --num-shards 4 \
-  --shard-index 0
-```
-
-Repeat with `--shard-index 1`, `2`, and `3` for the remaining shards.
+Repeat with `--shard-index 2` and `3` for the remaining shards.
 
 ## Stop/Go Criteria
 
