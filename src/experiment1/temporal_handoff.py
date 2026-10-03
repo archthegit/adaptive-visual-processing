@@ -210,6 +210,17 @@ class DecoderPrefillResult:
         }
 
 
+@dataclass
+class DensePrefixCacheEntry:
+    boundary_layer: int
+    hidden_states: Any
+    position_ids: Any | None
+    visual_token_indices: tuple[int, ...]
+    question_token_indices: tuple[int, ...]
+    total_estimated_attention_flops_through_boundary: int
+    layer_instrumentation: tuple[LayerInstrumentation, ...]
+
+
 def _get_field(obj: Any, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
@@ -1017,6 +1028,299 @@ def run_custom_decoder_prefill(
         final_hidden_states=hidden_states,
         final_token_hidden_state=final_token_hidden_state,
         instrumentation=instrumentation,
+        compaction_plan=compaction_plan,
+        final_question_token_indices=current_question_indices,
+        final_visual_token_indices=tuple(current_visual_indices),
+        final_memory_token_indices=tuple(current_memory_indices),
+        total_estimated_attention_flops=total_flops,
+        attention_mask_mode=attention_mask_mode,
+        layer_types=active_layer_types,
+        rotary_embedding_computations=rotary_embedding_computations,
+    )
+
+
+def run_dense_decoder_with_prefix_cache(
+    *,
+    layers: Sequence[Any],
+    hidden_states: Any,
+    position_ids: Any | None,
+    layout: Any,
+    cache_boundaries: Sequence[int],
+    lm_head: Any | None,
+    norm: Any | None,
+    num_attention_heads: int,
+    head_dim: int,
+    rotary_emb: Any | None = None,
+    layer_types: Sequence[str] | None = None,
+    sliding_window: int | None = None,
+) -> tuple[DecoderPrefillResult, dict[int, DensePrefixCacheEntry]]:
+    """Run dense prefill once and cache hidden states after requested decoder layers.
+
+    Boundary ``L`` means the cached state is the output of decoder layer ``L``.
+    A compaction action at boundary ``L`` can therefore start by compacting that
+    cached state and executing layers ``L + 1`` through the final decoder layer.
+    """
+    torch = _torch_module()
+    boundaries = {int(item) for item in cache_boundaries}
+    if not boundaries:
+        raise ValueError("At least one cache boundary is required.")
+    if min(boundaries) < 0 or max(boundaries) >= len(layers):
+        raise ValueError("cache_boundaries must be valid decoder layer indices.")
+    active_layer_types = tuple(layer_types or ("full_attention",) * len(layers))
+    if len(active_layer_types) != len(layers):
+        raise ValueError("layer_types length must match decoder layer count.")
+    if "sliding_attention" in active_layer_types and not sliding_window:
+        raise RuntimeError("Qwen sliding_attention layers require a sliding_window value.")
+    current_visual_indices = visual_token_positions(layout)
+    current_question_indices = question_token_positions(layout)
+    current_memory_indices: tuple[int, ...] = ()
+    instrumentation: list[LayerInstrumentation] = []
+    caches: dict[int, DensePrefixCacheEntry] = {}
+    total_flops = 0
+    text_position_ids = _official_text_position_ids(position_ids)
+    position_embeddings = None
+    rotary_embedding_computations = 0
+    attention_mask_mode = "full_attention_only" if set(active_layer_types) == {"full_attention"} else "mixed_full_and_sliding_attention"
+    if rotary_emb is None and position_ids is not None:
+        raise RuntimeError("Real Qwen execution requires language_model.rotary_emb.")
+
+    with torch.inference_mode():
+        position_embeddings = _position_embeddings(rotary_emb, hidden_states, position_ids)
+        rotary_embedding_computations = 1 if position_embeddings is not None else 0
+        for layer_idx, layer in enumerate(layers):
+            seq_in = int(hidden_states.shape[1])
+            visual_in, memory_in, text_in = _counts(seq_in, current_visual_indices, current_memory_indices)
+            qk, av = _estimate_attention_flops(
+                seq_in,
+                num_heads=num_attention_heads,
+                head_dim=head_dim,
+                batch_size=int(hidden_states.shape[0]),
+            )
+            total_flops += qk + av
+            if active_layer_types[layer_idx] == "full_attention":
+                _validate_native_causal_attention_route(layer, active_layer_types[layer_idx])
+                attention_mask = None
+                causal_path = "native_sdpa_is_causal"
+                explicit_mask_materialized = False
+                mask_shape = None
+                native_sdpa_is_causal_used = True
+            else:
+                attention_mask = build_additive_sliding_causal_mask(
+                    seq_in,
+                    int(sliding_window),
+                    hidden_states.dtype,
+                    hidden_states.device,
+                )
+                causal_path = "explicit_sliding_attention_mask"
+                explicit_mask_materialized = True
+                mask_shape = tuple(int(dim) for dim in attention_mask.shape)
+                native_sdpa_is_causal_used = False
+            hidden_states = _call_decoder_layer(
+                layer,
+                hidden_states,
+                attention_mask,
+                position_embeddings,
+                text_position_ids,
+            )
+            seq_out = int(hidden_states.shape[1])
+            visual_out, memory_out, text_out = _counts(seq_out, current_visual_indices, current_memory_indices)
+            instrumentation.append(
+                LayerInstrumentation(
+                    layer=layer_idx,
+                    layer_type=active_layer_types[layer_idx],
+                    sequence_length_in=seq_in,
+                    sequence_length_out=seq_out,
+                    visual_token_count_in=visual_in,
+                    visual_token_count_out=visual_out,
+                    memory_token_count_in=memory_in,
+                    memory_token_count_out=memory_out,
+                    text_token_count_in=text_in,
+                    text_token_count_out=text_out,
+                    attention_q_len=seq_in,
+                    attention_k_len=seq_in,
+                    estimated_qk_flops=qk,
+                    estimated_av_flops=av,
+                    causal_path=causal_path,
+                    explicit_mask_materialized=explicit_mask_materialized,
+                    mask_shape=mask_shape,
+                    native_sdpa_is_causal_used=native_sdpa_is_causal_used,
+                    compaction_applied_after_layer=False,
+                )
+            )
+            if layer_idx in boundaries:
+                caches[layer_idx] = DensePrefixCacheEntry(
+                    boundary_layer=layer_idx,
+                    hidden_states=hidden_states.detach().clone(),
+                    position_ids=position_ids.detach().clone() if position_ids is not None else None,
+                    visual_token_indices=tuple(current_visual_indices),
+                    question_token_indices=tuple(current_question_indices),
+                    total_estimated_attention_flops_through_boundary=total_flops,
+                    layer_instrumentation=tuple(instrumentation),
+                )
+        if norm is not None:
+            hidden_states = norm(hidden_states)
+        final_token_hidden_state = hidden_states[:, -1:, :]
+        logits = lm_head(final_token_hidden_state) if lm_head is not None else final_token_hidden_state
+    missing = sorted(boundaries.difference(caches))
+    if missing:
+        raise RuntimeError(f"Dense prefix cache did not capture boundaries: {missing}")
+    result = DecoderPrefillResult(
+        logits=logits,
+        final_hidden_states=hidden_states,
+        final_token_hidden_state=final_token_hidden_state,
+        instrumentation=instrumentation,
+        compaction_plan=None,
+        final_question_token_indices=current_question_indices,
+        final_visual_token_indices=tuple(current_visual_indices),
+        final_memory_token_indices=tuple(current_memory_indices),
+        total_estimated_attention_flops=total_flops,
+        attention_mask_mode=attention_mask_mode,
+        layer_types=active_layer_types,
+        rotary_embedding_computations=rotary_embedding_computations,
+    )
+    return result, caches
+
+
+def run_compacted_decoder_from_prefix_cache(
+    *,
+    cache_entry: DensePrefixCacheEntry,
+    layers: Sequence[Any],
+    layout: Any,
+    config: TemporalHandoffConfig,
+    lm_head: Any | None,
+    norm: Any | None,
+    num_attention_heads: int,
+    head_dim: int,
+    rotary_emb: Any | None = None,
+    layer_types: Sequence[str] | None = None,
+    sliding_window: int | None = None,
+) -> DecoderPrefillResult:
+    """Apply physical compaction to a cached dense boundary and run the suffix only."""
+    torch = _torch_module()
+    if config.condition == "dense_custom":
+        raise ValueError("Prefix-cache suffix execution is for compaction actions, not dense_custom.")
+    if config.handoff_layer != cache_entry.boundary_layer:
+        raise ValueError("config.handoff_layer must match the cached boundary layer.")
+    if not config.retained_temporal_regions:
+        raise ValueError("Compaction actions require retained_temporal_regions.")
+    active_layer_types = tuple(layer_types or ("full_attention",) * len(layers))
+    if len(active_layer_types) != len(layers):
+        raise ValueError("layer_types length must match decoder layer count.")
+    if "sliding_attention" in active_layer_types and not sliding_window:
+        raise RuntimeError("Qwen sliding_attention layers require a sliding_window value.")
+    hidden_states = cache_entry.hidden_states
+    position_ids = cache_entry.position_ids
+    compaction_plan = build_compaction_plan(
+        layout=layout,
+        sequence_length=int(hidden_states.shape[1]),
+        retained_temporal_regions=config.retained_temporal_regions,
+        memory_tokens_per_region=config.memory_tokens_per_region,
+        condition=config.condition,
+    )
+    hidden_states, position_ids = compact_hidden_states_and_positions(hidden_states, position_ids, compaction_plan)
+    current_visual_indices = compaction_plan.retained_visual_token_positions
+    current_memory_indices = compaction_plan.memory_token_positions
+    current_question_indices = remap_indices(cache_entry.question_token_indices, compaction_plan.old_to_new)
+    text_position_ids = _official_text_position_ids(position_ids)
+    instrumentation: list[LayerInstrumentation] = []
+    total_flops = cache_entry.total_estimated_attention_flops_through_boundary
+    attention_mask_mode = "full_attention_only" if set(active_layer_types) == {"full_attention"} else "mixed_full_and_sliding_attention"
+    if rotary_emb is None and position_ids is not None:
+        raise RuntimeError("Real Qwen execution requires language_model.rotary_emb.")
+    with torch.inference_mode():
+        position_embeddings = _position_embeddings(rotary_emb, hidden_states, position_ids)
+        rotary_embedding_computations = 1 if position_embeddings is not None else 0
+        for layer_idx in range(cache_entry.boundary_layer + 1, len(layers)):
+            layer = layers[layer_idx]
+            seq_in = int(hidden_states.shape[1])
+            visual_in, memory_in, text_in = _counts(seq_in, current_visual_indices, current_memory_indices)
+            qk, av = _estimate_attention_flops(
+                seq_in,
+                num_heads=num_attention_heads,
+                head_dim=head_dim,
+                batch_size=int(hidden_states.shape[0]),
+            )
+            total_flops += qk + av
+            if active_layer_types[layer_idx] == "full_attention":
+                _validate_native_causal_attention_route(layer, active_layer_types[layer_idx])
+                attention_mask = None
+                causal_path = "native_sdpa_is_causal"
+                explicit_mask_materialized = False
+                mask_shape = None
+                native_sdpa_is_causal_used = True
+            else:
+                attention_mask = build_additive_sliding_causal_mask(
+                    seq_in,
+                    int(sliding_window),
+                    hidden_states.dtype,
+                    hidden_states.device,
+                )
+                causal_path = "explicit_sliding_attention_mask"
+                explicit_mask_materialized = True
+                mask_shape = tuple(int(dim) for dim in attention_mask.shape)
+                native_sdpa_is_causal_used = False
+            hidden_states = _call_decoder_layer(
+                layer,
+                hidden_states,
+                attention_mask,
+                position_embeddings,
+                text_position_ids,
+            )
+            seq_out = int(hidden_states.shape[1])
+            visual_out, memory_out, text_out = _counts(seq_out, current_visual_indices, current_memory_indices)
+            instrumentation.append(
+                LayerInstrumentation(
+                    layer=layer_idx,
+                    layer_type=active_layer_types[layer_idx],
+                    sequence_length_in=seq_in,
+                    sequence_length_out=seq_out,
+                    visual_token_count_in=visual_in,
+                    visual_token_count_out=visual_out,
+                    memory_token_count_in=memory_in,
+                    memory_token_count_out=memory_out,
+                    text_token_count_in=text_in,
+                    text_token_count_out=text_out,
+                    attention_q_len=seq_in,
+                    attention_k_len=seq_in,
+                    estimated_qk_flops=qk,
+                    estimated_av_flops=av,
+                    causal_path=causal_path,
+                    explicit_mask_materialized=explicit_mask_materialized,
+                    mask_shape=mask_shape,
+                    native_sdpa_is_causal_used=native_sdpa_is_causal_used,
+                    compaction_applied_after_layer=False,
+                )
+            )
+        if norm is not None:
+            hidden_states = norm(hidden_states)
+        final_token_hidden_state = hidden_states[:, -1:, :]
+        logits = lm_head(final_token_hidden_state) if lm_head is not None else final_token_hidden_state
+    synthetic_boundary = LayerInstrumentation(
+        layer=cache_entry.boundary_layer,
+        layer_type=active_layer_types[cache_entry.boundary_layer],
+        sequence_length_in=compaction_plan.original_sequence_length,
+        sequence_length_out=compaction_plan.compacted_sequence_length,
+        visual_token_count_in=len(compaction_plan.retained_visual_token_positions) + len(compaction_plan.removed_visual_token_positions),
+        visual_token_count_out=len(current_visual_indices),
+        memory_token_count_in=0,
+        memory_token_count_out=len(current_memory_indices),
+        text_token_count_in=compaction_plan.original_sequence_length - len(compaction_plan.retained_visual_token_positions) - len(compaction_plan.removed_visual_token_positions),
+        text_token_count_out=compaction_plan.compacted_sequence_length - len(current_visual_indices) - len(current_memory_indices),
+        attention_q_len=compaction_plan.original_sequence_length,
+        attention_k_len=compaction_plan.original_sequence_length,
+        estimated_qk_flops=0,
+        estimated_av_flops=0,
+        causal_path="physical_compaction_boundary",
+        explicit_mask_materialized=False,
+        mask_shape=None,
+        native_sdpa_is_causal_used=False,
+        compaction_applied_after_layer=True,
+    )
+    return DecoderPrefillResult(
+        logits=logits,
+        final_hidden_states=hidden_states,
+        final_token_hidden_state=final_token_hidden_state,
+        instrumentation=[synthetic_boundary, *instrumentation],
         compaction_plan=compaction_plan,
         final_question_token_indices=current_question_indices,
         final_visual_token_indices=tuple(current_visual_indices),
