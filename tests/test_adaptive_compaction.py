@@ -69,6 +69,32 @@ def _many_examples(per_category: int = 6) -> list[VQAExample]:
     return examples
 
 
+def _assert_split_invariants(splits, summary, config):
+    targets = {
+        "train": config.train_per_category,
+        "development": config.development_per_category,
+        "test": config.test_per_category,
+    }
+    seen_sources = {}
+    seen_questions = set()
+    for split, examples in splits.items():
+        category_counts = {}
+        source_counts = {}
+        for example in examples:
+            category = __import__("src.experiment1.manifest", fromlist=["infer_experiment1_category"]).infer_experiment1_category(example.question_type)
+            category_counts[category] = category_counts.get(category, 0) + 1
+            source_counts[example.inputs[0].video_id] = source_counts.get(example.inputs[0].video_id, 0) + 1
+            assert example.question_id not in seen_questions
+            seen_questions.add(example.question_id)
+            previous = seen_sources.setdefault(example.inputs[0].video_id, split)
+            assert previous == split
+        assert len(examples) == targets[split] * 4
+        assert all(category_counts.get(category, 0) == targets[split] for category in ("fine_grained", "gaze", "ingredient", "object_motion"))
+        assert all(count <= config.max_questions_per_source_video for count in source_counts.values())
+    assert all(value == 0 for value in summary["source_video_overlap_counts"].values())
+    assert all(value == 0 for value in summary["question_id_overlap_counts"].values())
+
+
 def test_source_video_disjoint_splits_are_deterministic_and_disjoint():
     examples = _many_examples(per_category=6)
     config = AdaptiveSplitConfig(train_per_category=2, development_per_category=2, test_per_category=2, seed=123, max_questions_per_source_video=4)
@@ -78,15 +104,79 @@ def test_source_video_disjoint_splits_are_deterministic_and_disjoint():
         [item.question_id for item in splits_b[name]] for name in ("train", "development", "test")
     ]
     assert summary_a == summary_b
-    assert all(value == 0 for value in summary_a["source_video_overlap_counts"].values())
-    assert all(value == 0 for value in summary_a["question_id_overlap_counts"].values())
+    _assert_split_invariants(splits_a, summary_a, config)
+
+
+def test_source_video_disjoint_splits_different_seeds_remain_valid():
+    examples = _many_examples(per_category=9)
+    config_a = AdaptiveSplitConfig(train_per_category=2, development_per_category=2, test_per_category=2, seed=123, max_questions_per_source_video=4)
+    config_b = AdaptiveSplitConfig(train_per_category=2, development_per_category=2, test_per_category=2, seed=456, max_questions_per_source_video=4)
+    splits_a, summary_a = create_source_video_disjoint_splits(examples, config_a)
+    splits_b, summary_b = create_source_video_disjoint_splits(examples, config_b)
+
+    _assert_split_invariants(splits_a, summary_a, config_a)
+    _assert_split_invariants(splits_b, summary_b, config_b)
 
 
 def test_source_video_disjoint_splits_fail_when_impossible():
     examples = [_example(f"q{i}", "fine_grained_action_recognition", "shared-video") for i in range(5)]
     config = AdaptiveSplitConfig(train_per_category=1, development_per_category=1, test_per_category=1, seed=1)
-    with pytest.raises(ValueError, match="shortages"):
+    with pytest.raises(ValueError, match="diagnostics"):
         create_source_video_disjoint_splits(examples, config)
+
+
+def test_deficit_aware_allocator_preserves_rare_category_capacity():
+    qtypes = {
+        "fine_grained": "fine_grained_action_recognition",
+        "gaze": "gaze_interaction_anticipation",
+        "ingredient": "ingredient_ingredient_adding_localization",
+        "object_motion": "object_motion_object_movement_itinerary",
+    }
+    examples = []
+    for category, qtype in qtypes.items():
+        for source_idx in range(3):
+            video = f"{category}-source-{source_idx}"
+            for fine_idx in range(4):
+                examples.append(_example(f"{category}_{source_idx}_fine_{fine_idx}", qtypes["fine_grained"], video))
+            examples.append(_example(f"{category}_{source_idx}_rare", qtype, video))
+    config = AdaptiveSplitConfig(train_per_category=1, development_per_category=1, test_per_category=1, seed=99, max_questions_per_source_video=4)
+
+    splits, summary = create_source_video_disjoint_splits(examples, config)
+
+    _assert_split_invariants(splits, summary, config)
+    assert summary["feasibility_diagnostics"]["raw_eligible_questions_by_category"]["fine_grained"] > 3
+
+
+def test_create_adaptive_splits_writes_no_partial_files_on_failure(monkeypatch, tmp_path):
+    from scripts import create_adaptive_compaction_splits as script
+
+    class FakeDataset:
+        def __init__(self, _path):
+            self.examples = [_example("q0", "fine_grained_action_recognition", "shared-video")]
+
+    monkeypatch.setattr(script, "HDEpicVQADataset", FakeDataset)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "create_adaptive_compaction_splits.py",
+            "--questions-dir",
+            "unused",
+            "--output-dir",
+            str(tmp_path),
+            "--train-per-category",
+            "1",
+            "--development-per-category",
+            "1",
+            "--test-per-category",
+            "1",
+        ],
+    )
+
+    with pytest.raises(ValueError):
+        script.main()
+
+    assert not list(tmp_path.glob("*.jsonl"))
+    assert not (tmp_path / "summary.json").exists()
 
 
 def test_retention_count_and_candidate_routes_are_stable_and_unique():

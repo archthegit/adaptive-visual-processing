@@ -83,99 +83,376 @@ def create_source_video_disjoint_splits(
     if config.max_questions_per_source_video <= 0:
         raise ValueError("max_questions_per_source_video must be positive.")
     eligible = eligible_adaptive_examples(examples)
-    by_source: dict[str, list[VQAExample]] = defaultdict(list)
-    for example in eligible:
-        by_source[example.inputs[0].video_id].append(example)
-    rng = random.Random(config.seed)
-    source_records: list[dict[str, Any]] = []
-    for source_video_id, source_examples in by_source.items():
-        capped = sorted(source_examples, key=lambda item: (item.question_type, item.question_id))
-        rng.shuffle(capped)
-        capped = sorted(capped[: config.max_questions_per_source_video], key=lambda item: item.question_id)
-        category_counts = Counter(infer_experiment1_category(item.question_type) for item in capped)
-        source_records.append(
-            {
-                "source_video_id": source_video_id,
-                "examples": capped,
-                "category_counts": category_counts,
-                "participant_id": capped[0].inputs[0].participant_id if capped else "",
-                "duration": sum((bounded_duration_seconds(item) or 0.0) for item in capped) / max(1, len(capped)),
-            }
-        )
-    rng.shuffle(source_records)
-    source_records.sort(
-        key=lambda item: (
-            -sum(item["category_counts"].values()),
-            item["participant_id"],
-            round(float(item["duration"]), 3),
-            rng.random(),
-            item["source_video_id"],
-        )
-    )
     targets = {
         "train": config.train_per_category,
         "development": config.development_per_category,
         "test": config.test_per_category,
     }
-    selected: dict[str, list[VQAExample]] = {name: [] for name in ADAPTIVE_SPLITS}
-    counts: dict[str, Counter[str]] = {name: Counter() for name in ADAPTIVE_SPLITS}
-    used_questions: set[str] = set()
-    used_sources: set[str] = set()
-
-    def deficits(split: str) -> int:
-        return sum(max(0, targets[split] - counts[split][category]) for category in EXPERIMENT1_CATEGORIES)
-
-    for source in source_records:
-        source_id = source["source_video_id"]
-        if source_id in used_sources:
-            continue
-        best_split = None
-        best_gain = 0
-        for split in ADAPTIVE_SPLITS:
-            gain = 0
-            for example in source["examples"]:
-                category = infer_experiment1_category(example.question_type)
-                if counts[split][category] < targets[split]:
-                    gain += 1
-            if gain > best_gain:
-                best_gain = gain
-                best_split = split
-            elif gain == best_gain and gain > 0 and best_split is not None:
-                if deficits(split) > deficits(best_split):
-                    best_split = split
-        if best_split is None or best_gain <= 0:
-            continue
-        for example in source["examples"]:
-            category = infer_experiment1_category(example.question_type)
-            if counts[best_split][category] >= targets[best_split]:
-                continue
-            if example.question_id in used_questions:
-                continue
-            selected[best_split].append(example)
-            counts[best_split][category] += 1
-            used_questions.add(example.question_id)
-        used_sources.add(source_id)
-        if all(counts[split][category] >= targets[split] for split in ADAPTIVE_SPLITS for category in EXPERIMENT1_CATEGORIES):
-            break
-
+    by_source: dict[str, list[VQAExample]] = defaultdict(list)
+    for example in eligible:
+        by_source[example.inputs[0].video_id].append(example)
+    diagnostics = adaptive_feasibility_diagnostics(eligible, config)
     shortages = {
-        split: {
-            category: targets[split] - counts[split][category]
-            for category in EXPERIMENT1_CATEGORIES
-            if counts[split][category] < targets[split]
+        category: {
+            "required": diagnostics["required_counts_per_category"][category],
+            "capped_upper_bound": diagnostics["capped_per_category_upper_bounds"].get(category, 0),
         }
-        for split in ADAPTIVE_SPLITS
+        for category in EXPERIMENT1_CATEGORIES
+        if diagnostics["capped_per_category_upper_bounds"].get(category, 0)
+        < diagnostics["required_counts_per_category"][category]
     }
-    shortages = {split: value for split, value in shortages.items() if value}
     if shortages:
-        raise ValueError(f"Could not construct requested source-video-disjoint adaptive splits; shortages={shortages}.")
+        raise ValueError(f"Adaptive split request is infeasible before allocation; shortages={shortages}; diagnostics={diagnostics}")
+
+    source_records: list[dict[str, Any]] = []
+    for source_video_id, source_examples in by_source.items():
+        by_category: dict[str, list[VQAExample]] = {
+            category: sorted(
+                [item for item in source_examples if infer_experiment1_category(item.question_type) == category],
+                key=lambda item: (item.question_type, item.question_id),
+            )
+            for category in EXPERIMENT1_CATEGORIES
+        }
+        category_counts = Counter(
+            {
+                category: len(items)
+                for category, items in by_category.items()
+                if items
+            }
+        )
+        source_records.append(
+            {
+                "source_video_id": source_video_id,
+                "examples_by_category": by_category,
+                "category_counts": category_counts,
+                "participant_id": source_examples[0].inputs[0].participant_id if source_examples else "",
+                "duration": sum((bounded_duration_seconds(item) or 0.0) for item in source_examples) / max(1, len(source_examples)),
+                "num_categories": sum(1 for items in by_category.values() if items),
+                "total_examples": len(source_examples),
+            }
+        )
+    allocation = _deficit_aware_allocate_sources(source_records, targets, config, diagnostics)
+    if allocation is None:
+        failure = _allocation_failure_diagnostics(source_records, targets, config, diagnostics)
+        raise ValueError(f"Could not construct requested source-video-disjoint adaptive splits; diagnostics={failure}")
+    selected = allocation
     for split in ADAPTIVE_SPLITS:
         selected[split].sort(key=lambda item: (infer_experiment1_category(item.question_type) or "", item.question_type, item.question_id))
     summary = adaptive_split_summary(selected, eligible, config)
+    summary["feasibility_diagnostics"] = diagnostics
     overlaps = summary["source_video_overlap_counts"]
     if any(value != 0 for value in overlaps.values()):
         raise AssertionError(f"Source-video overlap detected: {overlaps}")
+    for split, per_category in summary["splits"].items():
+        expected = targets[split]
+        if per_category["num_examples"] != expected * len(EXPERIMENT1_CATEGORIES):
+            raise AssertionError(f"{split} has wrong total: {per_category['num_examples']}")
+        for category in EXPERIMENT1_CATEGORIES:
+            actual = int(per_category["by_category"].get(category, 0))
+            if actual != expected:
+                raise AssertionError(f"{split}/{category} has {actual}, expected {expected}")
     return selected, summary
+
+
+def adaptive_feasibility_diagnostics(
+    eligible: Sequence[VQAExample],
+    config: AdaptiveSplitConfig,
+) -> dict[str, Any]:
+    by_category = Counter(infer_experiment1_category(item.question_type) for item in eligible)
+    sources_by_category: dict[str, set[str]] = {category: set() for category in EXPERIMENT1_CATEGORIES}
+    by_source: dict[str, list[VQAExample]] = defaultdict(list)
+    for example in eligible:
+        category = infer_experiment1_category(example.question_type)
+        by_source[example.inputs[0].video_id].append(example)
+        if category in sources_by_category:
+            sources_by_category[category].add(example.inputs[0].video_id)
+    capped_upper: Counter[str] = Counter()
+    source_category_cardinality = Counter()
+    total_capped_capacity = 0
+    for source_examples in by_source.values():
+        categories = {
+            category: sum(1 for item in source_examples if infer_experiment1_category(item.question_type) == category)
+            for category in EXPERIMENT1_CATEGORIES
+        }
+        source_category_cardinality[sum(1 for value in categories.values() if value)] += 1
+        total_capped_capacity += min(config.max_questions_per_source_video, len(source_examples))
+        for category, count in categories.items():
+            capped_upper[category] += min(config.max_questions_per_source_video, count)
+    required = config.train_per_category + config.development_per_category + config.test_per_category
+    return {
+        "eligible_questions": len(eligible),
+        "raw_eligible_questions_by_category": {category: int(by_category.get(category, 0)) for category in EXPERIMENT1_CATEGORIES},
+        "unique_source_videos_by_category": {category: len(sources_by_category[category]) for category in EXPERIMENT1_CATEGORIES},
+        "capped_per_category_upper_bounds": {category: int(capped_upper.get(category, 0)) for category in EXPERIMENT1_CATEGORIES},
+        "total_capped_capacity": int(total_capped_capacity),
+        "required_counts_per_category": {category: required for category in EXPERIMENT1_CATEGORIES},
+        "videos_by_number_of_represented_target_categories": dict(sorted(source_category_cardinality.items())),
+        "num_source_videos": len(by_source),
+    }
+
+
+def _target_deficits(counts: dict[str, Counter[str]], targets: dict[str, int]) -> dict[str, dict[str, int]]:
+    return {
+        split: {
+            category: max(0, targets[split] - int(counts[split][category]))
+            for category in EXPERIMENT1_CATEGORIES
+        }
+        for split in ADAPTIVE_SPLITS
+    }
+
+
+def _select_source_examples_for_split(
+    source: dict[str, Any],
+    split_deficits: dict[str, int],
+    *,
+    max_questions_per_source_video: int,
+    category_rarity_weights: dict[str, float],
+    seed: int,
+) -> list[VQAExample]:
+    selected: list[VQAExample] = []
+    used_by_category: Counter[str] = Counter()
+    while len(selected) < max_questions_per_source_video:
+        candidates = []
+        for category in EXPERIMENT1_CATEGORIES:
+            remaining_deficit = int(split_deficits.get(category, 0)) - used_by_category[category]
+            available = len(source["examples_by_category"].get(category, ())) - used_by_category[category]
+            if remaining_deficit <= 0 or available <= 0:
+                continue
+            tie = hashlib.sha1(f"{seed}:{source['source_video_id']}:{category}:{len(selected)}".encode("utf-8")).hexdigest()
+            candidates.append(
+                (
+                    category_rarity_weights.get(category, 1.0) * remaining_deficit,
+                    remaining_deficit,
+                    available,
+                    tie,
+                    category,
+                )
+            )
+        if not candidates:
+            break
+        category = max(candidates)[-1]
+        example = source["examples_by_category"][category][used_by_category[category]]
+        selected.append(example)
+        used_by_category[category] += 1
+    return selected
+
+
+def _remaining_capacity_bounds(
+    remaining_sources: Sequence[dict[str, Any]],
+    *,
+    max_questions_per_source_video: int,
+) -> tuple[Counter[str], int]:
+    per_category: Counter[str] = Counter()
+    total = 0
+    for source in remaining_sources:
+        total += min(max_questions_per_source_video, int(source["total_examples"]))
+        for category in EXPERIMENT1_CATEGORIES:
+            per_category[category] += min(
+                max_questions_per_source_video,
+                len(source["examples_by_category"].get(category, ())),
+            )
+    return per_category, total
+
+
+def _source_capacity_bounds(
+    source: dict[str, Any],
+    *,
+    max_questions_per_source_video: int,
+) -> tuple[Counter[str], int]:
+    per_category: Counter[str] = Counter()
+    total = min(max_questions_per_source_video, int(source["total_examples"]))
+    for category in EXPERIMENT1_CATEGORIES:
+        per_category[category] = min(
+            max_questions_per_source_video,
+            len(source["examples_by_category"].get(category, ())),
+        )
+    return per_category, total
+
+
+def _passes_capacity_guard_with_bounds(
+    counts: dict[str, Counter[str]],
+    targets: dict[str, int],
+    remaining_per_category: Counter[str],
+    remaining_total: int,
+) -> bool:
+    deficits = _target_deficits(counts, targets)
+    total_deficit = 0
+    category_total_deficit: Counter[str] = Counter()
+    for split in ADAPTIVE_SPLITS:
+        split_total = sum(deficits[split].values())
+        total_deficit += split_total
+        if split_total > remaining_total:
+            return False
+        for category in EXPERIMENT1_CATEGORIES:
+            category_total_deficit[category] += deficits[split][category]
+            if deficits[split][category] > remaining_per_category[category]:
+                return False
+    if total_deficit > remaining_total:
+        return False
+    for category in EXPERIMENT1_CATEGORIES:
+        if category_total_deficit[category] > remaining_per_category[category]:
+            return False
+    return True
+
+
+def _score_assignment(
+    selected: Sequence[VQAExample],
+    split: str,
+    counts: dict[str, Counter[str]],
+    targets: dict[str, int],
+    category_rarity_weights: dict[str, float],
+    source: dict[str, Any],
+    *,
+    jitter: float,
+) -> float:
+    if not selected:
+        return float("-inf")
+    selection_counts = Counter(infer_experiment1_category(item.question_type) for item in selected)
+    score = 0.0
+    for category, amount in selection_counts.items():
+        deficit = max(0, targets[split] - counts[split][category])
+        normalized = deficit / max(1.0, float(targets[split]))
+        score += amount * normalized * category_rarity_weights.get(category, 1.0)
+        if amount > deficit:
+            score -= 100.0 * (amount - deficit)
+    unused_selected_capacity = max(0, len(selected) - sum(selection_counts.values()))
+    score -= 0.01 * unused_selected_capacity
+    score += 0.05 * int(source["num_categories"])
+    score += jitter
+    return score
+
+
+def _allocation_complete(counts: dict[str, Counter[str]], targets: dict[str, int]) -> bool:
+    return all(
+        int(counts[split][category]) >= int(targets[split])
+        for split in ADAPTIVE_SPLITS
+        for category in EXPERIMENT1_CATEGORIES
+    )
+
+
+def _deficit_aware_allocate_sources(
+    source_records: Sequence[dict[str, Any]],
+    targets: dict[str, int],
+    config: AdaptiveSplitConfig,
+    diagnostics: dict[str, Any],
+) -> dict[str, list[VQAExample]] | None:
+    capped = diagnostics["capped_per_category_upper_bounds"]
+    category_rarity_weights = {
+        category: 1.0 + diagnostics["required_counts_per_category"][category] / max(1.0, float(capped.get(category, 0)))
+        for category in EXPERIMENT1_CATEGORIES
+    }
+    attempts = 96
+    best_selected: dict[str, list[VQAExample]] | None = None
+    best_remaining = math.inf
+    for attempt in range(attempts):
+        rng = random.Random(f"{config.seed}:{attempt}")
+        remaining = list(source_records)
+        remaining.sort(
+            key=lambda source: (
+                -sum(category_rarity_weights.get(category, 1.0) * min(config.max_questions_per_source_video, count)
+                     for category, count in source["category_counts"].items()),
+                -int(source["num_categories"]),
+                source["participant_id"],
+                round(float(source["duration"]), 3),
+                rng.random(),
+                source["source_video_id"],
+            )
+        )
+        selected: dict[str, list[VQAExample]] = {name: [] for name in ADAPTIVE_SPLITS}
+        counts: dict[str, Counter[str]] = {name: Counter() for name in ADAPTIVE_SPLITS}
+        while remaining and not _allocation_complete(counts, targets):
+            deficits = _target_deficits(counts, targets)
+            best = None
+            all_remaining_per_category, all_remaining_total = _remaining_capacity_bounds(
+                remaining,
+                max_questions_per_source_video=config.max_questions_per_source_video,
+            )
+            for source_index, source in enumerate(remaining):
+                source_per_category, source_total = _source_capacity_bounds(
+                    source,
+                    max_questions_per_source_video=config.max_questions_per_source_video,
+                )
+                rest_per_category = Counter(all_remaining_per_category)
+                rest_per_category.subtract(source_per_category)
+                rest_total = all_remaining_total - source_total
+                for split in ADAPTIVE_SPLITS:
+                    chosen = _select_source_examples_for_split(
+                        source,
+                        deficits[split],
+                        max_questions_per_source_video=config.max_questions_per_source_video,
+                        category_rarity_weights=category_rarity_weights,
+                        seed=config.seed + attempt,
+                    )
+                    if not chosen:
+                        continue
+                    trial_counts = {name: Counter(counter) for name, counter in counts.items()}
+                    for example in chosen:
+                        category = infer_experiment1_category(example.question_type)
+                        trial_counts[split][category] += 1
+                    if any(trial_counts[split][category] > targets[split] for category in EXPERIMENT1_CATEGORIES):
+                        continue
+                    if not _passes_capacity_guard_with_bounds(trial_counts, targets, rest_per_category, rest_total):
+                        continue
+                    jitter_seed = f"{config.seed}:{attempt}:{source['source_video_id']}:{split}"
+                    jitter = int(hashlib.sha1(jitter_seed.encode("utf-8")).hexdigest()[:8], 16) / 16**8 * 1e-6
+                    score = _score_assignment(
+                        chosen,
+                        split,
+                        counts,
+                        targets,
+                        category_rarity_weights,
+                        source,
+                        jitter=jitter,
+                    )
+                    candidate = (score, -source_index, split, source_index, chosen)
+                    if best is None or candidate > best:
+                        best = candidate
+            if best is None:
+                break
+            _score, _neg_source_index, split, source_index, chosen = best
+            source = remaining.pop(source_index)
+            for example in chosen:
+                category = infer_experiment1_category(example.question_type)
+                selected[split].append(example)
+                counts[split][category] += 1
+            assert source["source_video_id"] not in {
+                item.inputs[0].video_id
+                for split_examples in selected.values()
+                for item in split_examples
+                if item not in chosen
+            }
+        remaining_deficit = sum(
+            max(0, targets[split] - counts[split][category])
+            for split in ADAPTIVE_SPLITS
+            for category in EXPERIMENT1_CATEGORIES
+        )
+        if remaining_deficit < best_remaining:
+            best_remaining = remaining_deficit
+            best_selected = selected
+        if remaining_deficit == 0:
+            return selected
+    return None
+
+
+def _allocation_failure_diagnostics(
+    source_records: Sequence[dict[str, Any]],
+    targets: dict[str, int],
+    config: AdaptiveSplitConfig,
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    remaining_per_category, total_remaining = _remaining_capacity_bounds(
+        source_records,
+        max_questions_per_source_video=config.max_questions_per_source_video,
+    )
+    return {
+        "feasibility_diagnostics": diagnostics,
+        "required_targets": targets,
+        "remaining_capacity_if_no_sources_used": {
+            "per_category": dict(remaining_per_category),
+            "total": total_remaining,
+        },
+        "note": "Independent per-category upper bounds are necessary diagnostics, not a joint-feasibility proof.",
+    }
 
 
 def adaptive_split_summary(
