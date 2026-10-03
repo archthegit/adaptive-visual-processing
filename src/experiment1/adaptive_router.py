@@ -435,7 +435,7 @@ def question_frame_weights(rows: Sequence[dict[str, Any]]) -> np.ndarray:
     return np.asarray([1.0 / counts[(row["question_id"], int(row["frame_count"]))] for row in rows], dtype=np.float32)
 
 
-def deterministic_weighted_resample_indices(rows: Sequence[dict[str, Any]], *, seed: int, scale: int = 32) -> np.ndarray:
+def deterministic_weighted_resample_indices(rows: Sequence[dict[str, Any]], *, seed: int, scale: int = 1) -> np.ndarray:
     weights = question_frame_weights(rows)
     scaled = weights / float(np.min(weights))
     counts = np.maximum(1, np.rint(scaled * scale).astype(np.int64))
@@ -446,6 +446,24 @@ def deterministic_weighted_resample_indices(rows: Sequence[dict[str, Any]], *, s
             keyed.append((key, idx))
     keyed.sort()
     return np.asarray([idx for _, idx in keyed], dtype=np.int64)
+
+
+def weighted_resampling_summary(rows: Sequence[dict[str, Any]], *, seed: int, feature_dim: int) -> dict[str, Any]:
+    indices = deterministic_weighted_resample_indices(rows, seed=seed)
+    grouped_original = Counter((row["question_id"], int(row["frame_count"])) for row in rows)
+    grouped_resampled: Counter[tuple[str, int]] = Counter()
+    for idx in indices:
+        row = rows[int(idx)]
+        grouped_resampled[(row["question_id"], int(row["frame_count"]))] += 1
+    return {
+        "original_training_rows": len(rows),
+        "resampled_training_rows": int(indices.size),
+        "resampled_feature_ram_bytes": int(indices.size * feature_dim * 4),
+        "scale": 1,
+        "original_rows_per_question_frame": {f"{qid}|{frame}": count for (qid, frame), count in sorted(grouped_original.items())},
+        "resampled_rows_per_question_frame": {f"{qid}|{frame}": count for (qid, frame), count in sorted(grouped_resampled.items())},
+        "equal_total_replicated_weight_per_question_frame": len(set(grouped_resampled.values())) <= 1,
+    }
 
 
 def train_router_models(dataset_dir: str | Path, output_dir: str | Path, *, seed: int, git_commit: str) -> dict[str, Any]:
@@ -497,6 +515,7 @@ def train_router_models(dataset_dir: str | Path, output_dir: str | Path, *, seed
         "grouping_unit": "source_video_id",
         "train_groups": sorted(set(map(str, groups))),
         "sample_weighting": "each question_id/frame_count receives equal total weight",
+        "weighted_resampling_summary": weighted_resampling_summary(train_rows, seed=seed, feature_dim=dataset.features.shape[1]),
         "safety_models": {},
         "quality_delta_regressors": {},
         "weighting_methods": {},
@@ -809,25 +828,46 @@ def cluster_bootstrap_ci(rows: Sequence[dict[str, Any]], metric: str, *, samples
     }
 
 
+def wilson_upper_bound(successes: int, n: int, *, confidence: float = 0.95) -> float:
+    if n <= 0:
+        return 1.0
+    # One-sided 95% normal quantile. Kept explicit to avoid a scipy dependency.
+    z = 1.6448536269514722 if confidence == 0.95 else 1.6448536269514722
+    phat = successes / n
+    denom = 1.0 + (z * z / n)
+    centre = phat + (z * z / (2.0 * n))
+    radius = z * math.sqrt((phat * (1.0 - phat) / n) + (z * z / (4.0 * n * n)))
+    return float(min(1.0, (centre + radius) / denom))
+
+
 def cluster_binary_upper_bound(rows: Sequence[dict[str, Any]], key: str, *, samples: int = 10000, seed: int = 1, confidence: float = 0.95) -> dict[str, Any]:
     by_question: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_question[str(row["question_id"])].append(row)
     qids = sorted(by_question)
     if not qids:
-        return {"observed": None, "upper": None, "n_questions": 0, "n_decisions": 0}
+        return {
+            "observed": None,
+            "question_any_observed": None,
+            "question_any_upper": None,
+            "upper": None,
+            "n_questions": 0,
+            "n_decisions": 0,
+            "confidence_procedure": "question-level any-unsafe Wilson one-sided upper bound",
+        }
     observed = float(np.mean([bool(row[key]) for row in rows]))
-    rng = np.random.default_rng(seed)
-    estimates = []
-    for _ in range(samples):
-        sampled = rng.choice(qids, size=len(qids), replace=True)
-        sampled_rows = [row for qid in sampled for row in by_question[qid]]
-        estimates.append(float(np.mean([bool(row[key]) for row in sampled_rows])))
+    question_indicators = [any(bool(row[key]) for row in by_question[qid]) for qid in qids]
+    unsafe_questions = int(sum(question_indicators))
+    question_any_observed = unsafe_questions / len(qids)
+    question_any_upper = wilson_upper_bound(unsafe_questions, len(qids), confidence=confidence)
     return {
         "observed": observed,
-        "upper": float(np.percentile(estimates, confidence * 100.0)),
+        "question_any_observed": float(question_any_observed),
+        "question_any_upper": question_any_upper,
+        "upper": question_any_upper,
         "n_questions": len(qids),
         "n_decisions": len(rows),
+        "confidence_procedure": "question-level any-unsafe Wilson one-sided upper bound",
     }
 
 
@@ -916,8 +956,9 @@ def calibrate_router_policy(
                         "safety_model": safety_name,
                         "quality_regressor": regressor_name,
                         "unsafe_probability_threshold": threshold,
-                        "development_unsafe_selection_rate": unsafe,
-                        "development_unsafe_selection_rate_upper_95": unsafe_upper,
+                        "development_question_frame_unsafe_selection_rate": unsafe,
+                        "development_question_any_unsafe_rate": unsafe_ci["question_any_observed"],
+                        "development_question_any_unsafe_rate_upper_95": unsafe_upper,
                         "development_coverage": coverage,
                         "development_mean_flop_reduction": flop,
                         "development_mean_logp_delta": logp,
@@ -942,8 +983,9 @@ def calibrate_router_policy(
             "safety_model": None,
             "quality_regressor": None,
             "unsafe_probability_threshold": None,
-            "development_unsafe_selection_rate": 0.0,
-            "development_unsafe_selection_rate_upper_95": 0.0,
+            "development_question_frame_unsafe_selection_rate": 0.0,
+            "development_question_any_unsafe_rate": 0.0,
+            "development_question_any_unsafe_rate_upper_95": 0.0,
             "development_coverage": 0.0,
             "development_mean_flop_reduction": 0.0,
             "development_mean_logp_delta": 0.0,
@@ -975,9 +1017,9 @@ def calibrate_router_policy(
         "unsafe_probability_threshold": selected["unsafe_probability_threshold"],
         "layer_order": list(map(int, layer_order)),
         "safety_definition": SAFETY_DEFINITION,
-        "development_objective": f"maximize mean FLOP reduction subject to clustered one-sided 95% unsafe-selection-rate upper bound <= {unsafe_rate_bound}",
+        "development_objective": f"maximize mean FLOP reduction subject to question-level any-unsafe one-sided 95% Wilson upper bound <= {unsafe_rate_bound}",
         "unsafe_rate_bound": unsafe_rate_bound,
-        "unsafe_confidence_procedure": "question-cluster bootstrap, one-sided 95% upper percentile",
+        "unsafe_confidence_procedure": "collapse each question to any unsafe routed frame-count decision, then compute one-sided 95% Wilson upper confidence bound",
         "achieved_development_metrics": summary,
         "train_manifest_hash": metadata["manifest_hashes"].get("train"),
         "development_manifest_hash": metadata["manifest_hashes"].get("development"),

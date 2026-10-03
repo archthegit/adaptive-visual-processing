@@ -24,6 +24,7 @@ from src.experiment1.adaptive_router import (
     train_router_models,
     uniform_route_row,
     validate_frozen_policy_integrity,
+    weighted_resampling_summary,
 )
 
 
@@ -241,12 +242,18 @@ def test_deterministic_weighted_resampling_equalizes_question_frame_influence():
     ] + [
         {"question_id": "q2", "frame_count": 8, "action_id": "b0"}
     ]
-    indices = deterministic_weighted_resample_indices(rows, seed=7, scale=2)
+    indices = deterministic_weighted_resample_indices(rows, seed=7)
     counts = {(rows[idx]["question_id"], rows[idx]["frame_count"]): 0 for idx in indices}
     for idx in indices:
         counts[(rows[idx]["question_id"], rows[idx]["frame_count"])] += 1
     assert counts[("q1", 8)] == counts[("q2", 8)]
-    assert deterministic_weighted_resample_indices(rows, seed=7, scale=2).tolist() == indices.tolist()
+    assert len(indices) == 8
+    assert deterministic_weighted_resample_indices(rows, seed=7).tolist() == indices.tolist()
+    summary = weighted_resampling_summary(rows, seed=7, feature_dim=64)
+    assert summary["original_training_rows"] == 5
+    assert summary["resampled_training_rows"] == 8
+    assert summary["resampled_feature_ram_bytes"] == 8 * 64 * 4
+    assert summary["equal_total_replicated_weight_per_question_frame"]
 
 
 def test_frame_counts_are_never_mixed_and_decisions_are_per_question_frame(tmp_path):
@@ -362,6 +369,29 @@ def test_clustered_unsafe_upper_bound_is_conservative():
     result = cluster_binary_upper_bound(rows, "unsafe", samples=100, seed=3)
     assert result["observed"] == pytest.approx(0.5)
     assert result["upper"] >= result["observed"]
+    assert result["question_any_observed"] == pytest.approx(0.5)
+
+
+def test_wilson_bound_nonzero_for_all_safe_and_decreases_with_more_questions():
+    few = [{"question_id": f"q{i}", "unsafe": False} for i in range(5)]
+    many = [{"question_id": f"q{i}", "unsafe": False} for i in range(50)]
+    few_result = cluster_binary_upper_bound(few, "unsafe")
+    many_result = cluster_binary_upper_bound(many, "unsafe")
+    assert few_result["observed"] == 0.0
+    assert few_result["question_any_upper"] > 0.0
+    assert many_result["question_any_upper"] < few_result["question_any_upper"]
+
+
+def test_any_unsafe_frame_marks_question_unsafe():
+    rows = [
+        {"question_id": "q1", "frame_count": 8, "unsafe": False},
+        {"question_id": "q1", "frame_count": 16, "unsafe": True},
+        {"question_id": "q2", "frame_count": 8, "unsafe": False},
+        {"question_id": "q2", "frame_count": 16, "unsafe": False},
+    ]
+    result = cluster_binary_upper_bound(rows, "unsafe")
+    assert result["observed"] == pytest.approx(0.25)
+    assert result["question_any_observed"] == pytest.approx(0.5)
 
 
 def test_frozen_policy_integrity_rejects_manifest_and_model_hash_drift(tmp_path):
@@ -419,12 +449,30 @@ def test_baselines_are_distinct_and_fixed_selected_from_train_only(tmp_path):
         "dense",
         "fixed_uniform",
         "fixed_random",
+        "fixed_prefix",
+        "fixed_suffix",
         "causal_learned_router",
         "causal_oracle",
         "global_oracle_upper_bound",
     }
     rows = load_router_dataset(tmp_path / "dataset").rows
     assert select_fixed_policy_training_only(rows)[0] in {4, 8}
+
+
+def test_no_eligible_compacting_policy_produces_dense_fallback():
+    dataset = _exhaustive_dataset()
+    decisions = make_decisions(
+        dataset,
+        split="development",
+        safety_probability=np.zeros(len(dataset.rows), dtype=np.float32),
+        predicted_logp=dataset.logp_delta,
+        threshold=0.0,
+        layer_order=[4, 8],
+    )
+    learned = [row for row in decisions if row["baseline"] == "causal_learned_router"]
+    assert learned
+    assert all(not row["compacted"] for row in learned)
+    assert all(row["flop_reduction"] == 0.0 for row in learned)
 
 
 def test_cluster_bootstrap_resamples_question_clusters():
