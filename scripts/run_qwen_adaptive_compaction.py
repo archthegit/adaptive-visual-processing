@@ -8,6 +8,7 @@ import math
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -139,16 +140,78 @@ def outputs_present(output_dir: Path, shard_index: int, num_shards: int) -> bool
     )
 
 
-def write_json_if_absent_or_validate(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+def _read_json_after_atomic_publish(path: Path, *, timeout_seconds: float = 10.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            return json.loads(path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError) as exc:
+            last_error = exc
+            time.sleep(0.02)
+    raise RuntimeError(f"Could not read complete JSON from {path}: {last_error}")
+
+
+def _write_json_atomic_fsync(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     try:
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-    except FileExistsError:
-        return json.loads(path.read_text())
-    with os.fdopen(fd, "w") as handle:
-        handle.write(encoded)
-    return payload
+        with os.fdopen(fd, "w") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def _acquire_config_lock(lock_path: Path, *, timeout_seconds: float = 10.0, stale_seconds: float = 60.0) -> int:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            return os.open(str(lock_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            try:
+                age = time.time() - lock_path.stat().st_mtime
+                if age > stale_seconds:
+                    lock_path.unlink()
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Timed out waiting for adaptive compaction run_config lock: {lock_path}")
+            time.sleep(0.02)
+
+
+def initialize_global_run_config(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Initialize shared run_config.json without exposing partial JSON to other shards."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_fd = _acquire_config_lock(lock_path)
+    try:
+        if path.exists():
+            return _read_json_after_atomic_publish(path)
+        _write_json_atomic_fsync(path, payload)
+        return payload
+    finally:
+        os.close(lock_fd)
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def write_json_if_changed(path: Path, payload: dict[str, Any]) -> None:
+    if path.exists():
+        try:
+            if json.loads(path.read_text()) == payload:
+                return
+        except json.JSONDecodeError:
+            pass
+    write_json(path, payload)
 
 
 def prepare_run_config(output_dir: Path, requested: dict[str, Any], *, overwrite: bool) -> dict[str, Any]:
@@ -171,7 +234,7 @@ def prepare_run_config(output_dir: Path, requested: dict[str, Any], *, overwrite
             )
         clean_outputs(output_dir, shard_index, num_shards)
         write_json(path, global_requested)
-        write_json(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
+        write_json_if_changed(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
         return global_requested
     if outputs_present(output_dir, requested["shard_index"], requested["num_shards"]) and not path.exists():
         raise RuntimeError(
@@ -183,13 +246,13 @@ def prepare_run_config(output_dir: Path, requested: dict[str, Any], *, overwrite
         mismatches = config_mismatches(saved, global_requested)
         if mismatches:
             raise RuntimeError(f"Refusing to resume adaptive compaction run; immutable configuration differs: {mismatches}")
-        write_json(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
+        write_json_if_changed(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
         return saved
-    saved = write_json_if_absent_or_validate(path, global_requested)
+    saved = initialize_global_run_config(path, global_requested)
     mismatches = config_mismatches(saved, global_requested)
     if mismatches:
         raise RuntimeError(f"Refusing to resume adaptive compaction run; immutable configuration differs: {mismatches}")
-    write_json(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
+    write_json_if_changed(shard_metadata_path(output_dir, shard_index, num_shards), shard_payload)
     return saved
 
 
@@ -382,6 +445,92 @@ def _file_sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _fingerprint_file(path: Path) -> dict[str, Any]:
+    return {"sha256": _file_sha256(path), "mtime_ns": path.stat().st_mtime_ns}
+
+
+def completed_output_files_from_records(records_file: Path) -> list[Path]:
+    if not records_file.exists():
+        return []
+    paths: list[Path] = [records_file]
+    for record in read_jsonl(records_file):
+        if record.get("status") != "complete":
+            continue
+        artifact_path = Path(record["artifact"])
+        paths.append(artifact_path)
+        if record.get("action_id") == "dense_custom":
+            paths.append(artifact_path.parent / "dense_equivalence_report.json")
+            try:
+                artifact = json.loads(artifact_path.read_text())
+            except Exception:
+                continue
+            for feature_meta in artifact.get("router_features") or []:
+                paths.append(Path(feature_meta["feature_file"]))
+    return sorted({path for path in paths}, key=lambda item: str(item))
+
+
+def fingerprint_completed_outputs(records_file: Path) -> dict[str, dict[str, Any]]:
+    return {str(path): _fingerprint_file(path) for path in completed_output_files_from_records(records_file)}
+
+
+def try_complete_resume_without_model(
+    *,
+    output_dir: Path,
+    run_config: dict[str, Any],
+    records: Sequence[dict[str, Any]],
+    shard_index: int,
+    num_shards: int,
+    compaction_layers: Sequence[int],
+    retention_fractions: Sequence[float],
+    seed: int,
+) -> dict[str, Any] | None:
+    completed = current_completed_records(output_dir, shard_index, num_shards)
+    if not records:
+        return {
+            "schema_version": ADAPTIVE_SCHEMA_VERSION,
+            "resume_completed_without_model": True,
+            "resumed_dense_artifacts": 0,
+            "resumed_action_artifacts": 0,
+        }
+    dense_count = 0
+    action_count = 0
+    for record in records:
+        qid = str(record["question_id"])
+        for frame_count in run_config["frame_counts"]:
+            dense_key = (qid, int(frame_count), "dense_custom")
+            if dense_key not in completed:
+                return None
+            dense = validate_resumed_dense_artifact(
+                dense_artifact_path(output_dir, qid, int(frame_count)),
+                run_config=run_config,
+                output_dir=output_dir,
+                expected_feature_layers=compaction_layers,
+            )
+            dense_count += 1
+            routes = expected_routes_for_frame(
+                question_id=qid,
+                frame_count=int(frame_count),
+                native_temporal_cell_count=int(dense["native_temporal_cell_count"]),
+                compaction_layers=compaction_layers,
+                retention_fractions=retention_fractions,
+                seed=seed,
+            )
+            for route in routes:
+                key = (qid, int(frame_count), route.action_id)
+                if key not in completed:
+                    return None
+                validate_resumed_action_artifact(action_artifact_path(output_dir, qid, int(frame_count), route.action_id), run_config)
+                action_count += 1
+    return {
+        "schema_version": ADAPTIVE_SCHEMA_VERSION,
+        "resume_completed_without_model": True,
+        "resumed_dense_artifacts": dense_count,
+        "resumed_action_artifacts": action_count,
+        "num_shard_records": len(records),
+        "run_config": run_config,
+    }
+
+
 def validate_completed_smoke_resume(
     *,
     output_dir: Path,
@@ -393,8 +542,7 @@ def validate_completed_smoke_resume(
     if not records_file.exists():
         return {"passed": False, "reason": "records file missing"}
     records = [record for record in read_jsonl(records_file) if record.get("status") == "complete"]
-    artifact_paths = [Path(record["artifact"]) for record in records]
-    before = {str(path): {"sha256": _file_sha256(path), "mtime_ns": path.stat().st_mtime_ns} for path in artifact_paths}
+    before = fingerprint_completed_outputs(records_file)
     dense_count = 0
     action_count = 0
     for record in records:
@@ -405,7 +553,7 @@ def validate_completed_smoke_resume(
         else:
             validate_resumed_action_artifact(path, run_config)
             action_count += 1
-    after = {str(path): {"sha256": _file_sha256(path), "mtime_ns": path.stat().st_mtime_ns} for path in artifact_paths}
+    after = fingerprint_completed_outputs(records_file)
     mismatch = config_mismatches(run_config, {**run_config, "frame_counts": [999]})
     unchanged = before == after
     return {
@@ -552,13 +700,8 @@ def make_action_artifact(
     }
 
 
-def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
-    from scripts.run_experiment1 import current_git_commit, frame_batches_for_example, load_examples_by_id, load_manifest
-    from scripts.run_qwen_temporal_handoff_smoke import _build_layout, _prepare_inputs, _stock_logits
-    from src.experiment1.answer_scoring import score_answer_choice_logits
-    from src.experiment1.resolution import get_resolution_config
-    from src.experiment1.temporal_handoff import dense_equivalence_report
-    from src.models.qwen import Qwen25VLWrapper, QwenConfig
+def run_adaptive_compaction(args: argparse.Namespace, *, _skip_smoke_resume_validation: bool = False) -> dict[str, Any]:
+    from scripts.run_experiment1 import current_git_commit, load_manifest
 
     if args.split == "test":
         raise RuntimeError("The test split must not be used before router and thresholds are frozen.")
@@ -571,12 +714,33 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
         manifest_records = manifest_records[:1]
         args.frame_counts = [8]
     sharded = shard_records(manifest_records, num_shards=args.num_shards, shard_index=args.shard_index)
-    examples = load_examples_by_id(args.questions_dir, sharded)
     git_commit = current_git_commit()
     requested = make_run_config(args, git_commit)
     run_config = prepare_run_config(output, requested, overwrite=args.overwrite)
     completed = current_completed_records(output, args.shard_index, args.num_shards) if not args.overwrite else set()
     records = records_path(output, args.shard_index, args.num_shards)
+    if not args.overwrite:
+        complete_resume = try_complete_resume_without_model(
+            output_dir=output,
+            run_config=run_config,
+            records=sharded,
+            shard_index=args.shard_index,
+            num_shards=args.num_shards,
+            compaction_layers=args.compaction_layers,
+            retention_fractions=args.retention_fractions,
+            seed=args.seed,
+        )
+        if complete_resume is not None:
+            return complete_resume
+
+    from scripts.run_experiment1 import frame_batches_for_example, load_examples_by_id
+    from scripts.run_qwen_temporal_handoff_smoke import _build_layout, _prepare_inputs, _stock_logits
+    from src.experiment1.answer_scoring import score_answer_choice_logits
+    from src.experiment1.resolution import get_resolution_config
+    from src.experiment1.temporal_handoff import dense_equivalence_report
+    from src.models.qwen import Qwen25VLWrapper, QwenConfig
+
+    examples = load_examples_by_id(args.questions_dir, sharded)
     resolution = get_resolution_config(args.resolution_config)
     model = Qwen25VLWrapper(QwenConfig(model_id=args.model_id, max_new_tokens=1, attn_implementation="sdpa"))
     model._load()
@@ -909,19 +1073,37 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
         "run_config": run_config,
     }
     write_json(summary_path(output, args.shard_index, args.num_shards), summary)
-    if args.smoke:
+    if args.smoke and not _skip_smoke_resume_validation:
         smoke_validation["checks"]["cached_prefix_vs_full_prefix"] = {
             "passed": bool(smoke_validation["cached_full_comparisons"])
             and all(item.get("passed") for item in smoke_validation["cached_full_comparisons"])
             and {item["layer"] for item in smoke_validation["cached_full_comparisons"]} == set(args.compaction_layers),
             "num_comparisons": len(smoke_validation["cached_full_comparisons"]),
         }
-        smoke_validation["checks"]["resume_validation"] = validate_completed_smoke_resume(
+        resume_records = records_path(output, args.shard_index, args.num_shards)
+        before_resume = fingerprint_completed_outputs(resume_records)
+        second_args = argparse.Namespace(**vars(args))
+        second_args.overwrite = False
+        second_summary = run_adaptive_compaction(second_args, _skip_smoke_resume_validation=True)
+        after_resume = fingerprint_completed_outputs(resume_records)
+        validation_only = validate_completed_smoke_resume(
             output_dir=output,
             run_config=run_config,
             shard_index=args.shard_index,
             num_shards=args.num_shards,
         )
+        smoke_validation["checks"]["resume_validation"] = {
+            "passed": bool(second_summary.get("resume_completed_without_model"))
+            and before_resume == after_resume
+            and validation_only.get("passed") is True,
+            "normal_runner_resume_path_entered": bool(second_summary.get("resume_completed_without_model")),
+            "model_loading_and_inference_skipped": bool(second_summary.get("resume_completed_without_model")),
+            "resumed_dense_artifacts": int(second_summary.get("resumed_dense_artifacts", 0)),
+            "resumed_action_artifacts": int(second_summary.get("resumed_action_artifacts", 0)),
+            "artifact_hashes_and_mtimes_unchanged": before_resume == after_resume,
+            "fingerprinted_files": sorted(before_resume),
+            "validation_only": validation_only,
+        }
         smoke_validation["passed"] = all(
             bool(value.get("passed")) for value in smoke_validation["checks"].values() if isinstance(value, dict)
         )

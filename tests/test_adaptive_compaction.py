@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -22,7 +24,14 @@ from src.experiment1.temporal_handoff import (
     run_dense_decoder_with_prefix_cache,
 )
 from scripts.run_qwen_adaptive_compaction import config_mismatches, validate_resumed_dense_artifact
-from scripts.run_qwen_adaptive_compaction import prepare_run_config, shard_metadata_path
+from scripts.run_qwen_adaptive_compaction import (
+    action_artifact_path,
+    dense_artifact_path,
+    prepare_run_config,
+    records_path,
+    run_adaptive_compaction,
+    shard_metadata_path,
+)
 
 
 def _example(qid: str, qtype: str, video: str, participant: str = "P01") -> VQAExample:
@@ -300,12 +309,217 @@ def test_shared_output_directory_rejects_changed_num_shards(tmp_path):
         prepare_run_config(tmp_path, dict(requested), overwrite=False)
 
 
+def test_concurrent_matching_run_config_initialization_succeeds(tmp_path):
+    base = {
+        "schema_version": "x",
+        "model_id": "qwen",
+        "resolution_config": "medium",
+        "sampling_mode": "adaptive_fixed_count",
+        "sampling_policy": "adaptive_fixed_center_frames_exact_count",
+        "frame_counts": [8, 16, 32],
+        "compaction_layers": [4, 8],
+        "retention_fractions": [0.5],
+        "condition": "physical_hard_deletion",
+        "seed": 1,
+        "num_shards": 4,
+        "git_commit": "abc",
+    }
+
+    def initialize(index: int):
+        payload = dict(base)
+        payload["shard_index"] = index
+        return prepare_run_config(tmp_path, payload, overwrite=False)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(initialize, range(4)))
+
+    assert all(result == results[0] for result in results)
+    assert json.loads((tmp_path / "run_config.json").read_text()) == results[0]
+
+
+def test_concurrent_conflicting_run_config_initialization_fails(tmp_path):
+    base = {
+        "schema_version": "x",
+        "model_id": "qwen",
+        "resolution_config": "medium",
+        "sampling_mode": "adaptive_fixed_count",
+        "sampling_policy": "adaptive_fixed_center_frames_exact_count",
+        "frame_counts": [8],
+        "compaction_layers": [4],
+        "retention_fractions": [0.5],
+        "condition": "physical_hard_deletion",
+        "seed": 1,
+        "num_shards": 2,
+        "git_commit": "abc",
+    }
+
+    def initialize(seed: int):
+        payload = dict(base)
+        payload["seed"] = seed
+        payload["shard_index"] = seed - 1
+        return prepare_run_config(tmp_path, payload, overwrite=False)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(initialize, 1), pool.submit(initialize, 2)]
+        results = []
+        errors = []
+        for future in futures:
+            try:
+                results.append(future.result())
+            except RuntimeError as exc:
+                errors.append(str(exc))
+
+    assert len(results) == 1
+    assert len(errors) == 1
+    assert "seed" in errors[0]
+
+
 def test_shard_assignments_cover_manifest_once_without_overlap():
     records = [{"question_id": f"q{i}"} for i in range(31)]
     shards = [shard_records(records, num_shards=4, shard_index=index) for index in range(4)]
     flattened = [record["question_id"] for shard in shards for record in shard]
     assert sorted(flattened) == sorted(record["question_id"] for record in records)
     assert len(flattened) == len(set(flattened))
+
+
+def test_completed_resume_returns_before_model_video_or_inference(monkeypatch, tmp_path):
+    torch = pytest.importorskip("torch")
+    qid = "q-resume"
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(json.dumps({"question_id": qid}) + "\n")
+    run_config = {
+        "schema_version": "x",
+        "model_id": "qwen",
+        "resolution_config": "medium",
+        "sampling_mode": "adaptive_fixed_count",
+        "sampling_policy": "adaptive_fixed_center_frames_exact_count",
+        "frame_counts": [8],
+        "compaction_layers": [4],
+        "retention_fractions": [0.5],
+        "condition": "physical_hard_deletion",
+        "seed": 1,
+        "num_shards": 1,
+        "git_commit": "abc",
+        "quality_forward_repetitions": 1,
+    }
+    (tmp_path / "run_config.json").write_text(json.dumps(run_config))
+    feature_dir = tmp_path / "features" / qid / "frames_8"
+    feature_dir.mkdir(parents=True)
+    feature = {
+        "layer": 4,
+        "frame_count": 8,
+        "native_temporal_cell_ids": [0, 1],
+        "cell_mean_residual": torch.ones((2, 4)),
+        "question_mean_residual": torch.ones((4,)),
+    }
+    feature_path = feature_dir / "layer_4.pt"
+    torch.save(feature, feature_path)
+    dense = {
+        "question_id": qid,
+        "frame_count": 8,
+        "condition": "dense_custom",
+        "native_temporal_cell_count": 2,
+        "correct_choice_log_probability": -1.0,
+        "answer_margin": 0.1,
+        "predicted_idx": 0,
+        "original_sequence_length": 10,
+        "estimated_attention_flops": 100,
+        "router_features": [
+            {
+                "layer": 4,
+                "frame_count": 8,
+                "feature_file": str(feature_path),
+                "dtype": "torch.float32",
+                "cell_mean_residual_shape": [2, 4],
+                "question_mean_residual_shape": [4],
+            }
+        ],
+        "status": "complete",
+        "git_commit": "abc",
+        "run_config": run_config,
+    }
+    dense_path = dense_artifact_path(tmp_path, qid, 8)
+    dense_path.parent.mkdir(parents=True)
+    dense_path.write_text(json.dumps(dense))
+    (dense_path.parent / "dense_equivalence_report.json").write_text('{"passed": true}')
+    records = records_path(tmp_path, 0, 1)
+    records.write_text(
+        json.dumps({"question_id": qid, "frame_count": 8, "action_id": "dense_custom", "status": "complete", "artifact": str(dense_path)})
+        + "\n"
+    )
+    for route in candidate_routes(
+        question_id=qid,
+        frame_count=8,
+        compaction_layer=4,
+        native_temporal_cell_count=2,
+        retention_fraction=0.5,
+        seed=1,
+    ):
+        action = {
+            "question_id": qid,
+            "source_video_id": "v",
+            "split": "train",
+            "frame_count": 8,
+            "compaction_layer": 4,
+            "native_temporal_cell_count": 2,
+            "retention_fraction": 0.5,
+            "retained_cell_ids": list(route.retained_cells),
+            "route_family": route.route_family,
+            "correct_choice_log_probability": -1.1,
+            "delta_correct_choice_log_probability_from_dense": -0.1,
+            "answer_margin": 0.0,
+            "delta_answer_margin_from_dense": -0.1,
+            "predicted_answer": "A",
+            "correct": True,
+            "prediction_changed": False,
+            "original_sequence_length": 10,
+            "compacted_sequence_length": 8,
+            "active_sequence_length_by_layer": [],
+            "estimated_attention_flops": 80,
+            "paired_flop_reduction_from_dense": 0.2,
+            "memory_token_count": 0,
+            "status": "complete",
+            "git_commit": "abc",
+            "run_config": run_config,
+        }
+        out = action_artifact_path(tmp_path, qid, 8, route.action_id)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(action))
+        with records.open("a") as handle:
+            handle.write(
+                json.dumps({"question_id": qid, "frame_count": 8, "action_id": route.action_id, "status": "complete", "artifact": str(out)})
+                + "\n"
+            )
+
+    from scripts import run_experiment1
+
+    monkeypatch.setattr(run_experiment1, "current_git_commit", lambda: "abc")
+    monkeypatch.setattr(run_experiment1, "load_examples_by_id", lambda *_args, **_kwargs: pytest.fail("video/example loading should be skipped"))
+    args = SimpleNamespace(
+        questions_dir=str(tmp_path / "questions"),
+        mp4_dir=str(tmp_path / "mp4s"),
+        manifest=str(manifest),
+        split="train",
+        output_dir=str(tmp_path),
+        model_id="qwen",
+        resolution_config="medium",
+        frame_counts=[8],
+        compaction_layers=[4],
+        retention_fractions=[0.5],
+        seed=1,
+        num_shards=1,
+        shard_index=0,
+        limit=None,
+        question_id=None,
+        smoke=False,
+        overwrite=False,
+    )
+
+    summary = run_adaptive_compaction(args)
+
+    assert summary["resume_completed_without_model"] is True
+    assert summary["resumed_dense_artifacts"] == 1
+    assert summary["resumed_action_artifacts"] == 2
 
 
 def test_validate_resumed_dense_artifact_requires_finite_router_features(tmp_path):
