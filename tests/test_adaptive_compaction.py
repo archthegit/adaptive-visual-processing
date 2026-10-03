@@ -20,7 +20,7 @@ from src.experiment1.temporal_handoff import (
     run_custom_decoder_prefill,
     run_dense_decoder_with_prefix_cache,
 )
-from scripts.run_qwen_adaptive_compaction import config_mismatches
+from scripts.run_qwen_adaptive_compaction import config_mismatches, validate_resumed_dense_artifact
 
 
 def _example(qid: str, qtype: str, video: str, participant: str = "P01") -> VQAExample:
@@ -192,6 +192,15 @@ def test_cached_prefix_matches_full_prefix_compaction():
     assert torch.allclose(full.logits, cached.logits)
     assert dense.final_hidden_states.shape[1] == 12
     assert cached.final_hidden_states.shape[1] < dense.final_hidden_states.shape[1]
+    assert [item.layer for item in cached.instrumentation] == [0, 1, 2, 3]
+    assert cached.instrumentation[1].sequence_length_in == 12
+    assert cached.instrumentation[1].sequence_length_out == cached.instrumentation[2].sequence_length_in
+    assert cached.instrumentation[1].compaction_applied_after_layer is True
+    expected_flops = (
+        sum(item.estimated_qk_flops + item.estimated_av_flops for item in dense.instrumentation[:2])
+        + sum(item.estimated_qk_flops + item.estimated_av_flops for item in cached.instrumentation[2:])
+    )
+    assert cached.total_estimated_attention_flops == expected_flops
 
 
 def test_router_features_have_expected_shape_and_finite_values():
@@ -239,3 +248,43 @@ def test_immutable_config_rejection_and_compact_artifact_schema():
     artifact["retained_cell_ids"] = [1, 1]
     with pytest.raises(ValueError, match="duplicates"):
         validate_compact_action_artifact(artifact)
+
+
+def test_validate_resumed_dense_artifact_requires_finite_router_features(tmp_path):
+    torch = pytest.importorskip("torch")
+    run_config = {"schema_version": "x", "git_commit": "abc"}
+    artifact_dir = tmp_path / "artifacts" / "q" / "frames_8"
+    feature_dir = tmp_path / "features" / "q" / "frames_8"
+    artifact_dir.mkdir(parents=True)
+    feature_dir.mkdir(parents=True)
+    feature = {
+        "layer": 8,
+        "native_temporal_cell_ids": [0, 1],
+        "cell_mean_residual": torch.ones((2, 4)),
+        "question_mean_residual": torch.ones((4,)),
+    }
+    feature_path = feature_dir / "layer_8.pt"
+    torch.save(feature, feature_path)
+    dense = {
+        "question_id": "q",
+        "frame_count": 8,
+        "condition": "dense_custom",
+        "native_temporal_cell_count": 2,
+        "correct_choice_log_probability": -1.0,
+        "answer_margin": 0.1,
+        "router_features": [{"layer": 8, "feature_file": str(feature_path)}],
+        "status": "complete",
+        "git_commit": "abc",
+        "run_config": run_config,
+    }
+    dense_path = artifact_dir / "dense_custom.json"
+    dense_path.write_text(__import__("json").dumps(dense))
+    (artifact_dir / "dense_equivalence_report.json").write_text('{"passed": true}')
+
+    loaded = validate_resumed_dense_artifact(dense_path, run_config=run_config, output_dir=tmp_path)
+    assert loaded["question_id"] == "q"
+
+    feature["cell_mean_residual"][0, 0] = float("nan")
+    torch.save(feature, feature_path)
+    with pytest.raises(RuntimeError, match="non-finite"):
+        validate_resumed_dense_artifact(dense_path, run_config=run_config, output_dir=tmp_path)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import sys
 from pathlib import Path
@@ -28,6 +29,7 @@ from src.experiment1.temporal_handoff import (
     qwen_decoder_stack,
     qwen_multimodal_decoder_inputs,
     run_compacted_decoder_from_prefix_cache,
+    run_custom_decoder_prefill,
     run_dense_decoder_with_prefix_cache,
     temporal_regions_from_layout,
     write_json,
@@ -41,6 +43,7 @@ IMMUTABLE_CONFIG_FIELDS = (
     "resolution_config",
     "sampling_mode",
     "frame_counts",
+    "sampling_policy",
     "compaction_layers",
     "retention_fractions",
     "condition",
@@ -130,6 +133,11 @@ def prepare_run_config(output_dir: Path, requested: dict[str, Any], *, overwrite
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "run_config.json"
     if overwrite:
+        if (output_dir / "artifacts").exists() or (output_dir / "features").exists():
+            raise RuntimeError(
+                "--overwrite refuses to clean adaptive-compaction artifacts/features in place. "
+                "Use a new output directory to avoid mixing stale action or feature artifacts."
+            )
         clean_outputs(output_dir, requested["shard_index"], requested["num_shards"])
         write_json(path, requested)
         return requested
@@ -170,12 +178,82 @@ def validate_resumed_action_artifact(path: Path, run_config: dict[str, Any]) -> 
     return artifact
 
 
+def validate_router_feature_file(path: Path, *, expected_layer: int, expected_cell_count: int) -> None:
+    if not path.exists() or path.stat().st_size <= 0:
+        raise RuntimeError(f"Router feature file is missing or empty: {path}")
+    import torch
+
+    payload = torch.load(path, map_location="cpu")
+    if int(payload.get("layer")) != int(expected_layer):
+        raise RuntimeError(f"Router feature layer mismatch in {path}.")
+    cell_ids = payload.get("native_temporal_cell_ids") or []
+    if len(cell_ids) != expected_cell_count:
+        raise RuntimeError(f"Router feature native-cell count mismatch in {path}.")
+    cell_mean = payload.get("cell_mean_residual")
+    question_mean = payload.get("question_mean_residual")
+    if cell_mean is None or question_mean is None:
+        raise RuntimeError(f"Router feature tensors are missing in {path}.")
+    if list(cell_mean.shape)[0] != expected_cell_count:
+        raise RuntimeError(f"Router cell feature shape mismatch in {path}: {tuple(cell_mean.shape)}")
+    if not torch.isfinite(cell_mean).all() or not torch.isfinite(question_mean).all():
+        raise RuntimeError(f"Router features contain non-finite values in {path}.")
+
+
+def validate_resumed_dense_artifact(
+    path: Path,
+    *,
+    run_config: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    if not path.exists() or path.stat().st_size <= 0:
+        raise RuntimeError(f"Completed dense artifact is missing or empty: {path}")
+    artifact = json.loads(path.read_text())
+    required = {
+        "question_id",
+        "frame_count",
+        "condition",
+        "native_temporal_cell_count",
+        "correct_choice_log_probability",
+        "answer_margin",
+        "router_features",
+        "status",
+        "git_commit",
+        "run_config",
+    }
+    missing = sorted(required - set(artifact))
+    if missing:
+        raise RuntimeError(f"Dense artifact is missing required fields: {missing}")
+    if artifact["condition"] != "dense_custom" or artifact["status"] != "complete":
+        raise RuntimeError("Dense artifact is not a complete dense_custom artifact.")
+    mismatches = config_mismatches(artifact["run_config"], run_config)
+    if mismatches:
+        raise RuntimeError(f"Dense artifact run_config differs from current run: {mismatches}")
+    eq_path = path.parent / "dense_equivalence_report.json"
+    if not eq_path.exists() or eq_path.stat().st_size <= 0:
+        raise RuntimeError(f"Dense equivalence report is missing or empty: {eq_path}")
+    eq = json.loads(eq_path.read_text())
+    if eq.get("passed") is not True:
+        raise RuntimeError(f"Dense equivalence report did not pass: {eq_path}")
+    expected_cells = int(artifact["native_temporal_cell_count"])
+    for feature_meta in artifact.get("router_features") or []:
+        feature_file = Path(feature_meta["feature_file"])
+        if not feature_file.exists() and not feature_file.is_absolute():
+            feature_file = output_dir / feature_file
+        validate_router_feature_file(
+            feature_file,
+            expected_layer=int(feature_meta["layer"]),
+            expected_cell_count=expected_cells,
+        )
+    return artifact
+
+
 def make_run_config(args: argparse.Namespace, git_commit: str) -> dict[str, Any]:
     return {
         "schema_version": ADAPTIVE_SCHEMA_VERSION,
         "model_id": args.model_id,
         "resolution_config": args.resolution_config,
-        "sampling_mode": "cross_model_8",
+        "sampling_mode": "adaptive_fixed_count",
+        "sampling_policy": "adaptive_fixed_center_frames_exact_count",
         "frame_counts": list(args.frame_counts),
         "compaction_layers": list(args.compaction_layers),
         "retention_fractions": list(args.retention_fractions),
@@ -189,6 +267,37 @@ def make_run_config(args: argparse.Namespace, git_commit: str) -> dict[str, Any]
     }
 
 
+def _score_from_logits(logits: Any, tokenizer: Any, correct_idx: int, num_choices: int) -> dict[str, Any]:
+    from src.experiment1.answer_scoring import score_answer_choice_logits
+
+    return score_answer_choice_logits(logits[0, -1], tokenizer, correct_idx, num_choices).to_json_dict()
+
+
+def _pred(scores: dict[str, Any]) -> int:
+    return int(max(range(len(scores["choice_logits"])), key=lambda idx: float(scores["choice_logits"][idx])))
+
+
+def _logit_max_abs(a: Any, b: Any) -> float:
+    import torch
+
+    return float(torch.max(torch.abs(a.detach().float() - b.detach().float())).item())
+
+
+def validate_manifest_leakage_summary(manifest_path: str | Path) -> dict[str, Any]:
+    summary_path = Path(manifest_path).with_name("summary.json")
+    if not summary_path.exists():
+        return {"passed": False, "reason": f"summary.json not found next to {manifest_path}"}
+    payload = json.loads(summary_path.read_text())
+    source = payload.get("source_video_overlap_counts") or {}
+    questions = payload.get("question_id_overlap_counts") or {}
+    passed = bool(source) and all(int(value) == 0 for value in source.values()) and all(int(value) == 0 for value in questions.values())
+    return {
+        "passed": passed,
+        "source_video_overlap_counts": source,
+        "question_id_overlap_counts": questions,
+    }
+
+
 def active_lengths(result: Any) -> list[dict[str, int]]:
     return [
         {
@@ -198,6 +307,31 @@ def active_lengths(result: Any) -> list[dict[str, int]]:
         }
         for item in result.instrumentation
     ]
+
+
+def expected_routes_for_frame(
+    *,
+    question_id: str,
+    frame_count: int,
+    native_temporal_cell_count: int,
+    compaction_layers: Sequence[int],
+    retention_fractions: Sequence[float],
+    seed: int,
+) -> list[Any]:
+    routes = []
+    for layer in compaction_layers:
+        for fraction in retention_fractions:
+            routes.extend(
+                candidate_routes(
+                    question_id=question_id,
+                    frame_count=frame_count,
+                    compaction_layer=layer,
+                    native_temporal_cell_count=native_temporal_cell_count,
+                    retention_fraction=fraction,
+                    seed=seed,
+                )
+            )
+    return routes
 
 
 def make_dense_artifact(
@@ -213,6 +347,7 @@ def make_dense_artifact(
     git_commit: str,
     native_cell_count: int,
     feature_metadata: list[dict[str, Any]],
+    sampling_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     pred = int(max(range(len(scores["choice_logits"])), key=lambda idx: float(scores["choice_logits"][idx])))
     return {
@@ -223,6 +358,11 @@ def make_dense_artifact(
         "frame_count": frame_count,
         "condition": "dense_custom",
         "native_temporal_cell_count": native_cell_count,
+        "sampling_mode": "adaptive_fixed_count",
+        "sampling_policy": "adaptive_fixed_center_frames_exact_count",
+        "sampling_metadata": sampling_metadata,
+        "sampled_frame_indices": sampling_metadata.get("sampled_frame_indices"),
+        "sampled_timestamps": sampling_metadata.get("sampled_timestamps"),
         "correct_choice_log_probability": float(scores["correct_choice_log_probability"]),
         "answer_margin": float(scores.get("correct_vs_best_incorrect_margin", scores.get("correct_vs_strongest_incorrect_margin"))),
         "predicted_answer": example.choices[pred],
@@ -323,6 +463,14 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
     stack = qwen_decoder_stack(model._model)
     processed_actions = 0
     failures = 0
+    smoke_validation: dict[str, Any] = {
+        "schema_version": "adaptive_compaction_smoke_validation_v1",
+        "required": bool(args.smoke),
+        "checks": {},
+        "cached_full_comparisons": [],
+    }
+    if args.smoke:
+        smoke_validation["checks"]["manifest_zero_overlap"] = validate_manifest_leakage_summary(args.manifest)
 
     for record in sharded:
         qid = str(record["question_id"])
@@ -335,21 +483,71 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
                 raise RuntimeError(
                     f"Refusing to overwrite existing dense artifact without --overwrite: {dense_path}"
                 )
+            existing_dense_artifact = None
+            if dense_already_complete and not args.overwrite:
+                existing_dense_artifact = validate_resumed_dense_artifact(
+                    dense_path,
+                    run_config=run_config,
+                    output_dir=output,
+                )
+                expected_routes = expected_routes_for_frame(
+                    question_id=qid,
+                    frame_count=frame_count,
+                    native_temporal_cell_count=int(existing_dense_artifact["native_temporal_cell_count"]),
+                    compaction_layers=args.compaction_layers,
+                    retention_fractions=args.retention_fractions,
+                    seed=args.seed,
+                )
+                all_actions_complete = True
+                for route in expected_routes:
+                    if (qid, frame_count, route.action_id) not in completed:
+                        all_actions_complete = False
+                        break
+                    validate_resumed_action_artifact(
+                        action_artifact_path(output, qid, frame_count, route.action_id),
+                        run_config,
+                    )
+                if all_actions_complete:
+                    continue
             dense_artifact = None
             try:
+                record_for_sampling = dict(record)
+                record_for_sampling["_adaptive_fixed_frame_count"] = frame_count
                 frame_batches = frame_batches_for_example(
                     example,
                     args.mp4_dir,
                     num_frames=frame_count,
-                    sampling_mode="cross_model_8",
-                    manifest_record=record,
-                    frames_per_bin_override=1,
+                    sampling_mode="adaptive_fixed_count",
+                    manifest_record=record_for_sampling,
+                    frames_per_bin_override=frame_count,
                 )
+                sampled = tuple(int(index) for index in frame_batches[0].frame_indices)
+                if len(sampled) != frame_count or len(set(sampled)) != frame_count:
+                    raise RuntimeError(
+                        f"{qid}/frames={frame_count}: adaptive_fixed_count produced {len(sampled)} frames "
+                        f"and {len(set(sampled))} distinct frames: {sampled}"
+                    )
+                if args.smoke:
+                    smoke_validation["checks"]["requested_sampled_frame_count"] = {
+                        "passed": len(sampled) == frame_count,
+                        "requested": frame_count,
+                        "actual": len(sampled),
+                        "distinct": len(set(sampled)),
+                    }
+                sampling_metadata = dict(frame_batches[0].metadata.get("sampling") or {})
+                sampling_metadata["sampled_frame_indices"] = list(sampled)
+                sampling_metadata["sampled_timestamps"] = list(frame_batches[0].timestamps)
                 inputs, rendered, prompt, _video_kwargs = _prepare_inputs(model, example, frame_batches, resolution)
                 layout = _build_layout(model, example, inputs, rendered, frame_batches)
                 native_count = len(temporal_regions_from_layout(layout))
+                if args.smoke:
+                    native_ids = sorted(temporal_regions_from_layout(layout))
+                    smoke_validation["checks"]["contiguous_native_temporal_cell_ids"] = {
+                        "passed": native_ids == list(range(len(native_ids))),
+                        "native_temporal_cell_ids": native_ids,
+                        "native_temporal_cell_count": native_count,
+                    }
                 decoder_inputs, position_ids = qwen_multimodal_decoder_inputs(model._model, inputs)
-                stock_logits = _stock_logits(model, inputs)
                 dense_result, caches = run_dense_decoder_with_prefix_cache(
                     layers=stack["layers"],
                     hidden_states=decoder_inputs.clone(),
@@ -365,52 +563,66 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
                     sliding_window=stack["sliding_window"],
                 )
                 dense_scores = score_answer_choice_logits(dense_result.logits[0, -1], model._processor.tokenizer, example.correct_idx, len(example.choices)).to_json_dict()
-                stock_scores = score_answer_choice_logits(stock_logits[0, -1], model._processor.tokenizer, example.correct_idx, len(example.choices)).to_json_dict()
-                eq = dense_equivalence_report(
-                    stock_logits,
-                    dense_result.logits,
-                    stock_scores=stock_scores,
-                    dense_scores=dense_scores,
-                    stock_sequence_length=int(inputs["input_ids"].shape[1]),
-                    dense_sequence_length=int(dense_result.final_hidden_states.shape[1]),
-                    legacy_dense_equivalence_atol=None,
-                )
-                eq["question_id"] = qid
                 eq_path = dense_path.parent / "dense_equivalence_report.json"
-                write_json(eq_path, eq)
-                if eq.get("passed") is not True:
-                    raise RuntimeError(f"{qid}/frames={frame_count}: dense equivalence failed.")
+                if not dense_already_complete:
+                    stock_logits = _stock_logits(model, inputs)
+                    stock_scores = score_answer_choice_logits(stock_logits[0, -1], model._processor.tokenizer, example.correct_idx, len(example.choices)).to_json_dict()
+                    eq = dense_equivalence_report(
+                        stock_logits,
+                        dense_result.logits,
+                        stock_scores=stock_scores,
+                        dense_scores=dense_scores,
+                        stock_sequence_length=int(inputs["input_ids"].shape[1]),
+                        dense_sequence_length=int(dense_result.final_hidden_states.shape[1]),
+                        legacy_dense_equivalence_atol=None,
+                    )
+                    eq["question_id"] = qid
+                    write_json(eq_path, eq)
+                    if eq.get("passed") is not True:
+                        raise RuntimeError(f"{qid}/frames={frame_count}: dense equivalence failed.")
+                    if args.smoke:
+                        smoke_validation["checks"]["stock_vs_custom_dense_equivalence"] = {
+                            "passed": bool(eq.get("passed")),
+                            "checks": eq.get("checks"),
+                        }
+                elif not eq_path.exists():
+                    raise RuntimeError(f"{qid}/frames={frame_count}: dense equivalence report missing during resume.")
                 feature_metadata = []
-                for layer, cache in sorted(caches.items()):
-                    features = extract_router_features(cache.hidden_states, layout, layer=layer, frame_count=frame_count)
-                    fpath = feature_path(output, qid, frame_count, layer)
-                    fpath.parent.mkdir(parents=True, exist_ok=True)
-                    import torch
+                if dense_already_complete:
+                    dense_artifact = existing_dense_artifact
+                    feature_metadata = list(dense_artifact.get("router_features") or [])
+                else:
+                    for layer, cache in sorted(caches.items()):
+                        features = extract_router_features(cache.hidden_states, layout, layer=layer, frame_count=frame_count)
+                        fpath = feature_path(output, qid, frame_count, layer)
+                        fpath.parent.mkdir(parents=True, exist_ok=True)
+                        import torch
 
-                    torch.save(features, fpath)
-                    feature_metadata.append(router_feature_metadata(fpath, features))
-                dense_artifact = make_dense_artifact(
-                    qid=qid,
-                    split=args.split,
-                    frame_count=frame_count,
-                    result=dense_result,
-                    scores=dense_scores,
-                    example=example,
-                    manifest_record=record,
-                    run_config=run_config,
-                    git_commit=git_commit,
-                    native_cell_count=native_count,
-                    feature_metadata=feature_metadata,
-                )
+                        torch.save(features, fpath)
+                        feature_metadata.append(router_feature_metadata(fpath, features))
+                        if args.smoke:
+                            validate_router_feature_file(fpath, expected_layer=layer, expected_cell_count=native_count)
+                    dense_artifact = make_dense_artifact(
+                        qid=qid,
+                        split=args.split,
+                        frame_count=frame_count,
+                        result=dense_result,
+                        scores=dense_scores,
+                        example=example,
+                        manifest_record=record,
+                        run_config=run_config,
+                        git_commit=git_commit,
+                        native_cell_count=native_count,
+                        feature_metadata=feature_metadata,
+                        sampling_metadata=sampling_metadata,
+                    )
                 if dense_already_complete and not args.overwrite:
-                    existing_dense = json.loads(dense_path.read_text())
-                    mismatches = config_mismatches(existing_dense["run_config"], run_config)
-                    if mismatches:
-                        raise RuntimeError(f"Existing dense artifact run_config differs from current run: {mismatches}")
+                    validate_resumed_dense_artifact(dense_path, run_config=run_config, output_dir=output)
                 else:
                     write_json(dense_path, dense_artifact)
                     append_jsonl(records, {"question_id": qid, "frame_count": frame_count, "action_id": "dense_custom", "status": "complete", "artifact": str(dense_path)})
                 for layer in args.compaction_layers:
+                    smoke_compared_layer = False
                     for fraction in args.retention_fractions:
                         routes = candidate_routes(
                             question_id=qid,
@@ -450,6 +662,69 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
                                 sliding_window=stack["sliding_window"],
                             )
                             scores = score_answer_choice_logits(result.logits[0, -1], model._processor.tokenizer, example.correct_idx, len(example.choices)).to_json_dict()
+                            if args.smoke:
+                                logp_value = float(scores["correct_choice_log_probability"])
+                                margin_value = float(
+                                    scores.get(
+                                        "correct_vs_best_incorrect_margin",
+                                        scores.get("correct_vs_strongest_incorrect_margin"),
+                                    )
+                                )
+                                smoke_validation["checks"].setdefault("finite_answer_metrics", {"passed": True, "examples": []})
+                                finite_metrics = math.isfinite(logp_value) and math.isfinite(margin_value)
+                                smoke_validation["checks"]["finite_answer_metrics"]["examples"].append(
+                                    {
+                                        "action_id": route.action_id,
+                                        "passed": finite_metrics,
+                                        "correct_choice_log_probability": logp_value,
+                                        "answer_margin": margin_value,
+                                    }
+                                )
+                                smoke_validation["checks"]["finite_answer_metrics"]["passed"] = (
+                                    smoke_validation["checks"]["finite_answer_metrics"]["passed"] and finite_metrics
+                                )
+                            if args.smoke and not smoke_compared_layer:
+                                full_result = run_custom_decoder_prefill(
+                                    layers=stack["layers"],
+                                    hidden_states=decoder_inputs.clone(),
+                                    position_ids=position_ids.clone() if position_ids is not None else None,
+                                    layout=layout,
+                                    config=config,
+                                    lm_head=stack["lm_head"],
+                                    norm=stack["norm"],
+                                    num_attention_heads=stack["num_attention_heads"],
+                                    head_dim=stack["head_dim"],
+                                    rotary_emb=stack["rotary_emb"],
+                                    layer_types=stack["layer_types"],
+                                    sliding_window=stack["sliding_window"],
+                                )
+                                full_scores = _score_from_logits(
+                                    full_result.logits,
+                                    model._processor.tokenizer,
+                                    example.correct_idx,
+                                    len(example.choices),
+                                )
+                                comparison = {
+                                    "layer": layer,
+                                    "action_id": route.action_id,
+                                    "retained_cells": list(route.retained_cells),
+                                    "max_logit_abs_diff": _logit_max_abs(full_result.logits, result.logits),
+                                    "correct_logp_diff": float(scores["correct_choice_log_probability"]) - float(full_scores["correct_choice_log_probability"]),
+                                    "answer_margin_diff": float(scores.get("correct_vs_best_incorrect_margin", scores.get("correct_vs_strongest_incorrect_margin"))) - float(full_scores.get("correct_vs_best_incorrect_margin", full_scores.get("correct_vs_strongest_incorrect_margin"))),
+                                    "predicted_answer_matches": _pred(scores) == _pred(full_scores),
+                                    "final_sequence_length_matches": int(result.final_hidden_states.shape[1]) == int(full_result.final_hidden_states.shape[1]),
+                                    "flops_match": int(result.total_estimated_attention_flops) == int(full_result.total_estimated_attention_flops),
+                                }
+                                comparison["passed"] = (
+                                    comparison["max_logit_abs_diff"] <= 0.25
+                                    and abs(comparison["correct_logp_diff"]) <= 0.10
+                                    and abs(comparison["answer_margin_diff"]) <= 0.125
+                                    and comparison["predicted_answer_matches"]
+                                    and comparison["final_sequence_length_matches"]
+                                    and comparison["flops_match"]
+                                )
+                                smoke_validation["cached_full_comparisons"].append(comparison)
+                                smoke_compared_layer = True
                             artifact = make_action_artifact(
                                 dense=dense_artifact,
                                 route=route,
@@ -462,8 +737,35 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
                                 git_commit=git_commit,
                             )
                             validate_compact_action_artifact(artifact)
+                            if args.smoke:
+                                shortened = int(artifact["compacted_sequence_length"]) < int(artifact["original_sequence_length"])
+                                smoke_validation["checks"].setdefault(
+                                    "physical_sequence_shortening",
+                                    {"passed": True, "examples": []},
+                                )
+                                smoke_validation["checks"]["physical_sequence_shortening"]["examples"].append(
+                                    {
+                                        "action_id": route.action_id,
+                                        "passed": shortened,
+                                        "original": artifact["original_sequence_length"],
+                                        "compacted": artifact["compacted_sequence_length"],
+                                    }
+                                )
+                                smoke_validation["checks"]["physical_sequence_shortening"]["passed"] = (
+                                    smoke_validation["checks"]["physical_sequence_shortening"]["passed"] and shortened
+                                )
                             write_json(out, artifact)
                             append_jsonl(records, {"question_id": qid, "frame_count": frame_count, "action_id": route.action_id, "status": "complete", "artifact": str(out)})
+                            if args.smoke:
+                                validate_resumed_action_artifact(out, run_config)
+                                mismatch = config_mismatches(
+                                    run_config,
+                                    {**run_config, "frame_counts": [999]},
+                                )
+                                smoke_validation["checks"]["immutable_config_mismatch_rejection"] = {
+                                    "passed": "frame_counts" in mismatch,
+                                    "mismatch_fields": sorted(mismatch),
+                                }
                             processed_actions += 1
             except Exception as exc:
                 failures += 1
@@ -480,6 +782,20 @@ def run_adaptive_compaction(args: argparse.Namespace) -> dict[str, Any]:
         "run_config": run_config,
     }
     write_json(summary_path(output, args.shard_index, args.num_shards), summary)
+    if args.smoke:
+        smoke_validation["checks"]["cached_prefix_vs_full_prefix"] = {
+            "passed": bool(smoke_validation["cached_full_comparisons"])
+            and all(item.get("passed") for item in smoke_validation["cached_full_comparisons"])
+            and {item["layer"] for item in smoke_validation["cached_full_comparisons"]} == set(args.compaction_layers),
+            "num_comparisons": len(smoke_validation["cached_full_comparisons"]),
+        }
+        smoke_validation["passed"] = all(
+            bool(value.get("passed")) for value in smoke_validation["checks"].values() if isinstance(value, dict)
+        )
+        smoke_path = output / "smoke_validation.json"
+        write_json(smoke_path, smoke_validation)
+        if not smoke_validation["passed"]:
+            raise RuntimeError(f"Adaptive compaction smoke validation failed; see {smoke_path}")
     return summary
 
 

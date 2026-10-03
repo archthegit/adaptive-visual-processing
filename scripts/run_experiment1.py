@@ -24,12 +24,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-frames", type=int, default=8)
     parser.add_argument(
         "--sampling-mode",
-        choices=["legacy", "realtime", "fixed_budget", "cross_model_8"],
+        choices=["legacy", "realtime", "fixed_budget", "cross_model_8", "adaptive_fixed_count"],
         default="legacy",
         help=(
             "legacy uses the historical uniform --num-frames sampler; realtime uses the Experiment 1 adaptive "
             "full-coverage policy; fixed_budget uses 128 frames, 16 bins, 8 frames per bin; cross_model_8 "
-            "uses eight equal temporal bins and one deterministic center frame per bin."
+            "uses eight equal temporal bins and one deterministic center frame per bin; adaptive_fixed_count "
+            "uses exactly --num-frames deterministic center frames."
         ),
     )
     parser.add_argument(
@@ -356,6 +357,8 @@ def _sampling_plan_for_record(
         TemporalSamplingPolicy,
         cross_model_8_frame_policy,
         cross_model_center_frame_bin_plan,
+        fixed_center_frame_bin_plan,
+        fixed_center_frame_policy,
         fixed_budget_bin_plan,
         real_time_bin_plan,
         robustness_policy,
@@ -406,6 +409,24 @@ def _sampling_plan_for_record(
             end,
             float(info["fps"]),
             policy,
+            decord_length=decord_length,
+            ffprobe_frame_count=int(info["num_frames"]),
+        )
+    elif sampling_mode == "adaptive_fixed_count":
+        requested_frames = int(
+            frames_per_bin_override
+            or record.get("_adaptive_fixed_frame_count")
+            or record.get("requested_frame_count")
+            or 0
+        )
+        if requested_frames <= 0:
+            raise ValueError("adaptive_fixed_count sampling requires frames_per_bin_override or _adaptive_fixed_frame_count.")
+        policy = fixed_center_frame_policy(requested_frames)
+        plan = fixed_center_frame_bin_plan(
+            start,
+            end,
+            float(info["fps"]),
+            requested_frames,
             decord_length=decord_length,
             ffprobe_frame_count=int(info["num_frames"]),
         )

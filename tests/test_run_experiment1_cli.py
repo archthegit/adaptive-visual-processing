@@ -199,6 +199,45 @@ def test_cross_model_8_sampling_uses_eight_center_frames(monkeypatch):
     assert metadata["num_bins"] == 8
 
 
+@pytest.mark.parametrize("frame_count", [8, 16, 32])
+def test_adaptive_fixed_count_sampling_uses_requested_frame_count(monkeypatch, frame_count):
+    from scripts import run_experiment1
+
+    monkeypatch.setattr(run_experiment1, "_probe_video_for_sampling", lambda path: {"fps": 10.0, "num_frames": 2000})
+    monkeypatch.setattr(run_experiment1, "_decord_video_length", lambda path: 2000)
+    record = {
+        "analyzed_start_seconds": 10.0,
+        "analyzed_end_seconds": 42.0,
+        "_adaptive_fixed_frame_count": frame_count,
+    }
+
+    plan, metadata = _sampling_plan_for_record(record, "video.mp4", "adaptive_fixed_count")
+
+    sampled = [item["source_frame_indices"][0] for item in plan]
+    assert len(plan) == frame_count
+    assert len(sampled) == frame_count
+    assert len(set(sampled)) == frame_count
+    assert sampled == sorted(sampled)
+    assert metadata["mode"] == "adaptive_fixed_count"
+    assert metadata["policy"]["name"] == f"adaptive_fixed_{frame_count}_center_frames"
+    assert metadata["num_bins"] == frame_count
+
+
+def test_adaptive_fixed_count_sampling_rejects_duplicate_center_frames(monkeypatch):
+    from scripts import run_experiment1
+
+    monkeypatch.setattr(run_experiment1, "_probe_video_for_sampling", lambda path: {"fps": 1.0, "num_frames": 4})
+    monkeypatch.setattr(run_experiment1, "_decord_video_length", lambda path: 4)
+    record = {
+        "analyzed_start_seconds": 0.0,
+        "analyzed_end_seconds": 4.0,
+        "_adaptive_fixed_frame_count": 8,
+    }
+
+    with pytest.raises(ValueError, match="requires 8 distinct center frames"):
+        _sampling_plan_for_record(record, "video.mp4", "adaptive_fixed_count")
+
+
 def test_v2_sampling_mode_requires_manifest_record():
     example = SimpleNamespace(inputs=(SimpleNamespace(is_image=False),))
     with pytest.raises(ValueError, match="manifest record"):

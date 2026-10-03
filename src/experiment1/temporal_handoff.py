@@ -1295,32 +1295,45 @@ def run_compacted_decoder_from_prefix_cache(
             hidden_states = norm(hidden_states)
         final_token_hidden_state = hidden_states[:, -1:, :]
         logits = lm_head(final_token_hidden_state) if lm_head is not None else final_token_hidden_state
-    synthetic_boundary = LayerInstrumentation(
-        layer=cache_entry.boundary_layer,
-        layer_type=active_layer_types[cache_entry.boundary_layer],
-        sequence_length_in=compaction_plan.original_sequence_length,
+    prefix = list(cache_entry.layer_instrumentation)
+    if len(prefix) != cache_entry.boundary_layer + 1:
+        raise RuntimeError("Cached dense prefix instrumentation does not cover layers 0..boundary.")
+    boundary_dense = prefix[-1]
+    visual_in, memory_in, text_in = _counts(
+        boundary_dense.sequence_length_in,
+        cache_entry.visual_token_indices,
+        (),
+    )
+    boundary_with_compaction = LayerInstrumentation(
+        layer=boundary_dense.layer,
+        layer_type=boundary_dense.layer_type,
+        sequence_length_in=boundary_dense.sequence_length_in,
         sequence_length_out=compaction_plan.compacted_sequence_length,
-        visual_token_count_in=len(compaction_plan.retained_visual_token_positions) + len(compaction_plan.removed_visual_token_positions),
+        visual_token_count_in=visual_in,
         visual_token_count_out=len(current_visual_indices),
-        memory_token_count_in=0,
+        memory_token_count_in=memory_in,
         memory_token_count_out=len(current_memory_indices),
-        text_token_count_in=compaction_plan.original_sequence_length - len(compaction_plan.retained_visual_token_positions) - len(compaction_plan.removed_visual_token_positions),
+        text_token_count_in=text_in,
         text_token_count_out=compaction_plan.compacted_sequence_length - len(current_visual_indices) - len(current_memory_indices),
-        attention_q_len=compaction_plan.original_sequence_length,
-        attention_k_len=compaction_plan.original_sequence_length,
-        estimated_qk_flops=0,
-        estimated_av_flops=0,
-        causal_path="physical_compaction_boundary",
-        explicit_mask_materialized=False,
-        mask_shape=None,
-        native_sdpa_is_causal_used=False,
+        attention_q_len=boundary_dense.attention_q_len,
+        attention_k_len=boundary_dense.attention_k_len,
+        estimated_qk_flops=boundary_dense.estimated_qk_flops,
+        estimated_av_flops=boundary_dense.estimated_av_flops,
+        causal_path=boundary_dense.causal_path,
+        explicit_mask_materialized=boundary_dense.explicit_mask_materialized,
+        mask_shape=boundary_dense.mask_shape,
+        native_sdpa_is_causal_used=boundary_dense.native_sdpa_is_causal_used,
         compaction_applied_after_layer=True,
     )
+    full_instrumentation = [*prefix[:-1], boundary_with_compaction, *instrumentation]
+    layer_indices = [item.layer for item in full_instrumentation]
+    if layer_indices != list(range(len(layers))):
+        raise RuntimeError(f"Compacted prefix-cache instrumentation is not complete and ordered: {layer_indices}")
     return DecoderPrefillResult(
         logits=logits,
         final_hidden_states=hidden_states,
         final_token_hidden_state=final_token_hidden_state,
-        instrumentation=[synthetic_boundary, *instrumentation],
+        instrumentation=full_instrumentation,
         compaction_plan=compaction_plan,
         final_question_token_indices=current_question_indices,
         final_visual_token_indices=tuple(current_visual_indices),

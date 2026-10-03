@@ -45,7 +45,7 @@ The frozen grid is:
 - Retention fractions: `0.25`, `0.50`, `0.75`
 - Primary condition: physical hard deletion
 
-The runner derives the native temporal-cell count from the actual processed token layout. It does not assume that `frame_count / 2` is correct without validation.
+The runner uses `adaptive_fixed_count` sampling, not `cross_model_8`. For each requested frame count it partitions the annotated interval into exactly `8`, `16`, or `32` equal-time bins and takes one deterministic center frame per bin. It asserts that the decoded batch contains exactly that many distinct valid frames before writing any artifact. The runner derives the native temporal-cell count from the actual processed token layout after sampling. It does not assume that `frame_count / 2` is correct without validation.
 
 ## Candidate Route Construction
 
@@ -142,7 +142,7 @@ python scripts/run_qwen_adaptive_compaction.py \
   --smoke
 ```
 
-The smoke run must verify sampled frame count, native temporal-cell mapping, dense equivalence, cached-prefix versus full-prefix equivalence, physical sequence shortening, finite answer metrics, finite router features, artifact resumption, and zero source-video leakage in the manifests.
+The smoke run writes `smoke_validation.json` and exits nonzero if any required check fails. It verifies sampled frame count, contiguous native temporal-cell IDs, dense equivalence, cached-prefix versus full-prefix physical intervention equivalence at every candidate boundary, physical sequence shortening, finite answer metrics, finite router features after save/reload, artifact resumption, immutable-configuration mismatch detection, and zero source-video/question leakage in the manifest summary.
 
 ## Sharded Train Commands
 
@@ -200,6 +200,8 @@ Before opening the test split:
 
 No test split command should be run before these conditions are met.
 
-## Current Local Validation Status
+## Current Validation Status
 
-The implementation includes CPU/unit tests for split generation, action generation, cached-prefix equivalence, router feature shape, resume configuration mismatch, and compact artifact schema. Real-checkpoint smoke testing requires an A100 environment with Qwen and local HD-EPIC videos.
+The implementation includes CPU/unit tests for split generation, exact adaptive frame-count sampling, action generation, cached-prefix equivalence, complete per-layer compacted instrumentation, router feature shape, resume configuration mismatch, dense resume artifact validation, and compact artifact schema. Real-checkpoint smoke testing requires an A100 environment with Qwen and local HD-EPIC videos.
+
+At the time of this corrective commit, the local development machine does not provide the A100, model cache, and HD-EPIC video paths required to run the real smoke. The smoke command above is the required A100 validation before launching the training corpus. Do not treat this branch as ready for the full train sweep until `smoke_validation.json` passes and the observed runtime/storage estimates are recorded from that A100 run.

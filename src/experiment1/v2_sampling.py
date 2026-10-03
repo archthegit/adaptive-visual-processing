@@ -84,6 +84,20 @@ def cross_model_8_frame_policy() -> TemporalSamplingPolicy:
     )
 
 
+def fixed_center_frame_policy(frame_count: int) -> TemporalSamplingPolicy:
+    if frame_count not in {8, 16, 32}:
+        raise ValueError("adaptive fixed-center sampling supports frame counts 8, 16 and 32.")
+    return TemporalSamplingPolicy(
+        name=f"adaptive_fixed_{frame_count}_center_frames",
+        delta_t_seconds=None,
+        max_bins=frame_count,
+        frames_per_bin=1,
+        fixed_num_frames=frame_count,
+        fixed_num_bins=frame_count,
+        min_bins=frame_count,
+    )
+
+
 def chronological_indices_without_duplicates_when_possible(
     start_frame: int,
     end_frame_exclusive: int,
@@ -382,6 +396,86 @@ def cross_model_center_frame_bin_plan(
             f"sampled indices were {sampled_indices}."
         )
     validate_temporal_plan(plans, max_frames=8, decord_length=authoritative_frame_count)
+    return plans
+
+
+def fixed_center_frame_bin_plan(
+    start_seconds: float,
+    end_seconds: float,
+    source_fps: float,
+    frame_count: int,
+    decord_length: int | None = None,
+    ffprobe_frame_count: int | None = None,
+) -> list[dict[str, Any]]:
+    policy = fixed_center_frame_policy(frame_count)
+    if source_fps <= 0:
+        raise ValueError("source_fps must be positive.")
+    authoritative_frame_count = int(decord_length) if decord_length is not None else None
+    if authoritative_frame_count is not None and authoritative_frame_count <= 0:
+        raise ValueError("decord_length must be positive when provided.")
+    effective_start = float(start_seconds)
+    effective_end = float(end_seconds)
+    if effective_end <= effective_start:
+        raise ValueError("end_seconds must be greater than start_seconds.")
+    analyzed_end_adjustment = None
+    if authoritative_frame_count is not None:
+        decodable_end = authoritative_frame_count / float(source_fps)
+        if effective_end > decodable_end:
+            analyzed_end_adjustment = {
+                "original_analyzed_end_seconds": effective_end,
+                "effective_analyzed_end_seconds": decodable_end,
+                "reason": "annotated_end_exceeds_decord_boundary",
+            }
+            effective_end = decodable_end
+        if effective_start >= effective_end:
+            raise ValueError(
+                "Effective analyzed interval is empty after decodable-boundary adjustment: "
+                f"start={effective_start}, end={effective_end}, decord_length={authoritative_frame_count}, fps={source_fps}."
+            )
+    duration = effective_end - effective_start
+    seconds_per_bin = duration / float(frame_count)
+    plans: list[dict[str, Any]] = []
+    sampled_indices: list[int] = []
+    for bin_index in range(frame_count):
+        bin_start = effective_start + bin_index * seconds_per_bin
+        bin_end = effective_end if bin_index == frame_count - 1 else effective_start + (bin_index + 1) * seconds_per_bin
+        center_timestamp = (bin_start + bin_end) / 2.0
+        frame_index = int(round(center_timestamp * source_fps))
+        if authoritative_frame_count is not None:
+            frame_index = min(authoritative_frame_count - 1, max(0, frame_index))
+        sampled_indices.append(frame_index)
+        plans.append(
+            {
+                "analysis_bin": bin_index,
+                "bin_start_seconds": bin_start,
+                "bin_end_seconds": bin_end,
+                "source_frame_indices": [frame_index],
+                "source_timestamps": [frame_index / source_fps],
+                "frame_to_bin": {str(frame_index): bin_index},
+                "sample_position_to_bin": {str(bin_index): bin_index},
+                "original_temporal_position": bin_index,
+                "presented_temporal_position": bin_index,
+                "target_delta_t_seconds": None,
+                "effective_seconds_per_bin": seconds_per_bin,
+                "desired_bins": frame_count,
+                "num_bins": frame_count,
+                "min_bin_clipped": False,
+                "max_bin_clipped": False,
+                "effective_analyzed_start_seconds": effective_start,
+                "effective_analyzed_end_seconds": effective_end,
+                "decord_frame_count": authoritative_frame_count,
+                "ffprobe_frame_count": ffprobe_frame_count,
+                "analyzed_end_adjustment": analyzed_end_adjustment,
+                "center_timestamp_seconds": center_timestamp,
+                "sampling_policy_name": policy.name,
+            }
+        )
+    if len(sampled_indices) != frame_count or len(set(sampled_indices)) != frame_count:
+        raise ValueError(
+            f"Adaptive fixed-center sampling requires {frame_count} distinct center frames; "
+            f"sampled indices were {sampled_indices}."
+        )
+    validate_temporal_plan(plans, max_frames=frame_count, decord_length=authoritative_frame_count)
     return plans
 
 
