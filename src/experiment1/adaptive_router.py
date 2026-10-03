@@ -435,6 +435,19 @@ def question_frame_weights(rows: Sequence[dict[str, Any]]) -> np.ndarray:
     return np.asarray([1.0 / counts[(row["question_id"], int(row["frame_count"]))] for row in rows], dtype=np.float32)
 
 
+def deterministic_weighted_resample_indices(rows: Sequence[dict[str, Any]], *, seed: int, scale: int = 32) -> np.ndarray:
+    weights = question_frame_weights(rows)
+    scaled = weights / float(np.min(weights))
+    counts = np.maximum(1, np.rint(scaled * scale).astype(np.int64))
+    keyed: list[tuple[str, int]] = []
+    for idx, (row, count) in enumerate(zip(rows, counts)):
+        for replica in range(int(count)):
+            key = stable_hash_payload([seed, row["question_id"], int(row["frame_count"]), row.get("action_id"), replica])
+            keyed.append((key, idx))
+    keyed.sort()
+    return np.asarray([idx for _, idx in keyed], dtype=np.int64)
+
+
 def train_router_models(dataset_dir: str | Path, output_dir: str | Path, *, seed: int, git_commit: str) -> dict[str, Any]:
     try:
         import joblib
@@ -469,7 +482,7 @@ def train_router_models(dataset_dir: str | Path, output_dir: str | Path, *, seed
             StandardScaler(),
             MLPClassifier(hidden_layer_sizes=(32,), max_iter=500, random_state=seed, early_stopping=False),
         ),
-        "gradient_boosted_tree": HistGradientBoostingClassifier(random_state=seed, max_iter=100, class_weight="balanced"),
+        "gradient_boosted_tree": HistGradientBoostingClassifier(random_state=seed, max_iter=100),
     }
     regressors = {
         "ridge": make_pipeline(StandardScaler(), Ridge()),
@@ -486,30 +499,33 @@ def train_router_models(dataset_dir: str | Path, output_dir: str | Path, *, seed
         "sample_weighting": "each question_id/frame_count receives equal total weight",
         "safety_models": {},
         "quality_delta_regressors": {},
+        "weighting_methods": {},
     }
     for name, model in models.items():
-        fit_kwargs = {}
-        if name == "logistic_regression":
-            fit_kwargs["logisticregression__sample_weight"] = sample_weight
-        elif name == "gradient_boosted_tree":
-            fit_kwargs["sample_weight"] = sample_weight
-        try:
+        if name == "mlp":
+            resampled = deterministic_weighted_resample_indices(train_rows, seed=seed)
+            model.fit(X[resampled], y[resampled])
+            model_index["weighting_methods"][f"safety_{name}"] = "deterministic_question_frame_weighted_resampling"
+        else:
+            fit_kwargs = {"sample_weight": sample_weight}
+            if name == "logistic_regression":
+                fit_kwargs = {"logisticregression__sample_weight": sample_weight}
             model.fit(X, y, **fit_kwargs)
-        except TypeError:
-            model.fit(X, y)
+            model_index["weighting_methods"][f"safety_{name}"] = "native_sample_weight"
         path = output_dir / f"safety_{name}.joblib"
         joblib.dump(model, path)
         model_index["safety_models"][name] = str(path)
     for name, model in regressors.items():
-        fit_kwargs = {}
-        if name == "ridge":
-            fit_kwargs["ridge__sample_weight"] = sample_weight
-        elif name == "gradient_boosted_tree":
-            fit_kwargs["sample_weight"] = sample_weight
-        try:
+        if name == "mlp":
+            resampled = deterministic_weighted_resample_indices(train_rows, seed=seed)
+            model.fit(X[resampled], dataset.logp_delta[train_idx][resampled])
+            model_index["weighting_methods"][f"regressor_{name}"] = "deterministic_question_frame_weighted_resampling"
+        else:
+            fit_kwargs = {"sample_weight": sample_weight}
+            if name == "ridge":
+                fit_kwargs = {"ridge__sample_weight": sample_weight}
             model.fit(X, dataset.logp_delta[train_idx], **fit_kwargs)
-        except TypeError:
-            model.fit(X, dataset.logp_delta[train_idx])
+            model_index["weighting_methods"][f"regressor_{name}"] = "native_sample_weight"
         path = output_dir / f"logp_delta_{name}.joblib"
         joblib.dump(model, path)
         model_index["quality_delta_regressors"][name] = str(path)
@@ -536,25 +552,79 @@ def load_model_predictions(dataset: RouterDataset, model_dir: str | Path, safety
     return _predict_safe_probability(safety_model, dataset.features), np.asarray(regressor.predict(dataset.features), dtype=np.float32)
 
 
+def uniform_subset_distance(retained_cell_ids: Sequence[int], native_temporal_cell_count: int) -> float:
+    retained = sorted(int(cell) for cell in retained_cell_ids)
+    k = len(retained)
+    if k == 0:
+        return float("inf")
+    denom = max(1, native_temporal_cell_count - 1)
+    actual = np.asarray([cell / denom for cell in retained], dtype=np.float32)
+    ideal = np.linspace(0.0, 1.0, num=k, dtype=np.float32)
+    return float(np.mean((actual - ideal) ** 2))
+
+
+def uniform_route_row(candidates: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda row: (
+            uniform_subset_distance(row["retained_cell_ids"], int(row["native_temporal_cell_count"])),
+            str(row["action_id"]),
+        ),
+    )
+
+
+def random_route_row(candidates: Sequence[dict[str, Any]], *, seed: int) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    template = candidates[0]
+    key_prefix = [
+        seed,
+        template["question_id"],
+        int(template["frame_count"]),
+        int(template["compaction_layer"]),
+        float(template["retention_fraction"]),
+    ]
+    return min(
+        candidates,
+        key=lambda row: stable_hash_payload(key_prefix + [sorted(map(int, row["retained_cell_ids"])), row["action_id"]]),
+    )
+
+
+def prefix_route_row(candidates: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    return min(candidates, key=lambda row: (max(map(int, row["retained_cell_ids"])), str(row["action_id"])))
+
+
+def suffix_route_row(candidates: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    return max(candidates, key=lambda row: (min(map(int, row["retained_cell_ids"])), str(row["action_id"])))
+
+
 def select_fixed_policy_training_only(rows: Sequence[dict[str, Any]]) -> tuple[int, float]:
     train = [row for row in rows if row["split"] == "train"]
     if not train:
         raise ValueError("Cannot select fixed baseline without training rows.")
-    grouped: dict[tuple[int, float], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[int, float, str, int], list[dict[str, Any]]] = defaultdict(list)
     for row in train:
-        grouped[(int(row["compaction_layer"]), float(row["retention_fraction"]))].append(row)
+        grouped[(int(row["compaction_layer"]), float(row["retention_fraction"]), str(row["question_id"]), int(row["frame_count"]))].append(row)
+    policy_rows: dict[tuple[int, float], list[dict[str, Any]]] = defaultdict(list)
+    for (layer, fraction, _qid, _frame_count), items in grouped.items():
+        chosen = uniform_route_row(items)
+        if chosen is not None:
+            policy_rows[(layer, fraction)].append(chosen)
     scored = []
-    for key, items in grouped.items():
+    for key, items in policy_rows.items():
         unsafe = np.mean([not bool(row["safe"]) for row in items])
         flop = np.mean([float(row["paired_flop_reduction_from_dense"]) for row in items])
         logp = np.mean([float(row["delta_correct_choice_log_probability_from_dense"]) for row in items])
         scored.append((unsafe <= 0.10, -unsafe, flop, logp, -key[0], -key[1], key))
+    if not scored:
+        raise ValueError("Cannot select fixed baseline because no uniform candidate actions exist.")
     return max(scored)[-1]
-
-
-def deterministic_route_row(candidates: Sequence[dict[str, Any]], route_family: str) -> dict[str, Any] | None:
-    subset = [row for row in candidates if row.get("route_family") == route_family]
-    return sorted(subset, key=lambda row: str(row["action_id"]))[0] if subset else None
 
 
 def choose_predicted_row(rows: Sequence[dict[str, Any]], threshold: float) -> dict[str, Any] | None:
@@ -657,6 +727,7 @@ def make_decisions(
     predicted_logp: np.ndarray | None,
     threshold: float,
     layer_order: Sequence[int],
+    random_seed: int = 20260928,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for idx, row in enumerate(dataset.rows):
@@ -679,9 +750,11 @@ def make_decisions(
         ]
         baselines = {
             "dense": None,
-            "fixed_uniform": deterministic_route_row(fixed_candidates, "uniform_temporal_coverage"),
-            "fixed_random": deterministic_route_row(fixed_candidates, "deterministic_random_subset"),
-            "causal_learned_router": causal_policy_decision(candidates, threshold=threshold, layer_order=layer_order, oracle=False),
+            "fixed_uniform": uniform_route_row(fixed_candidates),
+            "fixed_random": random_route_row(fixed_candidates, seed=random_seed),
+            "fixed_prefix": prefix_route_row(fixed_candidates),
+            "fixed_suffix": suffix_route_row(fixed_candidates),
+            "causal_learned_router": None if safety_probability is None else causal_policy_decision(candidates, threshold=threshold, layer_order=layer_order, oracle=False),
             "causal_oracle": causal_policy_decision(candidates, threshold=threshold, layer_order=layer_order, oracle=True),
             "global_oracle_upper_bound": choose_oracle_row(candidates),
         }
@@ -731,6 +804,28 @@ def cluster_bootstrap_ci(rows: Sequence[dict[str, Any]], metric: str, *, samples
         "mean": float(np.mean(values)),
         "median": float(np.median(values)),
         "ci95": [float(np.percentile(estimates, 2.5)), float(np.percentile(estimates, 97.5))],
+        "n_questions": len(qids),
+        "n_decisions": len(rows),
+    }
+
+
+def cluster_binary_upper_bound(rows: Sequence[dict[str, Any]], key: str, *, samples: int = 10000, seed: int = 1, confidence: float = 0.95) -> dict[str, Any]:
+    by_question: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_question[str(row["question_id"])].append(row)
+    qids = sorted(by_question)
+    if not qids:
+        return {"observed": None, "upper": None, "n_questions": 0, "n_decisions": 0}
+    observed = float(np.mean([bool(row[key]) for row in rows]))
+    rng = np.random.default_rng(seed)
+    estimates = []
+    for _ in range(samples):
+        sampled = rng.choice(qids, size=len(qids), replace=True)
+        sampled_rows = [row for qid in sampled for row in by_question[qid]]
+        estimates.append(float(np.mean([bool(row[key]) for row in sampled_rows])))
+    return {
+        "observed": observed,
+        "upper": float(np.percentile(estimates, confidence * 100.0)),
         "n_questions": len(qids),
         "n_decisions": len(rows),
     }
@@ -810,7 +905,10 @@ def calibrate_router_policy(
                     layer_order=layer_order,
                 )
                 learned = [row for row in decisions if row["baseline"] == "causal_learned_router"]
-                unsafe = float(np.mean([bool(row["unsafe"]) for row in learned])) if learned else 1.0
+                unsafe_ci = cluster_binary_upper_bound(learned, "unsafe", samples=bootstrap_samples, seed=seed) if learned else {"observed": 1.0, "upper": 1.0, "n_questions": 0, "n_decisions": 0}
+                unsafe = float(unsafe_ci["observed"]) if unsafe_ci["observed"] is not None else 1.0
+                unsafe_upper = float(unsafe_ci["upper"]) if unsafe_ci["upper"] is not None else 1.0
+                coverage = float(np.mean([bool(row["compacted"]) for row in learned])) if learned else 0.0
                 flop = float(np.mean([float(row["flop_reduction"]) for row in learned])) if learned else 0.0
                 logp = float(np.mean([float(row["delta_logp"]) for row in learned])) if learned else 0.0
                 candidates.append(
@@ -819,38 +917,67 @@ def calibrate_router_policy(
                         "quality_regressor": regressor_name,
                         "unsafe_probability_threshold": threshold,
                         "development_unsafe_selection_rate": unsafe,
+                        "development_unsafe_selection_rate_upper_95": unsafe_upper,
+                        "development_coverage": coverage,
                         "development_mean_flop_reduction": flop,
                         "development_mean_logp_delta": logp,
-                        "eligible": unsafe <= unsafe_rate_bound,
+                        "num_questions": unsafe_ci["n_questions"],
+                        "num_question_frame_decisions": unsafe_ci["n_decisions"],
+                        "eligible": unsafe_upper <= unsafe_rate_bound,
                     }
                 )
-    eligible = [row for row in candidates if row["eligible"]]
-    selected = max(eligible or candidates, key=lambda row: (row["eligible"], row["development_mean_flop_reduction"], row["development_mean_logp_delta"]))
-    safe_probability, predicted_logp = load_model_predictions(dataset, model_dir, selected["safety_model"], selected["quality_regressor"])
-    decisions = make_decisions(
-        dataset,
-        split="development",
-        safety_probability=safe_probability,
-        predicted_logp=predicted_logp,
-        threshold=float(selected["unsafe_probability_threshold"]),
-        layer_order=layer_order,
-    )
+    eligible = [row for row in candidates if row["eligible"] and row["development_coverage"] > 0.0]
+    selected = max(eligible, key=lambda row: (row["development_mean_flop_reduction"], row["development_mean_logp_delta"])) if eligible else None
+    if selected is None:
+        decisions = make_decisions(
+            dataset,
+            split="development",
+            safety_probability=None,
+            predicted_logp=None,
+            threshold=-1.0,
+            layer_order=layer_order,
+        )
+        decisions = [dict(row, compacted=False, delta_logp=0.0, delta_margin=0.0, accuracy_delta_from_dense=0.0, prediction_changed=False, safe=True, unsafe=False, flop_reduction=0.0, selected_layer=None, retention_fraction=None) if row["baseline"] == "causal_learned_router" else row for row in decisions]
+        selected = {
+            "safety_model": None,
+            "quality_regressor": None,
+            "unsafe_probability_threshold": None,
+            "development_unsafe_selection_rate": 0.0,
+            "development_unsafe_selection_rate_upper_95": 0.0,
+            "development_coverage": 0.0,
+            "development_mean_flop_reduction": 0.0,
+            "development_mean_logp_delta": 0.0,
+            "eligible": True,
+            "dense_fallback_policy": True,
+        }
+    else:
+        safe_probability, predicted_logp = load_model_predictions(dataset, model_dir, selected["safety_model"], selected["quality_regressor"])
+        decisions = make_decisions(
+            dataset,
+            split="development",
+            safety_probability=safe_probability,
+            predicted_logp=predicted_logp,
+            threshold=float(selected["unsafe_probability_threshold"]),
+            layer_order=layer_order,
+        )
     summary = summarize_router_decisions(decisions, bootstrap_samples=bootstrap_samples, seed=seed)
     metadata = json.loads((Path(dataset_dir) / "metadata.json").read_text())
-    model_hashes = {name: sha256_file(path) for name, path in model_index["safety_models"].items()}
-    model_hashes.update({name: sha256_file(path) for name, path in model_index["quality_delta_regressors"].items()})
+    model_hashes = {f"safety:{name}": sha256_file(path) for name, path in model_index["safety_models"].items()}
+    model_hashes.update({f"regressor:{name}": sha256_file(path) for name, path in model_index["quality_delta_regressors"].items()})
     policy = {
         "schema_version": ROUTER_SCHEMA_VERSION,
         "git_commit": git_commit,
         "selected_safety_model": selected["safety_model"],
         "selected_quality_regressor": selected["quality_regressor"],
+        "dense_fallback_policy": bool(selected.get("dense_fallback_policy", False)),
         "model_hashes": model_hashes,
         "feature_schema_hash": metadata["feature_schema_hash"],
         "unsafe_probability_threshold": selected["unsafe_probability_threshold"],
         "layer_order": list(map(int, layer_order)),
         "safety_definition": SAFETY_DEFINITION,
-        "development_objective": f"maximize mean FLOP reduction subject to unsafe_selection_rate <= {unsafe_rate_bound}",
+        "development_objective": f"maximize mean FLOP reduction subject to clustered one-sided 95% unsafe-selection-rate upper bound <= {unsafe_rate_bound}",
         "unsafe_rate_bound": unsafe_rate_bound,
+        "unsafe_confidence_procedure": "question-cluster bootstrap, one-sided 95% upper percentile",
         "achieved_development_metrics": summary,
         "train_manifest_hash": metadata["manifest_hashes"].get("train"),
         "development_manifest_hash": metadata["manifest_hashes"].get("development"),
@@ -881,22 +1008,41 @@ def evaluate_router(
         raise RuntimeError("Test evaluation requires frozen_policy.json.")
     dataset = load_router_dataset(dataset_dir)
     metadata = json.loads((Path(dataset_dir) / "metadata.json").read_text())
-    if metadata["feature_schema_hash"] != policy["feature_schema_hash"]:
-        raise ValueError("Dataset feature schema does not match frozen policy.")
-    safe_probability, predicted_logp = load_model_predictions(
-        dataset,
-        model_dir,
-        policy["selected_safety_model"],
-        policy["selected_quality_regressor"],
-    )
-    decisions = make_decisions(
-        dataset,
-        split=split,
-        safety_probability=safe_probability,
-        predicted_logp=predicted_logp,
-        threshold=float(policy["unsafe_probability_threshold"]),
-        layer_order=[int(layer) for layer in policy["layer_order"]],
-    )
+    validate_frozen_policy_integrity(metadata, Path(model_dir), policy)
+    if policy.get("dense_fallback_policy"):
+        model_index = {"safety_models": {}, "quality_delta_regressors": {}}
+    else:
+        model_index = json.loads((Path(model_dir) / "model_index.json").read_text())
+    if not policy.get("dense_fallback_policy") and (
+        policy.get("selected_safety_model") not in model_index["safety_models"]
+        or policy.get("selected_quality_regressor") not in model_index["quality_delta_regressors"]
+    ):
+        raise ValueError("Frozen policy selected model is missing from model_index.json.")
+    if policy.get("dense_fallback_policy"):
+        decisions = make_decisions(
+            dataset,
+            split=split,
+            safety_probability=None,
+            predicted_logp=None,
+            threshold=-1.0,
+            layer_order=[int(layer) for layer in policy["layer_order"]],
+        )
+        decisions = [dict(row, compacted=False, delta_logp=0.0, delta_margin=0.0, accuracy_delta_from_dense=0.0, prediction_changed=False, safe=True, unsafe=False, flop_reduction=0.0, selected_layer=None, retention_fraction=None) if row["baseline"] == "causal_learned_router" else row for row in decisions]
+    else:
+        safe_probability, predicted_logp = load_model_predictions(
+            dataset,
+            model_dir,
+            policy["selected_safety_model"],
+            policy["selected_quality_regressor"],
+        )
+        decisions = make_decisions(
+            dataset,
+            split=split,
+            safety_probability=safe_probability,
+            predicted_logp=predicted_logp,
+            threshold=float(policy["unsafe_probability_threshold"]),
+            layer_order=[int(layer) for layer in policy["layer_order"]],
+        )
     summary = summarize_router_decisions(decisions, bootstrap_samples=bootstrap_samples, seed=seed)
     output_dir = Path(output_dir)
     write_jsonl(output_dir / "decisions.jsonl", decisions)
@@ -907,8 +1053,35 @@ def evaluate_router(
             "split": split,
             "frozen_policy": str(frozen_policy),
             "unsafe_probability_threshold": policy["unsafe_probability_threshold"],
+            "dense_fallback_policy": bool(policy.get("dense_fallback_policy", False)),
             "metrics": summary,
         },
     )
     write_csv(output_dir / "decisions.csv", decisions)
     return summary
+
+
+def validate_frozen_policy_integrity(metadata: dict[str, Any], model_dir: Path, policy: dict[str, Any]) -> None:
+    if metadata["feature_schema_hash"] != policy["feature_schema_hash"]:
+        raise ValueError("Dataset feature schema does not match frozen policy.")
+    if metadata["manifest_hashes"].get("train") != policy.get("train_manifest_hash"):
+        raise ValueError("Train manifest hash does not match frozen policy.")
+    if metadata["manifest_hashes"].get("development") != policy.get("development_manifest_hash"):
+        raise ValueError("Development manifest hash does not match frozen policy.")
+    if policy.get("dense_fallback_policy"):
+        return
+    model_index = json.loads((model_dir / "model_index.json").read_text())
+    selected_safety = policy.get("selected_safety_model")
+    selected_regressor = policy.get("selected_quality_regressor")
+    if f"safety:{selected_safety}" not in policy["model_hashes"]:
+        raise ValueError("Frozen policy is missing the selected safety-model hash.")
+    if f"regressor:{selected_regressor}" not in policy["model_hashes"]:
+        raise ValueError("Frozen policy is missing the selected regressor hash.")
+    for model_name, path in model_index["safety_models"].items():
+        key = f"safety:{model_name}"
+        if key in policy["model_hashes"] and sha256_file(path) != policy["model_hashes"][key]:
+            raise ValueError(f"Safety model hash mismatch for {model_name}.")
+    for model_name, path in model_index["quality_delta_regressors"].items():
+        key = f"regressor:{model_name}"
+        if key in policy["model_hashes"] and sha256_file(path) != policy["model_hashes"][key]:
+            raise ValueError(f"Regressor hash mismatch for {model_name}.")

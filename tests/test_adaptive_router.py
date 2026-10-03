@@ -7,10 +7,13 @@ import numpy as np
 import pytest
 
 from src.experiment1.adaptive_router import (
+    RouterDataset,
     build_router_dataset,
     calibrate_router_policy,
     causal_policy_decision,
+    cluster_binary_upper_bound,
     cluster_bootstrap_ci,
+    deterministic_weighted_resample_indices,
     evaluate_router,
     load_router_dataset,
     make_decisions,
@@ -19,6 +22,8 @@ from src.experiment1.adaptive_router import (
     select_fixed_policy_training_only,
     summarize_router_decisions,
     train_router_models,
+    uniform_route_row,
+    validate_frozen_policy_integrity,
 )
 
 
@@ -230,6 +235,20 @@ def test_question_frame_weights_equalize_action_counts():
     assert weights[:2].sum() == pytest.approx(weights[2])
 
 
+def test_deterministic_weighted_resampling_equalizes_question_frame_influence():
+    rows = [
+        {"question_id": "q1", "frame_count": 8, "action_id": f"a{i}"} for i in range(4)
+    ] + [
+        {"question_id": "q2", "frame_count": 8, "action_id": "b0"}
+    ]
+    indices = deterministic_weighted_resample_indices(rows, seed=7, scale=2)
+    counts = {(rows[idx]["question_id"], rows[idx]["frame_count"]): 0 for idx in indices}
+    for idx in indices:
+        counts[(rows[idx]["question_id"], rows[idx]["frame_count"])] += 1
+    assert counts[("q1", 8)] == counts[("q2", 8)]
+    assert deterministic_weighted_resample_indices(rows, seed=7, scale=2).tolist() == indices.tolist()
+
+
 def test_frame_counts_are_never_mixed_and_decisions_are_per_question_frame(tmp_path):
     dataset = _dataset(tmp_path)
     safety_probability = np.ones(len(dataset.rows), dtype=np.float32)
@@ -260,6 +279,129 @@ def test_causal_policy_stops_early_without_future_layer_features():
     ]
     chosen = causal_policy_decision(rows, threshold=0.1, layer_order=[4, 8])
     assert chosen["action_id"] == "early"
+
+
+def _exhaustive_dataset():
+    rows = []
+    pairs = ([0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3])
+    for split, qid, source in [("train", "q-train", "v-train"), ("development", "q-dev", "v-dev")]:
+        for frame_count in (8, 16):
+            for layer in (4, 8):
+                for pair in pairs:
+                    action_id = f"{qid}_f{frame_count}_l{layer}_{pair[0]}{pair[1]}"
+                    safe = pair in ([0, 3], [1, 3])
+                    rows.append(
+                        {
+                            "question_id": qid,
+                            "source_video_id": source,
+                            "split": split,
+                            "category": "fine_grained",
+                            "frame_count": frame_count,
+                            "compaction_layer": layer,
+                            "retention_fraction": 0.5,
+                            "native_temporal_cell_count": 4,
+                            "retained_cell_ids": list(pair),
+                            "route_family": "exhaustive",
+                            "action_id": action_id,
+                            "safe": safe,
+                            "delta_correct_choice_log_probability_from_dense": 0.1 if safe else -0.2,
+                            "delta_answer_margin_from_dense": 0.05 if safe else -0.1,
+                            "prediction_changed": not safe,
+                            "paired_flop_reduction_from_dense": 0.5,
+                            "accuracy_delta_from_dense": 0.0 if safe else -1.0,
+                        }
+                    )
+    n = len(rows)
+    return RouterDataset(
+        rows=rows,
+        feature_names=["x"],
+        features=np.zeros((n, 1), dtype=np.float32),
+        safe=np.asarray([int(row["safe"]) for row in rows], dtype=np.int64),
+        logp_delta=np.asarray([row["delta_correct_choice_log_probability_from_dense"] for row in rows], dtype=np.float32),
+        margin_delta=np.asarray([row["delta_answer_margin_from_dense"] for row in rows], dtype=np.float32),
+        flop_reduction=np.asarray([row["paired_flop_reduction_from_dense"] for row in rows], dtype=np.float32),
+    )
+
+
+def test_exhaustive_action_spaces_get_uniform_and_random_baselines():
+    dataset = _exhaustive_dataset()
+    decisions = make_decisions(
+        dataset,
+        split="development",
+        safety_probability=np.ones(len(dataset.rows), dtype=np.float32),
+        predicted_logp=dataset.logp_delta,
+        threshold=0.5,
+        layer_order=[4, 8],
+        random_seed=123,
+    )
+    fixed_uniform = [row for row in decisions if row["baseline"] == "fixed_uniform"]
+    fixed_random = [row for row in decisions if row["baseline"] == "fixed_random"]
+    assert fixed_uniform and fixed_random
+    assert all(row["compacted"] for row in fixed_uniform)
+    assert all(row["compacted"] for row in fixed_random)
+    assert all(row["route_family"] == "exhaustive" for row in fixed_uniform + fixed_random)
+    assert {tuple(row["retained_cell_ids"]) for row in fixed_uniform} == {(0, 3)}
+
+
+def test_uniform_subset_minimizes_even_spacing_without_route_family():
+    candidates = [
+        {"retained_cell_ids": [0, 1], "native_temporal_cell_count": 4, "action_id": "a"},
+        {"retained_cell_ids": [0, 3], "native_temporal_cell_count": 4, "action_id": "b"},
+        {"retained_cell_ids": [1, 2], "native_temporal_cell_count": 4, "action_id": "c"},
+    ]
+    assert uniform_route_row(candidates)["action_id"] == "b"
+
+
+def test_clustered_unsafe_upper_bound_is_conservative():
+    rows = [
+        {"question_id": "q1", "unsafe": False},
+        {"question_id": "q1", "unsafe": False},
+        {"question_id": "q2", "unsafe": True},
+        {"question_id": "q2", "unsafe": True},
+    ]
+    result = cluster_binary_upper_bound(rows, "unsafe", samples=100, seed=3)
+    assert result["observed"] == pytest.approx(0.5)
+    assert result["upper"] >= result["observed"]
+
+
+def test_frozen_policy_integrity_rejects_manifest_and_model_hash_drift(tmp_path):
+    safety = tmp_path / "safety.joblib"
+    regressor = tmp_path / "regressor.joblib"
+    safety.write_text("safety-a")
+    regressor.write_text("regressor-a")
+    _write_json(
+        tmp_path / "model_index.json",
+        {
+            "safety_models": {"logistic_regression": str(safety)},
+            "quality_delta_regressors": {"ridge": str(regressor)},
+        },
+    )
+    metadata = {
+        "feature_schema_hash": "features",
+        "manifest_hashes": {"train": "train-hash", "development": "dev-hash"},
+    }
+    from src.experiment1.adaptive_router import sha256_file
+
+    policy = {
+        "feature_schema_hash": "features",
+        "train_manifest_hash": "train-hash",
+        "development_manifest_hash": "dev-hash",
+        "dense_fallback_policy": False,
+        "selected_safety_model": "logistic_regression",
+        "selected_quality_regressor": "ridge",
+        "model_hashes": {
+            "safety:logistic_regression": sha256_file(safety),
+            "regressor:ridge": sha256_file(regressor),
+        },
+    }
+    validate_frozen_policy_integrity(metadata, tmp_path, policy)
+    safety.write_text("safety-b")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        validate_frozen_policy_integrity(metadata, tmp_path, policy)
+    safety.write_text("safety-a")
+    bad_metadata = dict(metadata, manifest_hashes={"train": "changed", "development": "dev-hash"})
+    with pytest.raises(ValueError, match="Train manifest hash"):
+        validate_frozen_policy_integrity(bad_metadata, tmp_path, policy)
 
 
 def test_baselines_are_distinct_and_fixed_selected_from_train_only(tmp_path):
