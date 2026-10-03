@@ -13,7 +13,7 @@ from src.experiment1.adaptive_router import (
     causal_policy_decision,
     cluster_binary_upper_bound,
     cluster_bootstrap_ci,
-    deterministic_weighted_resample_indices,
+    deterministic_group_balanced_undersample_indices,
     evaluate_router,
     load_router_dataset,
     make_decisions,
@@ -24,7 +24,7 @@ from src.experiment1.adaptive_router import (
     train_router_models,
     uniform_route_row,
     validate_frozen_policy_integrity,
-    weighted_resampling_summary,
+    group_balanced_undersampling_summary,
 )
 
 
@@ -236,24 +236,31 @@ def test_question_frame_weights_equalize_action_counts():
     assert weights[:2].sum() == pytest.approx(weights[2])
 
 
-def test_deterministic_weighted_resampling_equalizes_question_frame_influence():
-    rows = [
-        {"question_id": "q1", "frame_count": 8, "action_id": f"a{i}"} for i in range(4)
-    ] + [
-        {"question_id": "q2", "frame_count": 8, "action_id": "b0"}
-    ]
-    indices = deterministic_weighted_resample_indices(rows, seed=7)
+def _unequal_group_rows(group_sizes):
+    rows = []
+    for group_idx, size in enumerate(group_sizes):
+        for row_idx in range(size):
+            rows.append({"question_id": f"q{group_idx}", "frame_count": 8, "action_id": f"g{group_idx}_a{row_idx}"})
+    return rows
+
+
+@pytest.mark.parametrize("group_sizes", [(3, 2), (70, 48), (70, 24)])
+def test_group_balanced_undersampling_equalizes_without_expansion(group_sizes):
+    rows = _unequal_group_rows(group_sizes)
+    indices = deterministic_group_balanced_undersample_indices(rows, seed=7)
     counts = {(rows[idx]["question_id"], rows[idx]["frame_count"]): 0 for idx in indices}
     for idx in indices:
         counts[(rows[idx]["question_id"], rows[idx]["frame_count"])] += 1
-    assert counts[("q1", 8)] == counts[("q2", 8)]
-    assert len(indices) == 8
-    assert deterministic_weighted_resample_indices(rows, seed=7).tolist() == indices.tolist()
-    summary = weighted_resampling_summary(rows, seed=7, feature_dim=64)
-    assert summary["original_training_rows"] == 5
-    assert summary["resampled_training_rows"] == 8
-    assert summary["resampled_feature_ram_bytes"] == 8 * 64 * 4
-    assert summary["equal_total_replicated_weight_per_question_frame"]
+    assert set(counts.values()) == {min(group_sizes)}
+    assert len(indices) == min(group_sizes) * len(group_sizes)
+    assert len(indices) <= len(rows)
+    assert deterministic_group_balanced_undersample_indices(rows, seed=7).tolist() == indices.tolist()
+    summary = group_balanced_undersampling_summary(rows, seed=7, feature_dim=64)
+    assert summary["original_training_rows"] == len(rows)
+    assert summary["balanced_training_rows"] == len(indices)
+    assert summary["balanced_feature_ram_bytes"] == len(indices) * 64 * 4
+    assert summary["equal_total_rows_per_question_frame"]
+    assert summary["no_expansion_beyond_original_rows"]
 
 
 def test_frame_counts_are_never_mixed_and_decisions_are_per_question_frame(tmp_path):

@@ -435,34 +435,40 @@ def question_frame_weights(rows: Sequence[dict[str, Any]]) -> np.ndarray:
     return np.asarray([1.0 / counts[(row["question_id"], int(row["frame_count"]))] for row in rows], dtype=np.float32)
 
 
-def deterministic_weighted_resample_indices(rows: Sequence[dict[str, Any]], *, seed: int, scale: int = 1) -> np.ndarray:
-    weights = question_frame_weights(rows)
-    scaled = weights / float(np.min(weights))
-    counts = np.maximum(1, np.rint(scaled * scale).astype(np.int64))
-    keyed: list[tuple[str, int]] = []
-    for idx, (row, count) in enumerate(zip(rows, counts)):
-        for replica in range(int(count)):
-            key = stable_hash_payload([seed, row["question_id"], int(row["frame_count"]), row.get("action_id"), replica])
-            keyed.append((key, idx))
-    keyed.sort()
-    return np.asarray([idx for _, idx in keyed], dtype=np.int64)
+def deterministic_group_balanced_undersample_indices(rows: Sequence[dict[str, Any]], *, seed: int) -> np.ndarray:
+    grouped: dict[tuple[str, int], list[int]] = defaultdict(list)
+    for idx, row in enumerate(rows):
+        grouped[(str(row["question_id"]), int(row["frame_count"]))].append(idx)
+    if not grouped:
+        return np.asarray([], dtype=np.int64)
+    target = min(len(indices) for indices in grouped.values())
+    selected: list[int] = []
+    for group, indices in sorted(grouped.items()):
+        ranked = sorted(
+            indices,
+            key=lambda idx: stable_hash_payload([seed, group[0], group[1], rows[idx].get("action_id"), idx]),
+        )
+        selected.extend(ranked[:target])
+    selected.sort(key=lambda idx: stable_hash_payload([seed, rows[idx]["question_id"], int(rows[idx]["frame_count"]), rows[idx].get("action_id"), idx, "final"]))
+    return np.asarray(selected, dtype=np.int64)
 
 
-def weighted_resampling_summary(rows: Sequence[dict[str, Any]], *, seed: int, feature_dim: int) -> dict[str, Any]:
-    indices = deterministic_weighted_resample_indices(rows, seed=seed)
+def group_balanced_undersampling_summary(rows: Sequence[dict[str, Any]], *, seed: int, feature_dim: int) -> dict[str, Any]:
+    indices = deterministic_group_balanced_undersample_indices(rows, seed=seed)
     grouped_original = Counter((row["question_id"], int(row["frame_count"])) for row in rows)
-    grouped_resampled: Counter[tuple[str, int]] = Counter()
+    grouped_balanced: Counter[tuple[str, int]] = Counter()
     for idx in indices:
         row = rows[int(idx)]
-        grouped_resampled[(row["question_id"], int(row["frame_count"]))] += 1
+        grouped_balanced[(row["question_id"], int(row["frame_count"]))] += 1
     return {
         "original_training_rows": len(rows),
-        "resampled_training_rows": int(indices.size),
-        "resampled_feature_ram_bytes": int(indices.size * feature_dim * 4),
-        "scale": 1,
+        "balanced_training_rows": int(indices.size),
+        "balanced_feature_ram_bytes": int(indices.size * feature_dim * 4),
+        "method": "deterministic_group_balanced_undersampling_to_minimum_question_frame_group_size",
         "original_rows_per_question_frame": {f"{qid}|{frame}": count for (qid, frame), count in sorted(grouped_original.items())},
-        "resampled_rows_per_question_frame": {f"{qid}|{frame}": count for (qid, frame), count in sorted(grouped_resampled.items())},
-        "equal_total_replicated_weight_per_question_frame": len(set(grouped_resampled.values())) <= 1,
+        "balanced_rows_per_question_frame": {f"{qid}|{frame}": count for (qid, frame), count in sorted(grouped_balanced.items())},
+        "equal_total_rows_per_question_frame": len(set(grouped_balanced.values())) <= 1,
+        "no_expansion_beyond_original_rows": int(indices.size) <= len(rows),
     }
 
 
@@ -515,16 +521,16 @@ def train_router_models(dataset_dir: str | Path, output_dir: str | Path, *, seed
         "grouping_unit": "source_video_id",
         "train_groups": sorted(set(map(str, groups))),
         "sample_weighting": "each question_id/frame_count receives equal total weight",
-        "weighted_resampling_summary": weighted_resampling_summary(train_rows, seed=seed, feature_dim=dataset.features.shape[1]),
+        "group_balanced_undersampling_summary": group_balanced_undersampling_summary(train_rows, seed=seed, feature_dim=dataset.features.shape[1]),
         "safety_models": {},
         "quality_delta_regressors": {},
         "weighting_methods": {},
     }
     for name, model in models.items():
         if name == "mlp":
-            resampled = deterministic_weighted_resample_indices(train_rows, seed=seed)
-            model.fit(X[resampled], y[resampled])
-            model_index["weighting_methods"][f"safety_{name}"] = "deterministic_question_frame_weighted_resampling"
+            balanced = deterministic_group_balanced_undersample_indices(train_rows, seed=seed)
+            model.fit(X[balanced], y[balanced])
+            model_index["weighting_methods"][f"safety_{name}"] = "deterministic_group_balanced_undersampling"
         else:
             fit_kwargs = {"sample_weight": sample_weight}
             if name == "logistic_regression":
@@ -536,9 +542,9 @@ def train_router_models(dataset_dir: str | Path, output_dir: str | Path, *, seed
         model_index["safety_models"][name] = str(path)
     for name, model in regressors.items():
         if name == "mlp":
-            resampled = deterministic_weighted_resample_indices(train_rows, seed=seed)
-            model.fit(X[resampled], dataset.logp_delta[train_idx][resampled])
-            model_index["weighting_methods"][f"regressor_{name}"] = "deterministic_question_frame_weighted_resampling"
+            balanced = deterministic_group_balanced_undersample_indices(train_rows, seed=seed)
+            model.fit(X[balanced], dataset.logp_delta[train_idx][balanced])
+            model_index["weighting_methods"][f"regressor_{name}"] = "deterministic_group_balanced_undersampling"
         else:
             fit_kwargs = {"sample_weight": sample_weight}
             if name == "ridge":
