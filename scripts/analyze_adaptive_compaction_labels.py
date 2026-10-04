@@ -366,7 +366,8 @@ def analyze(records: str | Path, manifest: str | Path, output_dir: str | Path, *
         "num_routes": len(route_rows),
         "num_source_videos": len({group["source_video_id"] for group in valid_groups}),
         "num_excluded_groups": len(unique_exclusions),
-        "raw_failure_record_count": len(exclusions),
+        "raw_failure_record_count": len(failures),
+        "raw_exclusion_diagnostic_count": len(exclusions),
         "exclusion_counts": dict(Counter(row["reason"] for row in unique_exclusions)),
         "statistical_unit": "source_video_id",
     }
@@ -530,19 +531,23 @@ def pareto_frontier_rows(route_rows: Sequence[dict[str, Any]]) -> list[dict[str,
             }
         )
     frontier = []
+    by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for point in points:
-        dominated = any(
-            other is not point
-            and other["mean_flop_reduction"] >= point["mean_flop_reduction"]
-            and other["mean_delta_logp"] >= point["mean_delta_logp"]
-            and (
-                other["mean_flop_reduction"] > point["mean_flop_reduction"]
-                or other["mean_delta_logp"] > point["mean_delta_logp"]
+        by_frame[int(point["frame_count"])].append(point)
+    for frame_points in by_frame.values():
+        for point in frame_points:
+            dominated = any(
+                other is not point
+                and other["mean_flop_reduction"] >= point["mean_flop_reduction"]
+                and other["mean_delta_logp"] >= point["mean_delta_logp"]
+                and (
+                    other["mean_flop_reduction"] > point["mean_flop_reduction"]
+                    or other["mean_delta_logp"] > point["mean_delta_logp"]
+                )
+                for other in frame_points
             )
-            for other in points
-        )
-        if not dominated:
-            frontier.append(point)
+            if not dominated:
+                frontier.append(point)
     return sorted(frontier, key=lambda row: (row["frame_count"], row["mean_flop_reduction"]))
 
 
@@ -556,17 +561,17 @@ def best_fixed_rows_for_plot(fixed_rows: Sequence[dict[str, Any]]) -> list[dict[
         grouped[(str(row["baseline"]), row["frame_count"])].append(row)
     output = []
     for (_baseline, _frame), rows in grouped.items():
-        safe_rows = [row for row in rows if float(row.get("safe_route_fraction", 0.0)) >= 1.0]
-        pool = safe_rows or rows
-        chosen = max(
-            pool,
+        chosen = min(
+            rows,
             key=lambda row: (
-                float(row.get("safe_route_fraction", 0.0)),
-                float(row.get("mean_flop_reduction", 0.0) or 0.0),
-                float(row.get("mean_delta_logp", -math.inf) or -math.inf),
+                -float(row.get("safe_route_fraction", 0.0)),
+                -float(row.get("mean_flop_reduction", 0.0) or 0.0),
+                -float(row.get("mean_delta_logp", -math.inf) or -math.inf),
+                int(row.get("compaction_layer")),
+                float(row.get("retention_fraction")),
             ),
         )
-        output.append(dict(chosen, selected_fixed_configuration="training_descriptive_best_under_safety_rule"))
+        output.append(dict(chosen, training_descriptive_selection_by_safety_then_efficiency=True))
     return output
 
 
@@ -676,7 +681,7 @@ def make_figures(output_dir: Path, route_rows: Sequence[dict[str, Any]], fixed_r
             plt.xticks(x + width * (len(methods) - 1) / 2, [str(frame) for frame in frames])
             plt.xlabel("Frame count")
             plt.ylabel("Mean attention-FLOP reduction")
-            plt.title("Training split exploratory analysis: oracle versus deterministic fixed routes")
+            plt.title("Training split exploratory analysis: oracle versus training-descriptive fixed-route selection")
             plt.legend(fontsize=7)
             save("oracle_vs_fixed_route_flop_reduction")
 

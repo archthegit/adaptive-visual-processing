@@ -10,8 +10,10 @@ from scripts.analyze_adaptive_compaction_labels import (
     analyze,
     choose_fixed_route,
     categorize_failure,
+    best_fixed_rows_for_plot,
     oracle_layer_distribution_plot_rows,
     oracle_tables,
+    pareto_frontier_rows,
     route_is_safe,
     source_cluster_bootstrap,
 )
@@ -122,6 +124,16 @@ def test_analyzer_accepts_partial_frame_availability_and_writes_outputs(tmp_path
     assert (tmp_path / "out" / "summary.json").exists()
     assert (tmp_path / "out" / "coverage.csv").exists()
     assert (tmp_path / "out" / "oracle.csv").exists()
+
+
+def test_pareto_frontier_is_computed_within_frame_count():
+    rows = [
+        {"frame_count": 8, "compaction_layer": 4, "retention_fraction": 0.5, "flop_reduction": 0.2, "delta_logp": 0.0},
+        {"frame_count": 8, "compaction_layer": 8, "retention_fraction": 0.5, "flop_reduction": 0.1, "delta_logp": 0.1},
+        {"frame_count": 16, "compaction_layer": 4, "retention_fraction": 0.5, "flop_reduction": 0.3, "delta_logp": 0.2},
+    ]
+    frontier = pareto_frontier_rows(rows)
+    assert any(row["frame_count"] == 8 and row["compaction_layer"] == 4 for row in frontier)
 
 
 def test_oracle_csv_is_separated_by_frame_count(tmp_path):
@@ -251,6 +263,20 @@ def test_missing_and_failed_records_are_reported(tmp_path):
     assert "insufficient_distinct_frames" in summary["exclusion_counts"]
 
 
+def test_summary_counts_failures_and_exclusion_diagnostics_separately(tmp_path):
+    records = tmp_path / "records.jsonl"
+    manifest = tmp_path / "manifest.jsonl"
+    _manifest(manifest, [{"question_id": "q1", "source_video_id": "v1", "category": "gaze"}])
+    _append_record(records, {"question_id": "q1", "frame_count": 8, "action_id": "dense_custom", "status": "complete", "artifact": str(tmp_path / "missing.json")})
+    _append_record(records, {"question_id": "q1", "frame_count": 16, "status": "failed", "error": "moov atom not found"})
+
+    summary = analyze(records, manifest, tmp_path / "out", bootstrap_samples=10, seed=1, quality_floor=-0.10)
+
+    assert summary["raw_failure_record_count"] == 1
+    assert summary["raw_exclusion_diagnostic_count"] == 2
+    assert summary["num_excluded_groups"] == 2
+
+
 def test_failures_join_category_and_unique_exclusion_counts(tmp_path):
     records = tmp_path / "records.jsonl"
     manifest = tmp_path / "manifest.jsonl"
@@ -289,3 +315,17 @@ def test_oracle_layer_distribution_plot_rows_excludes_all_category():
     plot_rows = oracle_layer_distribution_plot_rows(rows)
     assert {row["category"] for row in plot_rows} == {"gaze"}
     assert {row["selected_layer"] for row in plot_rows} == {"4", "dense_fallback"}
+
+
+def test_fixed_plot_selection_uses_precise_lexicographic_rule():
+    rows = [
+        {"baseline": "uniform", "category": "all", "frame_count": 8, "safe_route_fraction": 0.9, "mean_flop_reduction": 0.5, "mean_delta_logp": 0.2, "compaction_layer": 8, "retention_fraction": 0.5},
+        {"baseline": "uniform", "category": "all", "frame_count": 8, "safe_route_fraction": 1.0, "mean_flop_reduction": 0.3, "mean_delta_logp": 0.1, "compaction_layer": 8, "retention_fraction": 0.5},
+        {"baseline": "uniform", "category": "all", "frame_count": 8, "safe_route_fraction": 1.0, "mean_flop_reduction": 0.3, "mean_delta_logp": 0.1, "compaction_layer": 4, "retention_fraction": 0.75},
+        {"baseline": "uniform", "category": "all", "frame_count": 8, "safe_route_fraction": 1.0, "mean_flop_reduction": 0.3, "mean_delta_logp": 0.1, "compaction_layer": 4, "retention_fraction": 0.25},
+    ]
+    selected = best_fixed_rows_for_plot(rows)
+    assert len(selected) == 1
+    assert selected[0]["compaction_layer"] == 4
+    assert selected[0]["retention_fraction"] == 0.25
+    assert selected[0]["training_descriptive_selection_by_safety_then_efficiency"] is True
