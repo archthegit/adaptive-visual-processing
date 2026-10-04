@@ -47,7 +47,7 @@ def load_manifest(path: str | Path) -> dict[str, dict[str, Any]]:
 
 def categorize_failure(error: str) -> str:
     lowered = error.lower()
-    if any(token in lowered for token in ("corrupt", "unreadable", "decode", "decord", "video")):
+    if any(token in lowered for token in ("ffprobe", "moov atom", "invalid data", "decode", "unreadable", "corrupt", "decord", "video")):
         return "corrupted_or_unreadable_video"
     if "distinct" in lowered or "insufficient" in lowered or "duplicate frame" in lowered:
         return "insufficient_distinct_frames"
@@ -217,17 +217,32 @@ def aggregate_rows(
     return output
 
 
+def unique_exclusion_groups(exclusions: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, Any, str], dict[str, Any]] = {}
+    for row in exclusions:
+        key = (str(row.get("question_id")), row.get("frame_count"), str(row["reason"]))
+        grouped.setdefault(key, row)
+    return list(grouped.values())
+
+
 def analyze(records: str | Path, manifest: str | Path, output_dir: str | Path, *, bootstrap_samples: int, seed: int, quality_floor: float) -> dict[str, Any]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_by_qid = load_manifest(manifest)
+    test_manifest_rows = [qid for qid, row in manifest_by_qid.items() if row.get("split") == "test"]
+    if test_manifest_rows:
+        raise RuntimeError(f"Refusing to analyze manifest containing test rows: {test_manifest_rows[:10]}")
     raw_records = read_jsonl_snapshot(records)
     failures: list[dict[str, Any]] = []
     for record in raw_records:
         if record.get("status") == "failed":
+            qid = str(record.get("question_id"))
+            manifest_row = manifest_by_qid.get(qid, {})
             failures.append(
                 {
-                    "question_id": record.get("question_id"),
+                    "question_id": qid,
+                    "source_video_id": manifest_row.get("source_video_id"),
+                    "category": manifest_row.get("category"),
                     "frame_count": record.get("frame_count"),
                     "reason": categorize_failure(str(record.get("error", ""))),
                     "error": record.get("error"),
@@ -239,7 +254,17 @@ def analyze(records: str | Path, manifest: str | Path, output_dir: str | Path, *
     for key, record in dedup.items():
         artifact = read_artifact(record)
         if artifact is None:
-            bad_complete_records.append({"question_id": key[0], "frame_count": key[1], "action_id": key[2], "reason": "incomplete_or_missing_action_artifacts"})
+            manifest_row = manifest_by_qid.get(key[0], {})
+            bad_complete_records.append(
+                {
+                    "question_id": key[0],
+                    "source_video_id": manifest_row.get("source_video_id"),
+                    "category": manifest_row.get("category"),
+                    "frame_count": key[1],
+                    "action_id": key[2],
+                    "reason": "incomplete_or_missing_action_artifacts",
+                }
+            )
             continue
         if artifact.get("split") == "test":
             raise RuntimeError(f"Refusing to analyze test artifact: {record.get('artifact')}")
@@ -310,8 +335,9 @@ def analyze(records: str | Path, manifest: str | Path, output_dir: str | Path, *
         )
     exclusions.extend(bad_complete_records)
     exclusions.extend(failures)
+    unique_exclusions = unique_exclusion_groups(exclusions)
 
-    coverage_rows = coverage_table(valid_groups, exclusions, route_rows)
+    coverage_rows = coverage_table(valid_groups, unique_exclusions, route_rows)
     layer_rows = aggregate_rows(
         route_rows,
         group_keys=("category", "frame_count", "compaction_layer", "retention_fraction"),
@@ -339,8 +365,9 @@ def analyze(records: str | Path, manifest: str | Path, output_dir: str | Path, *
         "num_question_frame_groups": len(valid_groups),
         "num_routes": len(route_rows),
         "num_source_videos": len({group["source_video_id"] for group in valid_groups}),
-        "num_excluded_groups": len(exclusions),
-        "exclusion_counts": dict(Counter(row["reason"] for row in exclusions)),
+        "num_excluded_groups": len(unique_exclusions),
+        "raw_failure_record_count": len(exclusions),
+        "exclusion_counts": dict(Counter(row["reason"] for row in unique_exclusions)),
         "statistical_unit": "source_video_id",
     }
     write_json(output_dir / "summary.json", summary)
@@ -406,7 +433,7 @@ def oracle_tables(valid_groups: Sequence[dict[str, Any]], *, bootstrap_samples: 
     for group in valid_groups:
         safe_actions = [action for action in group["actions"] if action["safe"]]
         if safe_actions:
-            chosen = max(safe_actions, key=lambda row: (row["flop_reduction"], row["delta_logp"], str(row["action_id"])))
+            chosen = min(safe_actions, key=lambda row: (-float(row["flop_reduction"]), -float(row["delta_logp"]), str(row["action_id"])))
             fallback = False
         else:
             first = group["actions"][0]
@@ -429,13 +456,27 @@ def oracle_tables(valid_groups: Sequence[dict[str, Any]], *, bootstrap_samples: 
         )
     aggregate = aggregate_rows(
         selected,
-        group_keys=("oracle_name", "category"),
+        group_keys=("oracle_name", "category", "frame_count"),
         bootstrap_samples=bootstrap_samples,
         seed=seed,
         include_category_all=True,
     )
+    aggregate.extend(
+        aggregate_rows(
+            [dict(item, frame_count="all") for item in selected],
+            group_keys=("oracle_name", "category", "frame_count"),
+            bootstrap_samples=bootstrap_samples,
+            seed=seed,
+            include_category_all=True,
+        )
+    )
     for row in aggregate:
-        subset = [item for item in selected if item["category"] == row["category"] or row["category"] == "all"]
+        subset = [
+            item
+            for item in selected
+            if (item["category"] == row["category"] or row["category"] == "all")
+            and (item["frame_count"] == row["frame_count"] or row["frame_count"] == "all")
+        ]
         row["feasible_compaction_fraction"] = float(np.mean([not item["dense_fallback"] for item in subset])) if subset else 0.0
         row["dense_fallback_fraction"] = float(np.mean([item["dense_fallback"] for item in subset])) if subset else 0.0
         row["selected_layer_distribution"] = json.dumps(dict(Counter(str(item["compaction_layer"]) for item in subset)), sort_keys=True)
@@ -473,6 +514,84 @@ def failure_cases(route_rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
+def pareto_frontier_rows(route_rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[int, int, float], list[dict[str, Any]]] = defaultdict(list)
+    for row in route_rows:
+        grouped[(int(row["frame_count"]), int(row["compaction_layer"]), float(row["retention_fraction"]))].append(row)
+    points = []
+    for (frame_count, layer, retention), items in grouped.items():
+        points.append(
+            {
+                "frame_count": frame_count,
+                "compaction_layer": layer,
+                "retention_fraction": retention,
+                "mean_flop_reduction": float(np.mean([item["flop_reduction"] for item in items])),
+                "mean_delta_logp": float(np.mean([item["delta_logp"] for item in items])),
+            }
+        )
+    frontier = []
+    for point in points:
+        dominated = any(
+            other is not point
+            and other["mean_flop_reduction"] >= point["mean_flop_reduction"]
+            and other["mean_delta_logp"] >= point["mean_delta_logp"]
+            and (
+                other["mean_flop_reduction"] > point["mean_flop_reduction"]
+                or other["mean_delta_logp"] > point["mean_delta_logp"]
+            )
+            for other in points
+        )
+        if not dominated:
+            frontier.append(point)
+    return sorted(frontier, key=lambda row: (row["frame_count"], row["mean_flop_reduction"]))
+
+
+def best_fixed_rows_for_plot(fixed_rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates = [
+        row for row in fixed_rows
+        if row.get("category") == "all" and row.get("frame_count") != "all"
+    ]
+    grouped: dict[tuple[str, Any], list[dict[str, Any]]] = defaultdict(list)
+    for row in candidates:
+        grouped[(str(row["baseline"]), row["frame_count"])].append(row)
+    output = []
+    for (_baseline, _frame), rows in grouped.items():
+        safe_rows = [row for row in rows if float(row.get("safe_route_fraction", 0.0)) >= 1.0]
+        pool = safe_rows or rows
+        chosen = max(
+            pool,
+            key=lambda row: (
+                float(row.get("safe_route_fraction", 0.0)),
+                float(row.get("mean_flop_reduction", 0.0) or 0.0),
+                float(row.get("mean_delta_logp", -math.inf) or -math.inf),
+            ),
+        )
+        output.append(dict(chosen, selected_fixed_configuration="training_descriptive_best_under_safety_rule"))
+    return output
+
+
+def oracle_layer_distribution_plot_rows(oracle_rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    output = []
+    for row in oracle_rows:
+        if row.get("category") == "all" or row.get("frame_count") == "all":
+            continue
+        try:
+            dist = json.loads(row.get("selected_layer_distribution", "{}"))
+        except json.JSONDecodeError:
+            continue
+        for layer, count in dist.items():
+            label = "dense_fallback" if layer == "None" else str(layer)
+            output.append(
+                {
+                    "category": row["category"],
+                    "frame_count": row["frame_count"],
+                    "selected_layer": label,
+                    "count": int(count),
+                }
+            )
+    return output
+
+
 def make_figures(output_dir: Path, route_rows: Sequence[dict[str, Any]], fixed_rows: Sequence[dict[str, Any]], oracle_rows: Sequence[dict[str, Any]]) -> None:
     try:
         import matplotlib
@@ -492,11 +611,22 @@ def make_figures(output_dir: Path, route_rows: Sequence[dict[str, Any]], fixed_r
 
     if route_rows:
         plt.figure(figsize=(6, 4))
-        plt.scatter([row["flop_reduction"] for row in route_rows], [row["delta_logp"] for row in route_rows], s=8, alpha=0.35)
+        frontier = pareto_frontier_rows(route_rows)
+        frames = sorted({row["frame_count"] for row in frontier})
+        for frame in frames:
+            subset = [row for row in frontier if row["frame_count"] == frame]
+            plt.plot(
+                [row["mean_flop_reduction"] for row in subset],
+                [row["mean_delta_logp"] for row in subset],
+                marker="o",
+                label=f"{frame} frames",
+            )
         plt.axhline(-0.10, color="red", linestyle="--", linewidth=1)
-        plt.xlabel("Attention-FLOP reduction")
-        plt.ylabel("Delta correct-choice log probability")
-        plt.title("Training split exploratory analysis: quality versus FLOP reduction")
+        plt.xlabel("Mean attention-FLOP reduction")
+        plt.ylabel("Mean delta correct-choice log probability")
+        plt.title("Training split exploratory analysis: nondominated quality/FLOP frontier")
+        if frames:
+            plt.legend()
         save("quality_vs_flop_pareto")
 
         for metric, name, title in (
@@ -525,30 +655,51 @@ def make_figures(output_dir: Path, route_rows: Sequence[dict[str, Any]], fixed_r
             save(name)
 
     if fixed_rows and oracle_rows:
-        plt.figure(figsize=(7, 4))
-        labels = [row.get("baseline", row.get("oracle_name", "oracle")) for row in fixed_rows + oracle_rows]
-        vals = [float(row.get("mean_flop_reduction", 0.0) or 0.0) for row in fixed_rows + oracle_rows]
-        plt.bar(range(len(vals)), vals)
-        plt.xticks(range(len(vals)), labels, rotation=90)
-        plt.ylabel("Mean attention-FLOP reduction")
-        plt.title("Training split exploratory analysis: oracle versus deterministic fixed routes")
-        save("oracle_vs_fixed_route_flop_reduction")
+        plot_rows = []
+        for row in oracle_rows:
+            if row.get("category") == "all" and row.get("frame_count") != "all":
+                plot_rows.append({"method": "global safe oracle upper bound", "frame_count": row["frame_count"], "value": float(row.get("mean_flop_reduction") or 0.0)})
+        for row in best_fixed_rows_for_plot(fixed_rows):
+            plot_rows.append({"method": row["baseline"], "frame_count": row["frame_count"], "value": float(row.get("mean_flop_reduction") or 0.0)})
+        if plot_rows:
+            methods = ["global safe oracle upper bound", "uniform", "prefix", "suffix", "seeded_random"]
+            frames = sorted({row["frame_count"] for row in plot_rows}, key=lambda item: int(item))
+            width = 0.8 / max(1, len(methods))
+            plt.figure(figsize=(9, 4))
+            x = np.arange(len(frames))
+            for idx, method in enumerate(methods):
+                vals = []
+                for frame in frames:
+                    matches = [row["value"] for row in plot_rows if row["frame_count"] == frame and row["method"] == method]
+                    vals.append(matches[0] if matches else 0.0)
+                plt.bar(x + idx * width, vals, width=width, label=method)
+            plt.xticks(x + width * (len(methods) - 1) / 2, [str(frame) for frame in frames])
+            plt.xlabel("Frame count")
+            plt.ylabel("Mean attention-FLOP reduction")
+            plt.title("Training split exploratory analysis: oracle versus deterministic fixed routes")
+            plt.legend(fontsize=7)
+            save("oracle_vs_fixed_route_flop_reduction")
 
     if oracle_rows:
-        layer_counts = Counter()
-        for row in oracle_rows:
-            try:
-                dist = json.loads(row.get("selected_layer_distribution", "{}"))
-                layer_counts.update(dist)
-            except json.JSONDecodeError:
-                pass
-        if layer_counts:
-            plt.figure(figsize=(6, 4))
-            keys = sorted(layer_counts, key=str)
-            plt.bar(keys, [layer_counts[key] for key in keys])
-            plt.xlabel("Selected layer")
-            plt.ylabel("Count")
-            plt.title("Training split exploratory analysis: oracle selected-layer distribution by category")
+        plot_rows = oracle_layer_distribution_plot_rows(oracle_rows)
+        if plot_rows:
+            frames = sorted({row["frame_count"] for row in plot_rows}, key=lambda item: int(item))
+            categories = sorted({row["category"] for row in plot_rows})
+            layers = sorted({row["selected_layer"] for row in plot_rows}, key=str)
+            fig, axes = plt.subplots(1, len(frames), figsize=(5 * len(frames), 4), squeeze=False)
+            for ax, frame in zip(axes[0], frames):
+                bottom = np.zeros(len(categories))
+                for layer in layers:
+                    vals = []
+                    for category in categories:
+                        vals.append(sum(row["count"] for row in plot_rows if row["frame_count"] == frame and row["category"] == category and row["selected_layer"] == layer))
+                    ax.bar(categories, vals, bottom=bottom, label=layer)
+                    bottom += np.asarray(vals)
+                ax.set_title(f"{frame} frames")
+                ax.set_ylabel("Count")
+                ax.tick_params(axis="x", rotation=45)
+            axes[0][0].legend(title="Selected layer", fontsize=7)
+            fig.suptitle("Training split exploratory analysis: oracle selected-layer distribution by category")
             save("oracle_selected_layer_distribution_by_category")
 
 

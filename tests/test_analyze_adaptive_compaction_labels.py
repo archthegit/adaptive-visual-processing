@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,9 @@ import pytest
 from scripts.analyze_adaptive_compaction_labels import (
     analyze,
     choose_fixed_route,
+    categorize_failure,
+    oracle_layer_distribution_plot_rows,
+    oracle_tables,
     route_is_safe,
     source_cluster_bootstrap,
 )
@@ -27,6 +31,11 @@ def _append_record(path: Path, row: dict):
 
 def _manifest(path: Path, rows: list[dict]):
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="") as handle:
+        return list(csv.DictReader(handle))
 
 
 def _dense(qid: str, source: str, category: str, frame_count: int, *, split: str = "train", native: int = 4):
@@ -115,6 +124,20 @@ def test_analyzer_accepts_partial_frame_availability_and_writes_outputs(tmp_path
     assert (tmp_path / "out" / "oracle.csv").exists()
 
 
+def test_oracle_csv_is_separated_by_frame_count(tmp_path):
+    records = tmp_path / "records.jsonl"
+    manifest = tmp_path / "manifest.jsonl"
+    _manifest(manifest, [{"question_id": "q1", "source_video_id": "v1", "category": "fine_grained"}])
+    _complete_group(tmp_path, records, "q1", "v1", "fine_grained", 8)
+    _complete_group(tmp_path, records, "q1", "v1", "fine_grained", 16)
+
+    analyze(records, manifest, tmp_path / "out", bootstrap_samples=10, seed=1, quality_floor=-0.10)
+    rows = _read_csv(tmp_path / "out" / "oracle.csv")
+    frame_counts = {row["frame_count"] for row in rows if row["category"] == "fine_grained"}
+
+    assert {"8", "16", "all"}.issubset(frame_counts)
+
+
 def test_incomplete_action_group_is_excluded(tmp_path):
     records = tmp_path / "records.jsonl"
     manifest = tmp_path / "manifest.jsonl"
@@ -141,6 +164,32 @@ def test_oracle_dense_fallback_when_no_safe_action(tmp_path):
 
     assert "dense_fallback" in question_summary
     assert "True" in question_summary
+
+
+def test_oracle_tie_break_uses_lexicographically_smallest_action_id():
+    base = {
+        "safe": True,
+        "flop_reduction": 0.5,
+        "delta_logp": 0.1,
+        "question_id": "q1",
+        "source_video_id": "v1",
+        "category": "gaze",
+        "frame_count": 8,
+        "delta_margin": 0.0,
+        "prediction_changed": False,
+        "compaction_layer": 4,
+        "retention_fraction": 0.5,
+    }
+    groups = [{
+        "question_id": "q1",
+        "source_video_id": "v1",
+        "category": "gaze",
+        "frame_count": 8,
+        "dense_correct": True,
+        "actions": [dict(base, action_id="z_action"), dict(base, action_id="a_action")],
+    }]
+    _oracle, question_summary = oracle_tables(groups, bootstrap_samples=5, seed=1)
+    assert question_summary[0]["oracle_selected_action"] == "a_action"
 
 
 def test_source_video_clustered_bootstrap_uses_source_unit():
@@ -174,6 +223,15 @@ def test_test_split_is_rejected(tmp_path):
         analyze(records, manifest, tmp_path / "out", bootstrap_samples=10, seed=1, quality_floor=-0.10)
 
 
+def test_test_manifest_row_is_rejected_even_without_artifact(tmp_path):
+    records = tmp_path / "records.jsonl"
+    records.write_text("")
+    manifest = tmp_path / "manifest.jsonl"
+    _manifest(manifest, [{"question_id": "q1", "source_video_id": "v1", "category": "fine_grained", "split": "test"}])
+    with pytest.raises(RuntimeError, match="manifest containing test rows"):
+        analyze(records, manifest, tmp_path / "out", bootstrap_samples=10, seed=1, quality_floor=-0.10)
+
+
 def test_safety_rule_requires_quality_floor_and_no_flip():
     assert route_is_safe({"delta_correct_choice_log_probability_from_dense": -0.09, "prediction_changed": False}, -0.10)
     assert not route_is_safe({"delta_correct_choice_log_probability_from_dense": -0.11, "prediction_changed": False}, -0.10)
@@ -191,3 +249,43 @@ def test_missing_and_failed_records_are_reported(tmp_path):
 
     assert summary["num_excluded_groups"] >= 2
     assert "insufficient_distinct_frames" in summary["exclusion_counts"]
+
+
+def test_failures_join_category_and_unique_exclusion_counts(tmp_path):
+    records = tmp_path / "records.jsonl"
+    manifest = tmp_path / "manifest.jsonl"
+    _manifest(manifest, [{"question_id": "q1", "source_video_id": "v1", "category": "gaze"}])
+    _append_record(records, {"question_id": "q1", "frame_count": 8, "status": "failed", "error": "Adaptive fixed-center sampling requires 32 distinct center frames"})
+    _append_record(records, {"question_id": "q1", "frame_count": 8, "status": "failed", "error": "Adaptive fixed-center sampling requires 32 distinct center frames"})
+
+    summary = analyze(records, manifest, tmp_path / "out", bootstrap_samples=10, seed=1, quality_floor=-0.10)
+    coverage = _read_csv(tmp_path / "out" / "coverage.csv")
+
+    assert summary["num_excluded_groups"] == 1
+    assert summary["raw_failure_record_count"] == 2
+    assert coverage[0]["category"] == "gaze"
+    assert coverage[0]["frame_count"] == "8"
+    assert coverage[0]["exclusion_reason"] == "insufficient_distinct_frames"
+
+
+@pytest.mark.parametrize(
+    ("message", "reason"),
+    [
+        ("Command ['ffprobe', ...] returned non-zero exit status 1", "corrupted_or_unreadable_video"),
+        ("moov atom not found", "corrupted_or_unreadable_video"),
+        ("invalid data found when processing input", "corrupted_or_unreadable_video"),
+        ("Adaptive fixed-center sampling requires 32 distinct center frames", "insufficient_distinct_frames"),
+    ],
+)
+def test_failure_classification_real_patterns(message, reason):
+    assert categorize_failure(message) == reason
+
+
+def test_oracle_layer_distribution_plot_rows_excludes_all_category():
+    rows = [
+        {"category": "all", "frame_count": 8, "selected_layer_distribution": json.dumps({"4": 10})},
+        {"category": "gaze", "frame_count": 8, "selected_layer_distribution": json.dumps({"4": 2, "None": 1})},
+    ]
+    plot_rows = oracle_layer_distribution_plot_rows(rows)
+    assert {row["category"] for row in plot_rows} == {"gaze"}
+    assert {row["selected_layer"] for row in plot_rows} == {"4", "dense_fallback"}
